@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import select
 
 from src.common.books import attribute, is_value_order_ref, value_sell_cap
+from src.common.schemas import PositionSnapshot
 from src.common.value_view import ValueHolding
 from src.ledger.contracts import stock_contract
 from tests.value_book_fixtures import order
@@ -116,6 +117,44 @@ def test_a_flex_only_fill_backfills_the_order_ref_and_retags(db) -> None:
     with db() as s:
         row = s.scalars(select(BrokerExecutionRow)).one()
         assert (row.book, row.order_ref) == ("value", "value:7")
+
+
+def _pos(symbol: str, qty: float, avg: float = 145.0) -> PositionSnapshot:
+    return PositionSnapshot(
+        symbol=symbol,
+        sec_type="STK",
+        position=qty,
+        avg_cost=avg,
+        market_value=qty * 150.0,
+        underlying=symbol,
+    )
+
+
+def test_get_positions_gives_the_wheel_its_own_shares_at_its_own_cost(db, value_book_db) -> None:
+    from src.common.schemas import ParsedStatement
+    from src.ibkr.portfolio import wheel_view
+    from src.ledger.ingest import ingest
+
+    ingest(
+        ParsedStatement(
+            account="U0000001", executions=[_exec(100, 140.0, "2026-10-01T15:00:00", exec_id="w")]
+        ),
+        source="flex",
+    )
+    order("GOOGL", shares=30, filled=30, avg=150.0)
+    out = wheel_view([_pos("GOOGL", 130), _pos("MSFT", 50)])
+    g = next(p for p in out if p.symbol == "GOOGL")
+    assert (g.position, g.avg_cost, g.market_value) == (100.0, 140.0, 15_000.0)
+    assert next(p for p in out if p.symbol == "MSFT").position == 50  # not shared: untouched
+
+
+def test_unreadable_value_db_drops_unexplained_stock(db, monkeypatch, tmp_path) -> None:
+    from src.ibkr.portfolio import wheel_view
+
+    bad = tmp_path / "value.db"
+    bad.write_bytes(b"garbage")
+    monkeypatch.setattr("src.common.value_view._path", lambda: bad)
+    assert wheel_view([_pos("MSFT", 50)]) == []  # W is 0 in an empty ledger: 50 unexplained
 
 
 def test_a_split_corporate_action_restates_the_wheels_count() -> None:

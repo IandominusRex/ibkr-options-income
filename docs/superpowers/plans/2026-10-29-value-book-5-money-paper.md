@@ -134,6 +134,7 @@ is the executing agent's own model name.
 | Task 8 - the book's rows, the executor, the night and the cycle | done | `6895151` | tests/test_value_live.py 14 passed (+14); with test_value_fence 31 passed; ruff check/format and `mypy src/value/{book,executor,live}.py` clean | 2026-11-04 | Red run: collection `ImportError: cannot import name 'book' from 'src.value'`; all 14 green on the first run of the code. **Two deviations, both harmless:** (1) `executor.send_order`'s closing `log.info` read `r.status` after its `with session()` block had closed; the status is now captured inside the block and logged from the local (cost if wrong: none, a log line). (2) **Double-count note (orchestrator note 2):** no code change in `_fund`/`buy_context`, both already do what the note asks: `ctx.gross_used` is built from this cycle's fresh broker snapshot (stock of both books + the CSP collateral still held + the other approved buys), and `_fund` recomputes `needed = cost - (room - gross_used)` from it every cycle and **overwrites** the stored `needed_usd`; it never subtracts a close made since, because a closed put is already out of the snapshot's collateral (docstrings say so). The double count the note flags lives on the other side, in Section B's `capital_release._service`, which subtracts today's filled release closes from the stored `needed_usd`: after a partial release, `_fund` has already rewritten `needed_usd` net of those closes and the runner subtracts them again, so it asks for too little; I left that file alone (Section B's, outside Section C). Cost if wrong: a request is under-served until the next cycle rewrites it, and the buy simply waits for room or lapses (errs toward closing less; no order is ever sent without the send-time room). Left for the whole-branch review. **Clock:** every time-sensitive call takes `NOW` as a parameter (`cycle(now=)`, `plan_night(now=)`, `decide(now=)`, `propose(now=)`); the wall clock appears only in `executor._now()` row timestamps, so no test needed pinning and the fixtures' `NOW` is untouched. Observation for the review (not changed): `_buy` gates at the ask and sends a mid `LimitOrder`, so the gate is the conservative side |
 | Task 9 - clientId 31's cycle and the book's messages | done | `39ea69d` | tests/test_value_stage3.py 2 passed (+2); with test_value_fence 19 passed (Part 2's `sys.modules` probe still loads no `ib_async`); ruff check/format and `mypy src/value/{stage3,notify}.py` clean | 2026-11-04 | Red run: collection `ImportError: cannot import name 'notify' from 'src.value'`. **One deviation:** `stage3.run_cycle` calls `get_positions(ib, include_value=True)`, a keyword Task 11 (E4) adds, so `mypy` failed with `call-arg` at this task; the call carries `# type: ignore[call-arg]` and a comment. `warn_unused_ignores = true` makes Task 11's mypy gate fail until the marker is removed, so **Section D must delete the ignore in Task 11**. Nothing calls `run_cycle` before Task 14 wires it, so the missing keyword is never reached at runtime (cost if wrong: none today; if Task 11 forgot, mypy says so) |
 | Section C exit | done | `b4f424c`, `6895151`, `39ea69d` + this docs(plan) commit (11 on the branch) | **full gate: pytest 5455 passed, 1 skipped (baseline 5393 + 62)**; `ruff check .` clean; `mypy src` 348 source files, no issues; `py_compile scripts/run_value.py` silent; protected-file diff (`src/orchestrator src/monitor src/spreads src/api src/news src/claude src/reporting src/research src/value_ai`) empty; `git diff --stat main...HEAD -- web` lists only `web/lib/api-types.ts` (1 line) | 2026-11-04 | Section C touches only `src/value/` (new `risk`, `sizing`, `book`, `executor`, `live`, `stage3`, `notify`; `scorecard.py` one metric) and tests. The docs-trigger rows for the new `src/value/` modules (ARCHITECTURE.md `src/value/` section, CLAUDE.md value-fence text) are Task 15's. Section D needs the operator's go-ahead |
+| Task 10 - `orderRef` through the ledger; value fills tagged | done | `6f610b7` (also commits the Section D entry row) | tests/test_value_attribution.py 7 passed (+2); with test_ledger_ingest, test_ledger_live, test_ledger_flex, test_ledger_models, test_web_fence, test_openapi_current 91 passed; ruff check/format and `mypy` on the 6 touched src files clean | 2026-11-04 | No deviation: the plan's diffs applied at the D2 line numbers. **Red run:** both new tests failed with `AttributeError: 'ParsedExecution' object has no attribute 'order_ref'`, not the plan's `ValidationError`: `ParsedExecution` keeps pydantic's default `extra="ignore"`, so the unknown keyword was dropped and the first read raised (cost if wrong: none, the same missing field). `_tag_value_book` runs after `_tag_spreads`, so a `value:` orderRef on a spreads underlying would be retagged `value`; that cannot happen, since the value gate refuses `reserved_for_spreads_book` (cost if wrong: one condition). A row the order-id pass tagged `system` before its orderRef arrived is retagged `value` on the backfill (the backfill marks it a tag candidate, and `_tag_books` now skips value rows). **For Part 6 (not changed here):** `src/reporting/trade_ledger.py` and the Sheets mirror treat a `book="value"` row like any non-spreads stock trade, so value shares show in the whole-account ledger as account truth, not split out (display only) |
 
 ## Roadmap (this plan is Part 5 of 6)
 
@@ -5283,8 +5284,8 @@ Root `CLAUDE.md`: "The `src/ledger/` fence".
 
 **Entry checks:**
 
-- [ ] **D1. Section C is in**, the gate green at baseline + 62.
-- [ ] **D2. The code Section D edits** (`main` at `da5d3c3`):
+- [x] **D1. Section C is in**, the gate green at baseline + 62.
+- [x] **D2. The code Section D edits** (`main` at `da5d3c3`):
 
   ```bash
   grep -nF 'class ParsedExecution(BaseModel):' src/common/schemas.py   # 1518:
@@ -5311,7 +5312,7 @@ Root `CLAUDE.md`: "The `src/ledger/` fence".
 **Interfaces:** `ParsedExecution.order_ref`; `broker_executions.order_ref` (added by `init_db`);
 `ingest._tag_value_book`, the run's `counts["value"]`; a backfilled `orderRef` retags the row.
 
-- [ ] **Step 1: Write the failing tests** — apply:
+- [x] **Step 1: Write the failing tests** — apply:
 
 ```diff
 diff --git a/tests/test_value_attribution.py b/tests/test_value_attribution.py
@@ -5422,8 +5423,8 @@ index 99cfc7a..bb04cf2 100644
  
 ```
 
-- [ ] **Step 2: Run them to see them fail** — `ValidationError` (`order_ref` is not a field).
-- [ ] **Step 3: The ledger** — apply:
+- [x] **Step 2: Run them to see them fail** — `ValidationError` (`order_ref` is not a field).
+- [x] **Step 3: The ledger** — apply:
 
 ```diff
 diff --git a/src/common/schemas.py b/src/common/schemas.py
@@ -5574,8 +5575,8 @@ index e744461..d4088f1 100644
      created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 ```
 
-- [ ] **Step 4: Run them to see them pass** — `tests/test_value_attribution.py tests/test_ledger_ingest.py tests/test_ledger_live.py tests/test_ledger_flex.py tests/test_ledger_models.py tests/test_web_fence.py tests/test_openapi_current.py`.
-- [ ] **Step 5: Gates and commit:**
+- [x] **Step 4: Run them to see them pass** — `tests/test_value_attribution.py tests/test_ledger_ingest.py tests/test_ledger_live.py tests/test_ledger_flex.py tests/test_ledger_models.py tests/test_web_fence.py tests/test_openapi_current.py`.
+- [x] **Step 5: Gates and commit:**
 
   ```bash
   git add src/common/schemas.py src/storage/models.py src/storage/db.py src/ledger/live.py src/ledger/flex.py src/ledger/ingest.py tests/test_value_attribution.py

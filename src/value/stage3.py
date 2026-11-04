@@ -65,10 +65,7 @@ async def run_cycle(cfg: Config, *, now: datetime, hourly: bool) -> list[str]:
     )
     try:
         ib.reqMarketDataType(cfg.ibkr.market_data_type)
-        # Task 11 (E4) adds ``include_value``; until then this call would raise. Nothing calls
-        # ``run_cycle`` before Task 14 wires it. ``warn_unused_ignores`` forces Task 11 to drop
-        # this marker once the keyword exists.
-        positions = get_positions(ib, include_value=True)  # type: ignore[call-arg]
+        positions = get_positions(ib, include_value=True)  # account truth: both books
         account = await get_account_snapshot_async(ib, cfg.secrets.ibkr_account or "")
         snap = build_snapshot(positions, account.net_liquidation)
         with value_session() as vs:

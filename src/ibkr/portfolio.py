@@ -13,7 +13,7 @@ from datetime import date
 
 from ib_async import IB, AccountValue
 
-from src.common.books import is_spreads_underlying
+from src.common.books import attribute, is_spreads_underlying
 from src.common.config import get_config
 from src.common.logging import get_logger
 from src.common.schemas import AccountSnapshot, OptionRight, PositionSnapshot
@@ -110,7 +110,70 @@ def _parse_expiry(yyyymmdd: str) -> date | None:
         return None
 
 
-def get_positions(ib: IB, *, include_spreads: bool = False) -> list[PositionSnapshot]:
+def wheel_view(positions: list[PositionSnapshot]) -> list[PositionSnapshot]:
+    """The wheel's own share of every stock position the value book may share (spec §9.2).
+
+    With value.db readable, only names the value book holds or is buying change: each becomes
+    ``min(W, broker - V claimed)`` shares (never below zero), at the wheel's own average cost from
+    the ledger, so a race in which a value fill lands first makes the wheel see fewer shares, never
+    more, and a value purchase never moves the wheel's covered-call strike floor. With value.db
+    unreadable every stock position is checked against W and kept only where the broker agrees
+    (no covered call on unexplained shares). A name left with no wheel share is dropped.
+    """
+    from src.common.value_view import read_book
+    from src.storage.wheel_shares import wheel_shares
+
+    stock = [p for p in positions if p.sec_type == "STK" and p.position]
+    if not stock:
+        return positions
+    book = read_book()
+    shared = {
+        (p.underlying or p.symbol).upper()
+        for p in stock
+        if book is None
+        or book.holding(p.underlying or p.symbol).claimed > 0
+        or book.holding(p.underlying or p.symbol).pending_sell > 0
+    }
+    if not shared:
+        return positions
+    w = wheel_shares(sorted(shared))
+    out: list[PositionSnapshot] = []
+    for p in positions:
+        sym = (p.underlying or p.symbol).upper()
+        if p.sec_type != "STK" or sym not in shared:
+            out.append(p)
+            continue
+        att = attribute(p.position, w[sym].shares, None if book is None else book.holding(sym))
+        if att.unexplained:
+            log.warning(
+                "value attribution %s: broker %.0f, wheel %.0f, value %.0f: the wheel uses %.0f",
+                sym,
+                att.broker,
+                att.wheel,
+                att.value_filled,
+                att.wheel_view,
+            )
+        if att.wheel_view <= 0:
+            continue
+        ratio = att.wheel_view / p.position
+        out.append(
+            p.model_copy(
+                update={
+                    "position": att.wheel_view,
+                    "avg_cost": w[sym].avg_cost if w[sym].avg_cost is not None else p.avg_cost,
+                    "market_value": None if p.market_value is None else p.market_value * ratio,
+                    "unrealized_pnl": None
+                    if p.unrealized_pnl is None
+                    else p.unrealized_pnl * ratio,
+                }
+            )
+        )
+    return out
+
+
+def get_positions(
+    ib: IB, *, include_spreads: bool = False, include_value: bool = False
+) -> list[PositionSnapshot]:
     """Snapshot current positions (stocks and options) as typed objects.
 
     The daily credit-spread system trades in this same account. Its contracts
@@ -118,6 +181,10 @@ def get_positions(ib: IB, *, include_spreads: bool = False) -> list[PositionSnap
     the intraday monitor, profit-take, rolls, the scan's budget seeding, the approval re-gate,
     the EOD report — ever alerts on, sizes against, or closes a spread leg. Pass
     ``include_spreads=True`` only for an account-truth view (``scripts/healthcheck.py``).
+
+    Stock the value book holds is likewise taken out (``wheel_view``, spec §9.2): the wheel sees
+    only its own shares. ``include_value=True`` is the account-truth view (the healthcheck, and the
+    value process, which reconciles both books itself).
     """
     out: list[PositionSnapshot] = []
     skipped = 0
@@ -151,7 +218,7 @@ def get_positions(ib: IB, *, include_spreads: bool = False) -> list[PositionSnap
             )
         )
     log.info("Fetched %d portfolio positions (%d spreads-book skipped)", len(out), skipped)
-    return out
+    return out if include_value else wheel_view(out)
 
 
 # The account stream's USD exchange rate (base-currency units per USD). A plain account-update
