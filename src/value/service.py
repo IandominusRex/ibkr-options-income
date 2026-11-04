@@ -30,11 +30,11 @@ from sqlalchemy.orm import Session
 
 from src.common import value_inputs as vi
 from src.common.config import get_config
-from src.common.value_keep_fresh import write_keep_fresh
+from src.common.value_keep_fresh import write_filing_reads, write_keep_fresh
 from src.common.value_types import Classification, MarketFacts, NewsVolume, ValueInputs
 from src.common.value_universe import build_value_universe
 from src.value import claude_verdicts, reevaluate, shadow
-from src.value.claude_reads import plan_auto_reads
+from src.value.claude_reads import plan_auto_reads, plan_filing_reads
 from src.value.rank import filed_lists, rank_list, rs_cutoff
 from src.value.ruleset import ruleset_id
 from src.value.scorecard import build_scorecard
@@ -291,7 +291,7 @@ def run_nightly(
             ops = claude_verdicts.opinions(vs, cards, vcfg.rules)
             claude_night = claude_verdicts.night_counts(cards, plan.tags, ops, review)
             applied = claude_verdicts.applies(vs, vcfg, is_live=get_config().is_live)
-            claude_verdicts.persist_effective(
+            effective = claude_verdicts.persist_effective(
                 vs,
                 cards,
                 ops,
@@ -300,9 +300,21 @@ def run_nightly(
                 now=started,
                 review_above_pct=review,
             )
+            deep_reads = sorted(
+                {
+                    sym
+                    for (sym, _), eff in effective.items()
+                    if eff.verdict == "READY" and plan.tags.get(sym) == "trading"
+                }
+            )
             tripped = claude_verdicts.check_breaker(vs, vcfg, claude_night, started)
             kill = claude_verdicts.update_kill_triggers(vs, cards, vcfg, plan.as_of)
-            queued = plan_auto_reads(vs, started, vcfg) if vcfg.claude.enabled else {}
+            queued: dict[str, int] = {}
+            if vcfg.claude.enabled:
+                queued = plan_auto_reads(vs, started, vcfg)
+                queued["filing"] = plan_filing_reads(
+                    vs, vi.latest_periodic(rs, deep_reads), started
+                )
             stepped = reevaluate.regime_stepped(
                 previous_regime(vs), regime, vcfg.rules.reevaluation
             )
@@ -354,5 +366,6 @@ def run_nightly(
     # After the commit: a failed night leaves the previous list in place. The research sweep
     # reads this file to keep held names' bars and filings current (spec §6.9).
     write_keep_fresh(keep_fresh)
+    write_filing_reads(deep_reads if vcfg.claude.enabled else [])
     log.info("value nightly %s: %d names; %s", plan.as_of, len(cards), json.dumps(summary))
     return summary

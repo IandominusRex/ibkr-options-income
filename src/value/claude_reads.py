@@ -32,6 +32,7 @@ from src.common.value_ai_types import (
     FilingSection,
     Range,
 )
+from src.common.value_types import FilingEvent, ValueFinancials
 from src.value.claude_valuation import bounds_for
 from src.value.claude_verdicts import accept
 from src.value.schemas import LISTS, ValueScorecard
@@ -47,8 +48,10 @@ log = logging.getLogger(__name__)
 
 PRIORITY = {"request": 0, "review": 1, "filing": 2, "top": 3, "stale": 4}
 DEEP_KINDS = ("filing",)
+FILING_WAIT_DAYS = 7  # a filing read whose sections never arrive is dropped after a week
 Reader = Callable[[AnalystRequest], AnalystResult]
 SectionsFor = Callable[[str, str], list[FilingSection]]
+FinancialsFor = Callable[[str], ValueFinancials | None]
 
 
 def _fmt(v: float | None, pct: bool = False) -> str:
@@ -280,6 +283,29 @@ def plan_auto_reads(vs: Session, now: datetime, cfg: ValueCfg) -> dict[str, int]
     return counts
 
 
+def plan_filing_reads(vs: Session, latest: dict[str, FilingEvent], now: datetime) -> int:
+    """Queue a filing read of each name's newest periodic filing that has not had one (held and
+    READY names, spec §8.3: "a filing read on each new 10-K/10-Q"). *latest*: from
+    ``value_inputs.latest_periodic`` for the names that qualify tonight."""
+    queued = 0
+    for symbol, filing in sorted(latest.items()):
+        seen = vs.scalars(
+            select(ValueClaudeReadRow.id).where(
+                ValueClaudeReadRow.symbol == symbol,
+                ValueClaudeReadRow.kind == "filing",
+                ValueClaudeReadRow.accn == filing.accn,
+            )
+        ).first()
+        if seen is not None:
+            continue
+        if (
+            queue_read(vs, symbol, kind="filing", reason="filing", now=now, accn=filing.accn)
+            is not None
+        ):
+            queued += 1
+    return queued
+
+
 def _review_text(vs: Session, reevaluation_id: int | None) -> str:
     if reevaluation_id is None:
         return ""
@@ -299,6 +325,7 @@ def run_queue(
     now: datetime,
     cfg: ValueCfg,
     sections_for: SectionsFor | None = None,
+    financials_for: FinancialsFor | None = None,
     limit: int | None = None,
 ) -> dict[str, Any]:
     """Run queued reads, best priority first, within today's caps. A filing read whose sections
@@ -331,7 +358,11 @@ def run_queue(
             if row.kind == "filing":
                 sections = sections_for(row.symbol, row.accn or "") if sections_for else []
                 if not sections:
-                    summary["waiting"] += 1
+                    if now - row.requested_at > timedelta(days=FILING_WAIT_DAYS):
+                        row.status, row.detail = "skipped", "the filing's sections never arrived"
+                        summary["skipped"] += 1
+                    else:
+                        summary["waiting"] += 1
                     continue
             req = build_request(
                 row,
@@ -346,7 +377,18 @@ def run_queue(
             card = _card(vs, row.symbol) if row is not None else None
             if row is None or card is None:
                 continue
-            done = accept(vs, row, result, card, cfg, now=now)
+            done = accept(
+                vs,
+                row,
+                result,
+                card,
+                cfg,
+                now=now,
+                sections=sections,
+                financials=financials_for(row.symbol)
+                if financials_for and row.kind == "filing"
+                else None,
+            )
             summary["done" if result.reply is not None else "failed"] += 1
             log.info(
                 "value claude read %s %s (%s): %s; %d verdict(s), %d trigger(s)",

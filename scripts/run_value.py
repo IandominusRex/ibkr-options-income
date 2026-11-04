@@ -23,6 +23,7 @@ import signal
 import threading
 from datetime import UTC, datetime
 
+import src.common.value_inputs as vi
 from scripts.value_feed import (
     FactsCache,
     NightRetry,
@@ -32,7 +33,8 @@ from scripts.value_feed import (
 )
 from src.common.config import get_config
 from src.common.logging import setup_logging
-from src.common.value_ai_types import AnalystRequest, AnalystResult
+from src.common.value_ai_types import AnalystRequest, AnalystResult, FilingSection
+from src.common.value_types import ValueFinancials
 from src.value.claude_reads import run_queue
 from src.value.service import plan_run, run_nightly, startup_check
 from src.value_ai.analyst import Analyst
@@ -52,13 +54,36 @@ def _read(req: AnalystRequest) -> AnalystResult:
     return asyncio.run(_analyst.read(req, datetime.now(UTC)))
 
 
+def _sections(symbol: str, accn: str) -> list[FilingSection]:
+    with vi.research_read() as rs:
+        return [] if rs is None else vi.filing_sections(rs, accn)
+
+
+def _financials(symbol: str) -> ValueFinancials | None:
+    """The filings as known today, for grounding's XBRL check (spec §8.2)."""
+    stale = get_config().value.rules.data_quality.stale_item_days
+    with vi.research_read() as rs:
+        if rs is None:
+            return None
+        _, payload = vi.read_payload(rs, symbol)
+    if payload is None:
+        return None
+    return vi.build_value_financials(payload, as_of=datetime.now(UTC).date(), stale_item_days=stale)
+
+
 def _claude_tick() -> None:
     """Claude's queued reads (spec §8.5): requests first, then the automatic set, within the
     day's caps. Each read commits on its own; a failed read is recorded, never retried blind."""
     cfg = get_config().value
     if not cfg.claude.enabled:
         return
-    summary = run_queue(_read, now=datetime.now(UTC).replace(tzinfo=None), cfg=cfg)
+    summary = run_queue(
+        _read,
+        now=datetime.now(UTC).replace(tzinfo=None),
+        cfg=cfg,
+        sections_for=_sections,
+        financials_for=_financials,
+    )
     if any(summary.values()):
         log.info("value: claude reads %s", summary)
 

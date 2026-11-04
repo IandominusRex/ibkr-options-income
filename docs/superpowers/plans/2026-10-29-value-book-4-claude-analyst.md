@@ -124,6 +124,7 @@ is the executing agent's own model name.
 | C2 (Task 8) the claude track in the shadow record | done | `8702d97` | red first (`AttributeError`/`TypeError` as the plan expected: no `open_claude_signals`, no `kill` on `ReevalContext`), then task gate: 63 passed (shadow, service, report, fence); ruff check + format clean; mypy clean on `shadow.py`, `service.py`; 3 new tests | 2026-11-04 | No deviation; all hunks applied with Edit (same content). Checked that no other function in `shadow.py` filters by track, so claude rows fill, step, mark and close through the existing baseline code unchanged; baseline behaviour is unchanged (the existing 21 shadow tests and the service tests stayed green, `opened` gains `claude` only while `value.claude.enabled`). Cost-if-wrong: per ruling 7, per-track entry rules in one function. |
 | C3 (Task 9) the report: Claude beside the baseline | done | `412bed7` | red first (`ImportError: cannot import name 'claude_section'`), then task gate: 29 passed (report, fence); `py_compile` of `scripts/value_report.py` and `scripts/run_value.py` silent; ruff check + format clean on the 3 touched files; mypy clean on `report.py`, `value_report.py`; 1 new test (pinned lines matched first time) | 2026-11-04 | No deviation; edits applied with Edit (same content). `scripts/value_report.py` now imports `src.value.claude_verdicts.breaker_state` (inside the value fence, the fence test stays green). `run_value.py` and `value_report.py` were never imported. Cost-if-wrong: none (display only). |
 | **Section C exit** | done | 3 task commits + this docs(plan) commit | **full gate: pytest 5368 passed, 1 skipped (baseline 5305 + 63)**; `ruff check .` clean; `mypy src` 336 source files, clean; protected-file diff empty; `py_compile scripts/run_value.py scripts/value_report.py` silent; `git status --short` clean | 2026-11-04 | New-test running total: 47 + 16 = 63 of 77 (Section C added 12 + 3 + 1 = 16). Two checkbox-tick `sed` commands used line numbers one or two lines stale and matched nothing; the ticks were re-applied by correct line. |
+| D1 (Task 10) the research worker's `filing_sections` job | done | `0be1aeb` | red first (`ImportError: cannot import name 'filing_sections'`), then task gate: 79 passed (filing_sections, value_universe, research_submissions, value_keep_fresh, value_inputs, value_fence, value_service); `ls data/value_filing_reads.json` fails (conftest redirect holds); ruff check + format clean on the 9 touched files; mypy clean on `src/research`, `value_keep_fresh.py`, `value_inputs.py`; 6 new tests | 2026-11-04 | No deviation; the job module and test file written whole, the other edits applied with Edit (same content as the diff). The commit also carries the Section D entry row and the D1-D4 entry ticks. Cost-if-wrong: per ruling 12, a heuristic slice, each part one regex. |
 
 ## Roadmap (this plan is Part 4 of 6)
 
@@ -5850,7 +5851,7 @@ still fails** (no test wrote it).
   `value_inputs.latest_periodic(session, symbols) -> dict[symbol, FilingEvent]`,
   `value_inputs.filing_sections(session, accn) -> list[FilingSection]`.
 
-- [ ] **Step 1: Write the failing tests** — create `tests/test_research_filing_sections.py`:
+- [x] **Step 1: Write the failing tests** — create `tests/test_research_filing_sections.py`:
 
 ```python
 """The research worker's ``filing_sections`` job (value book spec §8.2, §8.5): slicing a filing
@@ -6047,13 +6048,13 @@ index addfeda..6343e20 100644
      }
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_research_filing_sections.py tests/test_value_universe.py`
   Expected: FAIL — `ImportError: cannot import name 'filing_sections' from 'src.research.ingest'`
   (collection error) and the counts' missing `filing_sections` key.
 
-- [ ] **Step 3: The job** — create `src/research/ingest/filing_sections.py`:
+- [x] **Step 3: The job** — create `src/research/ingest/filing_sections.py`:
 
 ```python
 """The research worker's ``filing_sections`` job (value book spec §8.2 "Grounded facts", §8.5
@@ -6159,7 +6160,7 @@ def ingest_filing_sections(symbol: str, cik: str) -> int:
     return len(sections)
 ```
 
-- [ ] **Step 4: The table, the drain, the sweep, the file and the readers** — apply:
+- [x] **Step 4: The table, the drain, the sweep, the file and the readers** — apply:
 
 ```diff
 diff --git a/src/common/value_inputs.py b/src/common/value_inputs.py
@@ -6399,12 +6400,12 @@ index 2845f87..bd6f8a7 100644
  
 ```
 
-- [ ] **Step 5: Run them to see them pass**
+- [x] **Step 5: Run them to see them pass**
 
   Run: `.venv/bin/python -m pytest -q tests/test_research_filing_sections.py tests/test_value_universe.py tests/test_research_submissions.py tests/test_value_keep_fresh.py tests/test_value_inputs.py tests/test_value_fence.py tests/test_value_service.py`
   Expected: PASS; then `ls data/value_filing_reads.json` fails (the conftest redirect holds).
 
-- [ ] **Step 6: Gates and commit**
+- [x] **Step 6: Gates and commit**
 
   Run: `.venv/bin/ruff check` and `.venv/bin/ruff format --check` on the nine touched files;
   `.venv/bin/mypy src/research src/common/value_keep_fresh.py src/common/value_inputs.py`.

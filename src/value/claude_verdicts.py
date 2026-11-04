@@ -24,8 +24,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.common.config import ValueCfg, ValueRulesCfg
-from src.common.value_ai_types import AnalystResult, Drivers, KillTrigger
-from src.value import kill_triggers
+from src.common.value_ai_types import AnalystResult, Drivers, FilingSection, KillTrigger
+from src.common.value_types import ValueFinancials
+from src.value import grounding, kill_triggers
 from src.value.claude_valuation import ClaudeValue, claude_fair_value
 from src.value.effective import ClaudeOpinion, Effective, effective
 from src.value.schemas import LISTS, ValueScorecard
@@ -51,6 +52,8 @@ class Accepted:
     kept_earlier: int = 0  # raised between filings: the earlier drivers stand
     triggers: int = 0
     review_state: str | None = None
+    facts: int = 0  # grounded facts stored
+    dropped: int = 0  # facts that failed grounding (stored, marked ungrounded)
 
 
 def _latest_verdict(vs: Session, symbol: str, list_name: str) -> ValueClaudeVerdictRow | None:
@@ -87,9 +90,12 @@ def accept(
     cfg: ValueCfg,
     *,
     now: datetime,
+    sections: list[FilingSection] | None = None,
+    financials: ValueFinancials | None = None,
 ) -> Accepted:
     """Store one read's outcome. The read row records the call either way; a reply that is None
-    (a failure, a malformed reply) stores nothing else: no notes, never a guess."""
+    (a failure, a malformed reply) stores nothing else: no notes, never a guess. A filing read's
+    facts are checked against *sections* (and *financials* for XBRL items) by ``grounding``."""
     call = result.call
     read.read_at, read.model, read.backend = now, call.model, call.backend
     read.latency_ms, read.cost_usd, read.error = call.latency_ms, call.cost_usd, call.error
@@ -142,6 +148,30 @@ def accept(
             )
         )
         out.verdicts += 1
+    for fact in reply.facts:
+        ok, why = grounding.check_fact(fact, sections or [], financials)
+        vs.add(
+            ValueClaudeFactRow(
+                read_id=read.id,
+                symbol=read.symbol,
+                accn=fact.accn,
+                kind=fact.kind,
+                value=fact.value,
+                unit=fact.unit,
+                quote=fact.quote,
+                item=fact.item,
+                grounded=ok and call.backend == "cli",
+                why=why or ("" if call.backend == "cli" else "an Ollama reply is never grounded"),
+                created_at=now,
+            )
+        )
+        if ok and call.backend == "cli":
+            out.facts += 1
+        else:
+            out.dropped += 1
+    if read.kind == "filing":
+        vs.flush()
+        return out
     vs.add(
         ValueClaudeNoteRow(
             read_id=read.id,

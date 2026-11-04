@@ -348,3 +348,74 @@ def test_the_operator_script_queues_a_read_and_resets_the_breaker(value_db, caps
     assert main(["--read", "NVDA", "--reset-breaker"]) == 0
     out = capsys.readouterr().out
     assert "queued NVDA" in out and "NVDA: already queued" in out and "breaker reset" in out
+
+
+def test_a_filing_read_stores_each_fact_with_its_grounding(value_db) -> None:
+    from src.common.value_ai_types import FilingSection, ProposedFact
+    from src.value.store import ValueClaudeFactRow
+
+    sections = [
+        FilingSection(
+            accn="0000000001-26-000001",
+            form="10-K",
+            section="Item 7 MD&A",
+            text="We now expect revenue to decline. A customer that was 18% of sales left.",
+        )
+    ]
+    facts = [
+        ProposedFact(
+            kind="guidance_cut",
+            accn="0000000001-26-000001",
+            quote="We now expect revenue to decline.",
+        ),
+        ProposedFact(
+            kind="customer_concentration",
+            value=21.0,
+            unit="pct",
+            accn="0000000001-26-000001",
+            quote="A customer that was 18% of sales left.",
+        ),
+    ]
+    result = AnalystResult(
+        read_id=0,
+        reply=AnalystReply(facts=facts),
+        call=AnalystCall(model="sonnet", backend="cli"),
+    )
+    with value_session() as s:
+        read = ValueClaudeReadRow(
+            symbol="STDY",
+            kind="filing",
+            reason="filing",
+            priority=2,
+            requested_at=NOW,
+            accn="0000000001-26-000001",
+        )
+        s.add(read)
+        s.flush()
+        out = cv.accept(s, read, result, CHEAP, CFG, now=NOW, sections=sections)
+        assert (out.facts, out.dropped) == (1, 1)
+    with value_session() as s:
+        rows = {r.kind: (r.grounded, r.why) for r in s.scalars(select(ValueClaudeFactRow))}
+        assert rows == {
+            "guidance_cut": (True, ""),
+            "customer_concentration": (False, "the number is not in the quote"),
+        }
+        assert s.scalars(select(ValueClaudeNoteRow)).all() == []  # a filing read writes no prose
+
+
+def test_filing_reads_are_queued_once_per_filing_and_wait_for_their_sections(value_db) -> None:
+    from src.common.value_types import FilingEvent
+    from src.value.claude_reads import plan_filing_reads
+
+    _file(CHEAP)
+    q10 = FilingEvent(accn="0000000001-26-000003", form="10-Q", filed=date(2026, 5, 5))
+    with value_session() as s:
+        assert plan_filing_reads(s, {"STDY": q10}, NOW) == 1
+        assert plan_filing_reads(s, {"STDY": q10}, NOW) == 0  # already queued for that filing
+    calls: list[AnalystRequest] = []
+    no_sections = run_queue(calls.append, now=NOW, cfg=ON, sections_for=lambda sym, accn: [])
+    assert no_sections["waiting"] == 1 and calls == []
+    later = run_queue(
+        calls.append, now=NOW + timedelta(days=8), cfg=ON, sections_for=lambda sym, accn: []
+    )
+    assert later["skipped"] == 1  # the sections never came: dropped after a week

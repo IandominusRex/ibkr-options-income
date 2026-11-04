@@ -36,6 +36,8 @@ PURE = (
     "reevaluate",
     "claude_valuation",
     "effective",
+    "kill_triggers",
+    "grounding",
 )
 
 FORBIDDEN_FOR_VALUE = (
@@ -274,6 +276,8 @@ def test_the_value_entrypoint_imports_only_its_feed_and_the_service() -> None:
         "src.common.config",
         "src.common.logging",
         "src.common.value_ai_types",
+        "src.common.value_inputs",
+        "src.common.value_types",
         "src.value.claude_reads",
         "src.value.service",
         "src.value_ai.analyst",
@@ -312,15 +316,16 @@ def test_the_value_process_loads_no_wheel_layer_and_no_ibkr() -> None:
 def test_the_research_worker_owns_the_filings_feed() -> None:
     """Spec §6.9: the submissions and going-concern jobs live in src/research and fetch through
     src/data; the value side reads their table only through the neutral loader."""
-    for name in ("submissions", "going_concern"):
+    for name in ("submissions", "going_concern", "filing_sections"):
         mods = imported_modules(ROOT / "src" / "research" / "ingest" / f"{name}.py")
         assert _reaches(mods, "src.data.factory") and not _reaches(mods, "src.value")
     readers = [
         str(p.relative_to(ROOT))
         for p in [*VALUE, *(ROOT / "scripts").glob("value_*.py")]
         if "FilingIndexRow" in p.read_text(encoding="utf-8")
+        or "FilingSectionRow" in p.read_text(encoding="utf-8")
     ]
-    assert readers == []  # only src/common/value_inputs.py names the table
+    assert readers == []  # only src/common/value_inputs.py names the tables
 
 
 VALUE_AI = sorted((ROOT / "src" / "value_ai").rglob("*.py"))
