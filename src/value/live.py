@@ -34,8 +34,8 @@ from sqlalchemy.orm import Session
 from src.common.books import is_spreads_underlying, value_sell_cap
 from src.common.config import ValueCfg
 from src.common.value_commands import trim_episode
-from src.common.value_types import DayBar
-from src.value import sizing
+from src.common.value_types import DayBar, FilingEvent, NewsVolume
+from src.value import reevaluate, sizing
 from src.value.book import (
     TRIM_STATE_KEYS,
     WORKING,
@@ -52,6 +52,7 @@ from src.value.book import get_state as book_state
 from src.value.claude_reads import queue_read
 from src.value.executor import ValueBroker, send_order
 from src.value.exits import DayFacts
+from src.value.residuals import Move
 from src.value.risk import BuyContext, fundable_only, validate
 from src.value.schemas import ValueScorecard
 from src.value.store import (
@@ -62,6 +63,7 @@ from src.value.store import (
     ValuePositionRow,
     ValueProposalRow,
     ValueReevaluationRow,
+    ValueShadowRow,
     ValueTickerFileRow,
 )
 
@@ -70,6 +72,7 @@ SessionFactory = Callable[[], AbstractContextManager[Session]]
 SNAPSHOT = "snapshot"
 LedgerFill = Callable[[str], tuple[float, float | None]]  # orderRef -> (shares filled, avg price)
 PYTHON_STOPS = ("stop", "trail", "thesis", "catastrophe", "remark_below")
+_SEVERITY_RANK = {"minor": 0, "major": 1}
 
 
 @dataclass(frozen=True)
@@ -910,7 +913,7 @@ def mirror_reevaluations(vs: Session, day: date, now: datetime) -> int:
             list_name=pos.list_name,
             session=day,
             last_session=day,
-            severity=max(r.severity for r in shadow_rows),
+            severity=max((r.severity for r in shadow_rows), key=_SEVERITY_RANK.__getitem__),
             triggers_json=src.triggers_json,
             plan_before_json=pos.plan_json or "{}",
             plan_after_json=pos.plan_json or "{}",
@@ -924,4 +927,123 @@ def mirror_reevaluations(vs: Session, day: date, now: datetime) -> int:
         vs.flush()
         queue_read(vs, pos.symbol, kind="review", reason="review", now=now, reevaluation_id=row.id)
         n += 1
+    return n
+
+
+@dataclass(frozen=True)
+class HeldInputs:
+    """One held name's plain-data inputs to spec §7.1's triggers, built by the night (the same
+    sources the shadow path reads): tonight's residual move, the filings since the last check,
+    the report dates, the news volume, the regime step, the kill triggers near firing and the
+    name's session dates (to count sessions since an open re-evaluation)."""
+
+    move: Move | None = None
+    filings: list[FilingEvent] = field(default_factory=list)
+    earnings: list[date] = field(default_factory=list)
+    news: NewsVolume | None = None
+    regime_stepped: bool = False
+    kill: list[str] = field(default_factory=list)
+    sessions: list[date] = field(default_factory=list)
+    verdict_now: str | None = None
+
+
+def _sessions_between(opened: date, day: date, sessions: list[date]) -> int:
+    """Sessions after *opened* up to and including *day*: counted on the name's bars, else on
+    weekdays (a holiday makes the count one high, which only keeps a trigger out of the debounce)."""
+    if sessions:
+        return sum(1 for d in sessions if opened < d <= day)
+    n, d = 0, opened
+    while d < day:
+        d += timedelta(days=1)
+        n += d.weekday() < 5
+    return n
+
+
+def held_reevaluations(
+    vs: Session,
+    day: date,
+    now: datetime,
+    *,
+    inputs: dict[str, HeldInputs],
+    cfg: ValueCfg,
+    ruleset_version: str,
+    ruleset_hash: str,
+) -> int:
+    """Spec §7.1's whole trigger set for each open position with no open READY shadow entry on
+    its name and list (the mirror covers the rest). A trigger opens, or joins within the debounce,
+    the position's held re-evaluation and queues Claude's review of a new one. The plan is the
+    position's own: no level and no stop moves here under the ``value`` policy (shock stops are
+    ``full`` only). Returns the re-evaluations opened or extended."""
+    rcfg = cfg.rules.reevaluation
+    checked = dict(book_state(vs, "held_checked") or {})
+    n = 0
+    for pos in vs.scalars(select(ValuePositionRow).where(ValuePositionRow.status == "open")):
+        covered = vs.scalars(
+            select(ValueShadowRow.id).where(
+                ValueShadowRow.symbol == pos.symbol,
+                ValueShadowRow.list_name == pos.list_name,
+                ValueShadowRow.status == "open",
+                ValueShadowRow.kind == "ready",
+            )
+        ).first()
+        if covered is not None:
+            continue
+        after = date.fromisoformat(checked.get(str(pos.id), pos.opened_on.isoformat()))
+        checked[str(pos.id)] = day.isoformat()
+        latest = vs.scalars(
+            select(ValueReevaluationRow)
+            .where(ValueReevaluationRow.position_id == pos.id)
+            .order_by(ValueReevaluationRow.session.desc(), ValueReevaluationRow.id.desc())
+            .limit(1)
+        ).first()
+        have = inputs.get(pos.symbol, HeldInputs())
+        fired = reevaluate.session_triggers(
+            day=day,
+            after=after,
+            move=have.move,
+            filings=have.filings,
+            earnings=have.earnings,
+            news=have.news,
+            regime_stepped=have.regime_stepped,
+            last_reevaluation=latest.session if latest is not None else pos.opened_on,
+            cfg=rcfg,
+            kill=have.kill or None,
+        )
+        sev = reevaluate.severity(fired)
+        if sev is None:
+            continue
+        items = [{"day": day.isoformat(), **t.model_dump()} for t in fired]
+        since = None if latest is None else _sessions_between(latest.session, day, have.sessions)
+        if latest is not None and reevaluate.joins(
+            latest.severity,  # type: ignore[arg-type]
+            since,
+            sev,
+            rcfg,
+        ):
+            latest.triggers_json = json.dumps([*json.loads(latest.triggers_json), *items])
+            latest.last_session = day
+            n += 1
+            continue
+        row = ValueReevaluationRow(
+            shadow_id=0,
+            position_id=pos.id,
+            symbol=pos.symbol,
+            list_name=pos.list_name,
+            session=day,
+            last_session=day,
+            severity=sev,
+            triggers_json=json.dumps(items),
+            plan_before_json=pos.plan_json or "{}",
+            plan_after_json=pos.plan_json or "{}",
+            verdict_at_entry="READY",
+            verdict_now=have.verdict_now,
+            ruleset_version=ruleset_version,
+            ruleset_hash=ruleset_hash,
+            created_at=now,
+        )
+        vs.add(row)
+        vs.flush()
+        queue_read(vs, pos.symbol, kind="review", reason="review", now=now, reevaluation_id=row.id)
+        n += 1
+    set_state(vs, "held_checked", checked, now)
     return n

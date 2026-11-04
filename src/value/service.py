@@ -35,9 +35,11 @@ from src.common.value_keep_fresh import write_filing_reads, write_keep_fresh
 from src.common.value_types import Classification, MarketFacts, NewsVolume, ValueInputs
 from src.common.value_universe import build_value_universe
 from src.value import claude_verdicts, live, reevaluate, shadow, sizing
+from src.value.book import get_state as book_state
 from src.value.book import set_state
 from src.value.claude_reads import plan_auto_reads, plan_filing_reads
 from src.value.rank import filed_lists, rank_list, rs_cutoff
+from src.value.residuals import moves
 from src.value.ruleset import ruleset_id
 from src.value.scorecard import build_scorecard
 from src.value.store import (
@@ -363,7 +365,21 @@ def run_nightly(
             book_summary: dict[str, Any] = {}
             if vcfg.book.enabled and book is not None:
                 book_summary = _book_night(
-                    vs, rs, cards, effective, plan, book, now=started, cfg=vcfg
+                    vs,
+                    rs,
+                    cards,
+                    effective,
+                    plan,
+                    book,
+                    now=started,
+                    cfg=vcfg,
+                    held_ctx=shadow.ReevalContext(
+                        earnings=recent_earnings or {},
+                        news=news or {},
+                        regime_stepped=stepped,
+                        kill=kill,
+                    ),
+                    ruleset=(version, digest),
                 )
             verdicts = {
                 name: dict(Counter(c.verdict_for(name) for c in cards))
@@ -401,6 +417,63 @@ def run_nightly(
     return summary
 
 
+def _held_inputs(
+    vs: Session,
+    rs: Session,
+    by_symbol: dict[str, Any],
+    ctx: shadow.ReevalContext,
+    plan: RunPlan,
+    cfg: Any,
+) -> dict[str, live.HeldInputs]:
+    """Tonight's §7.1 inputs for each open position, from the same sources the shadow path reads
+    (its residual model, the research filing index, the plain data the entrypoint hands in)."""
+    rcfg = cfg.rules.reevaluation
+    checked = book_state(vs, "held_checked") or {}
+    positions = list(vs.scalars(select(ValuePositionRow).where(ValuePositionRow.status == "open")))
+    if not positions:
+        return {}
+    symbols = sorted({p.symbol for p in positions})
+    etf_for = {
+        s: rcfg.sector_etfs.get(
+            (by_symbol[s].classification.sector or "") if s in by_symbol else "",
+            rcfg.fallback_etf,
+        )
+        for s in symbols
+    }
+    market = shadow.load_bars(rs, set(symbols) | set(etf_for.values()), plan.as_of)
+    oldest = min(
+        date.fromisoformat(checked.get(str(p.id), p.opened_on.isoformat())) for p in positions
+    )
+    filings = vi.filings_between(rs, symbols, oldest, plan.as_of)
+    out: dict[str, live.HeldInputs] = {}
+    for symbol in symbols:
+        bars = market.get(symbol, [])
+        etf = market.get(etf_for[symbol], [])
+        found = (
+            moves(
+                [(b.date, b.close) for b in bars],
+                [(b.date, b.close) for b in etf],
+                [plan.as_of],
+                rcfg,
+            )
+            if bars
+            else {}
+        )
+        card = by_symbol.get(symbol)
+        list_name = next(p.list_name for p in positions if p.symbol == symbol)
+        out[symbol] = live.HeldInputs(
+            move=found.get(plan.as_of),
+            filings=filings.get(symbol, []),
+            earnings=ctx.earnings.get(symbol, []),
+            news=ctx.news.get(symbol),
+            regime_stepped=ctx.regime_stepped,
+            kill=ctx.kill.get(symbol, []),
+            sessions=[b.date for b in bars],
+            verdict_now=card.verdict_for(list_name) if card is not None else None,
+        )
+    return out
+
+
 def _book_night(
     vs: Session,
     rs: Session,
@@ -411,9 +484,12 @@ def _book_night(
     *,
     now: datetime,
     cfg: Any,
+    held_ctx: shadow.ReevalContext | None = None,
+    ruleset: tuple[str, str] | None = None,
 ) -> dict[str, Any]:
-    """The night's money step (Part 5): mirror tonight's re-evaluations onto held positions, set
-    the trend brake, step the held plans and propose tonight's buys and sells."""
+    """The night's money step (Part 5): mirror tonight's re-evaluations onto held positions, give
+    a held name with no shadow entry the whole §7.1 trigger set (Part 6), set the trend brake,
+    step the held plans and propose tonight's buys and sells."""
     by_symbol = {c.symbol: c for c in cards}
     names = held_names(vs) | {s for (s, _), e in effective.items() if e.verdict == "READY"}
     bars = shadow.load_bars(rs, names | {shadow.BENCHMARK}, plan.as_of)
@@ -421,6 +497,15 @@ def _book_night(
     brake = bool(sizing.trend_brake(sizing.month_end_closes(spy)))
     set_state(vs, "trend", {"brake": brake, "as_of": plan.as_of.isoformat()}, now)
     mirrored = live.mirror_reevaluations(vs, plan.as_of, now)
+    held_n = live.held_reevaluations(
+        vs,
+        plan.as_of,
+        now,
+        inputs=_held_inputs(vs, rs, by_symbol, held_ctx or shadow.ReevalContext(), plan, cfg),
+        cfg=cfg,
+        ruleset_version=(ruleset or ruleset_id(cfg))[0],
+        ruleset_hash=(ruleset or ruleset_id(cfg))[1],
+    )
     facts = {}
     going_concern = vi.going_concern_flags(rs, sorted(names), plan.as_of)
     for (symbol, list_name), eff in effective.items():
@@ -445,4 +530,9 @@ def _book_night(
         is_live=hooks.is_live,
         trend_brake=brake,
     )
-    return {**asdict(night), "trend_brake": brake, "mirrored": mirrored}
+    return {
+        **asdict(night),
+        "trend_brake": brake,
+        "mirrored": mirrored,
+        "held_reevaluations": held_n,
+    }
