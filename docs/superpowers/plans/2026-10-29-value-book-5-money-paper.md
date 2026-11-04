@@ -119,6 +119,7 @@ is the executing agent's own model name.
 | Section / task | Status | Commits | Gate | Date | Rulings |
 |---|---|---|---|---|---|
 | Section A entry | checks A1–A5 passed | 0 (branch `feat/value-book-5` at `490d8ca` = main with Part 4 merged locally, not pushed) | **baseline: pytest 5393 passed, 1 skipped**; ruff clean; mypy 338 source files; df 29 GiB free | 2026-11-04 | **A1 reconciliation with Part 4 as merged:** every A4 grep matched at the quoted line numbers (Part 4's prototype numbers held exactly). Part 4's review fixes (`reset_at` in the breaker state, `ready_names` in the night summary, `Accepted.refused`/`kept_earlier`, `filing_text`, `FACT_UNITS`) touch nothing Part 5 references; `queue_read(vs, symbol, *, kind, reason, now, accn=None, reevaluation_id=None)`, `ValueEffectiveRow`'s columns and `value_claude_state` match this plan's use. **Operator answers (2026-11-04):** E1–E8 approved; the five HANDOFF questions accepted at their defaults (release inherits its buy's approval; combined name cap 15%; release thresholds 0% floor / 25% prefer / 3 closes per request / 4 a day / 10% of net liq a day; "trim to half" is a card in Part 6). Part 4 merged locally to main (fast-forward), NOT pushed. Section A exit target: baseline 5393 + 12 = 5405 passed, 1 skipped |
+| Task 1 - the book's configuration | done | `2c762d5` | tests/test_value_config.py 21 passed (+3), with test_config_keys and test_private_config 37 passed; v4 ruleset hash unchanged (`FROZEN["v4"]`); ruff check/format and `mypy src/common/config.py` clean | 2026-11-04 | No deviation from the task text. Red run: 2 of 3 new tests failed as written; `test_nonsense_book_keys_are_refused` was green before the code because an unknown `book` key was itself refused, so after the code I confirmed by hand that each of its six cases raises for its own reason (cost if wrong: none, the test is a little weaker than it reads at the red stage). `book` is outside `rules:` per ruling 8, so v4 stays |
 
 ## Roadmap (this plan is Part 5 of 6)
 
@@ -495,7 +496,7 @@ clean.
 `ibkr.client_ids.value` required when the book is on. Outside `rules:` (ruling 8): v4's hash does not
 move.
 
-- [ ] **Step 1: Write the failing tests** — apply:
+- [x] **Step 1: Write the failing tests** — apply:
 
 ```diff
 diff --git a/tests/test_value_config.py b/tests/test_value_config.py
@@ -542,9 +543,9 @@ index 7b0c48c..c1e63ca 100644
 +        type(cfg).model_validate(data)
 ```
 
-- [ ] **Step 2: Run them to see them fail** — `.venv/bin/python -m pytest -q tests/test_value_config.py`:
+- [x] **Step 2: Run them to see them fail** — `.venv/bin/python -m pytest -q tests/test_value_config.py`:
   `AttributeError: 'ValueCfg' object has no attribute 'book'`.
-- [ ] **Step 3: The config** — apply:
+- [x] **Step 3: The config** — apply:
 
 ```diff
 diff --git a/.env.example b/.env.example
@@ -737,10 +738,10 @@ index 22f26df..f0899aa 100644
  
 ```
 
-- [ ] **Step 4: Run them to see them pass** —
+- [x] **Step 4: Run them to see them pass** —
   `.venv/bin/python -m pytest -q tests/test_value_config.py tests/test_config_keys.py tests/test_private_config.py`;
   the v4 hash check of Part 4 Task 1 still prints `be30d1eaa915`.
-- [ ] **Step 5: Gates and commit** (ruff check/format on the five files; `mypy src/common/config.py`):
+- [x] **Step 5: Gates and commit** (ruff check/format on the five files; `mypy src/common/config.py`):
 
   ```bash
   git add docs/superpowers/plans/2026-10-29-value-book-5-money-paper.md src/common/config.py config/examples/value.yaml config/examples/settings.yaml .env.example tests/test_value_config.py
@@ -762,7 +763,7 @@ ValueBook | None` (`holdings: dict[str, ValueHolding]` with `filled`, `pending_b
 tuple[FundingRequest, ...]`), `value_view.put_ceiling(symbol)`; the autouse fixture
 `_value_view_in_tmp` (no test reads the operator's value.db) and the fixture `value_book_db`.
 
-- [ ] **Step 1: Write the failing tests** — create `tests/value_book_fixtures.py`:
+- [x] **Step 1: Write the failing tests** — create `tests/value_book_fixtures.py`:
 
 ```python
 """Shared helpers for the value book's Stage 3 tests (Part 5): value orders, proposals and funding
@@ -970,8 +971,8 @@ index 5ad1f43..3a81d14 100644
      """The value process writes data/value_keep_fresh.json and (Part 4)
 ```
 
-- [ ] **Step 2: Run them to see them fail** — `ModuleNotFoundError: No module named 'src.common.value_view'`.
-- [ ] **Step 3: The tables** — apply:
+- [x] **Step 2: Run them to see them fail** — `ModuleNotFoundError: No module named 'src.common.value_view'`.
+- [x] **Step 3: The tables** — apply:
 
 ```diff
 diff --git a/src/value/store.py b/src/value/store.py
@@ -1150,7 +1151,7 @@ index 542a38d..7eddf75 100644
  
 ```
 
-- [ ] **Step 4: The view** — create `src/common/value_view.py`:
+- [x] **Step 4: The view** — create `src/common/value_view.py`:
 
 ```python
 """The wheel's only window onto the value book (spec §9.1, §9.2; revision 4).
@@ -1324,8 +1325,8 @@ def put_ceiling(symbol: str) -> float | None:
     return None if row is None or row[0] is None else float(row[0])
 ```
 
-- [ ] **Step 5: Run them to see them pass** — `tests/test_value_view.py tests/test_value_store.py tests/test_value_fence.py`.
-- [ ] **Step 6: Gates and commit:**
+- [x] **Step 5: Run them to see them pass** — `tests/test_value_view.py tests/test_value_store.py tests/test_value_fence.py`.
+- [x] **Step 6: Gates and commit:**
 
   ```bash
   git add src/value/store.py src/common/value_view.py tests/conftest.py tests/value_book_fixtures.py tests/test_value_view.py

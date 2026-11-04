@@ -40,6 +40,18 @@ Part 4 (spec §8, Claude as the analyst). Claude's half of the ticker file, ever
   ``grounding.py`` accepted it;
 - ``value_effective`` - the effective verdict per name and list, rewritten every night;
 - ``value_claude_state`` - small key/value state (the breaker).
+
+Part 5 (spec §9, revision 4: money in paper, no cash held back):
+- ``value_orders`` - every order clientId 31 sends, written **before** ``placeOrder`` with its
+  ``orderRef`` (``value:<id>``), then its fills: the value book's share count V;
+- ``value_positions`` - one per name and list while held: the live policy's exit plan (a
+  ``LegState``), the tranches done;
+- ``value_proposals`` - every buy and sell the book proposes, with who caused it, whether it
+  waits for a tap, and what the gate said;
+- ``value_funding_requests`` - capital the wheel is asked to release for an approved buy;
+- ``value_attribution`` - each shared name's reconcile (broker = wheel + value), and its freeze;
+- ``value_book_state`` - small key/value state (the book's high-water mark);
+- ``value_reevaluations.position_id`` - a held position's re-evaluation (``shadow_id`` 0).
 """
 
 from __future__ import annotations
@@ -261,6 +273,7 @@ class ValueReevaluationRow(ValueBase):
     ruleset_version: Mapped[str] = mapped_column(String(32))
     ruleset_hash: Mapped[str] = mapped_column(String(12))
     created_at: Mapped[datetime] = mapped_column(DateTime)
+    position_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # held (Part 5)
 
 
 class ValueClaudeReadRow(ValueBase):
@@ -411,6 +424,134 @@ class ValueClaudeStateRow(ValueBase):
     updated_at: Mapped[datetime] = mapped_column(DateTime)
 
 
+class ValueOrderRow(ValueBase):
+    """One order of the value book (spec §9.2, §9.7). Written before ``placeOrder`` so a fill
+    can never arrive for an order value.db does not know; ``order_ref`` is ``value:<id>``.
+    ``status``: pending (written, not sent) | submitted | partial | filled | cancelled |
+    rejected | error."""
+
+    __tablename__ = "value_orders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    list_name: Mapped[str] = mapped_column(String(16))
+    side: Mapped[str] = mapped_column(String(4))  # buy | sell
+    tranche: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reason: Mapped[str] = mapped_column(String(32), default="")
+    proposal_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    shares: Mapped[float] = mapped_column(Float)
+    filled: Mapped[float] = mapped_column(Float, default=0.0)
+    limit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    avg_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String(12), default="pending")
+    order_ref: Mapped[str] = mapped_column(String(32), default="")
+    ib_order_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    perm_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    done_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    detail: Mapped[str] = mapped_column(Text, default="")
+
+
+class ValuePositionRow(ValueBase):
+    """One held name on one list (spec §11): its exit plan under the live policy and its
+    tranches. ``status``: open | closed."""
+
+    __tablename__ = "value_positions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    list_name: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(8), default="open")
+    opened_on: Mapped[date] = mapped_column(Date)
+    closed_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    tranches_done: Mapped[int] = mapped_column(Integer, default=0)
+    last_tranche_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    low_since_tranche: Mapped[float | None] = mapped_column(Float, nullable=True)
+    plan_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # exits.LegState
+    plan_step: Mapped[date | None] = mapped_column(Date, nullable=True)
+    decided_by: Mapped[str] = mapped_column(String(8), default="python")
+
+
+class ValueProposalRow(ValueBase):
+    """A buy or a sell the book proposes (spec §9.5, §7). ``cause``: python | claude (a sale
+    only Claude's number would make always waits for a tap). ``status``: pending (waits for a
+    tap) | approved | funding (approved, waiting for released capital) | sent | done |
+    rejected | refused (the gate said no at send time) | expired."""
+
+    __tablename__ = "value_proposals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(4))  # buy | sell
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    list_name: Mapped[str] = mapped_column(String(16))
+    shares: Mapped[float] = mapped_column(Float)
+    price: Mapped[float | None] = mapped_column(Float, nullable=True)  # the close it was sized at
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)  # earmarked while approved
+    tranche: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    position_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reason: Mapped[str] = mapped_column(String(48))
+    cause: Mapped[str] = mapped_column(String(8), default="python")
+    needs_tap: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(12), default="pending", index=True)
+    gate_json: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    decided_by: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    order_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    detail: Mapped[str] = mapped_column(Text, default="")
+
+
+class ValueFundingRow(ValueBase):
+    """Capital the wheel is asked to release for an approved buy (revision 4). The trading
+    process reads open rows through ``src/common/value_view.py`` and closes eligible CSPs through
+    the Rules Engine; the value process marks the row funded when its own fresh account shows the
+    cash, or lapsed. ``status``: open | funded | lapsed."""
+
+    __tablename__ = "value_funding_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    proposal_id: Mapped[int] = mapped_column(Integer, index=True)
+    symbol: Mapped[str] = mapped_column(String(16))
+    needed_usd: Mapped[float] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String(8), default="open", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    detail: Mapped[str] = mapped_column(Text, default="")
+
+
+class ValueAttributionRow(ValueBase):
+    """One name's share reconcile (spec §9.2): broker = wheel (W) + value (V filled). ``state``:
+    ok | pending (unexplained, inside the grace) | frozen (both books stop opening on the name
+    until a human clears it)."""
+
+    __tablename__ = "value_attribution"
+
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
+    broker: Mapped[float] = mapped_column(Float)
+    wheel: Mapped[float] = mapped_column(Float)
+    value_filled: Mapped[float] = mapped_column(Float)
+    value_pending: Mapped[float] = mapped_column(Float, default=0.0)
+    mark: Mapped[float | None] = mapped_column(Float, nullable=True)  # the last price seen
+    state: Mapped[str] = mapped_column(String(8), default="ok")
+    since: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+    cleared_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    detail: Mapped[str] = mapped_column(Text, default="")
+
+
+class ValueBookStateRow(ValueBase):
+    """Small key/value state of the book (its high-water mark)."""
+
+    __tablename__ = "value_book_state"
+
+    key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
 _engine: Engine | None = None
 _SessionLocal: sessionmaker[Session] | None = None
 
@@ -419,6 +560,7 @@ _SessionLocal: sessionmaker[Session] | None = None
 _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
     "value_shadow_legs": (("plan", "VARCHAR(8) NOT NULL DEFAULT 'main'"),),
     "value_shadow_events": (("plan", "VARCHAR(8) NOT NULL DEFAULT 'main'"),),
+    "value_reevaluations": (("position_id", "INTEGER"),),
 }
 
 

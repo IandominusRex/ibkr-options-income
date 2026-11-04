@@ -76,6 +76,31 @@ def _clear_effective_universe_cache():
 
 
 @pytest.fixture(autouse=True)
+def _value_view_in_tmp(monkeypatch, tmp_path_factory):
+    """The wheel reads the value book through src/common/value_view.py (Part 5). No test may read
+    the operator's data/value.db: by default it points at a file that does not exist (an empty
+    book); a test that needs one patches ``_path`` itself."""
+    monkeypatch.setattr(
+        "src.common.value_view._path",
+        lambda: tmp_path_factory.getbasetemp() / "no_value_book" / "value.db",
+    )
+
+
+@pytest.fixture()
+def value_book_db(tmp_path, monkeypatch):
+    """value.db in tmp with src/common/value_view.py pointed at the same file (Part 5)."""
+    import src.value.store as store
+
+    path = tmp_path / "value.db"
+    monkeypatch.setattr(store, "_resolve_url", lambda: f"sqlite:///{path.as_posix()}")
+    monkeypatch.setattr("src.common.value_view._path", lambda: path)
+    store.reset_engine()
+    store.init_value_db()
+    yield path
+    store.reset_engine()
+
+
+@pytest.fixture(autouse=True)
 def _value_keep_fresh_in_tmp(monkeypatch, tmp_path_factory):
     """The value process writes data/value_keep_fresh.json and (Part 4)
     data/value_filing_reads.json after a night; no test may touch the real ones."""
