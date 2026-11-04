@@ -289,6 +289,8 @@ def build_scorecard(inputs: ValueInputs, cfg: ValueCfg) -> ValueScorecard:
         "roic_median_5y": median_of([roic(y) for y in years]),
         "gross_margin_stdev_5y": stdev_of([y.gross_margin for y in years]),
         "revenue_cagr_5y": cagr([y.revenue for y in years]),
+        # Part 5: the value gate's liquidity check (spec §9.4 `illiquid`), 20-day dollar volume
+        "adv_dollar_20": inputs.price.adv_dollar_20,
     }
     metrics.update(claude_inputs(inputs, years, per_share, v.growth_sbc_share))
     card = card.model_copy(
