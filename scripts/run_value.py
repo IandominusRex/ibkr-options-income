@@ -25,6 +25,7 @@ import asyncio
 import logging
 import signal
 import threading
+import time
 from datetime import UTC, datetime, timedelta
 
 import src.common.value_inputs as vi
@@ -185,6 +186,52 @@ def _tick() -> None:
     _facts.clear()
 
 
+def _drain_commands() -> int:
+    """Claim the value kinds from app_commands, apply each in value.db, mark it (spec §9.7, ruling 1). The trading
+    DB is imported here only: importing this script loads no wheel layer (the fence's probe)."""
+    import src.value.commands as vcmd  # not `from src.value import`: the fence's ast reads that as src.value
+    from src.common.value_commands import VALUE_KINDS, VALUE_ORDER_KINDS
+    from src.storage.app_commands import mark_applied, mark_failed, pending_commands
+    from src.storage.db import session_scope
+    from src.value.store import init_value_db, value_session
+
+    cfg = get_config()
+    with session_scope() as s:
+        rows: list[vcmd.CommandTuple] = [
+            (c.id, c.kind, dict(c.payload or {}), c.requested_by or "web", c.confirm_token)
+            for c in pending_commands(s, only_kinds=VALUE_KINDS)
+        ]
+        s.commit()
+    if not rows:
+        return 0
+    init_value_db()
+
+    def _apply(kind: str, payload: dict, by: str) -> dict:
+        now = datetime.now(UTC).replace(tzinfo=None)
+        with value_session() as vs:  # commits on exit, rolls back a refused tap
+            return vcmd.apply(vs, kind, payload, requested_by=by, now=now, live=cfg.is_live)
+
+    def _mark(cid: int, result: dict | None, reason: str | None, detail: dict | None) -> None:
+        with session_scope() as s:
+            if reason is None:
+                mark_applied(s, cid, result or {})
+            else:
+                mark_failed(s, cid, reason, detail)
+            s.commit()
+
+    outcomes = vcmd.drain(rows, _apply, _mark)
+    replies = [
+        vcmd.outcome_line(o.kind, o.result, o.reason)
+        for o in outcomes
+        if o.kind in VALUE_ORDER_KINDS and o.requested_by == "telegram"
+    ]
+    if replies:
+        from src.value.notify import send
+
+        asyncio.run(send(replies))
+    return len(outcomes)
+
+
 def main() -> None:
     setup_logging()
     stop = threading.Event()
@@ -195,22 +242,30 @@ def main() -> None:
         log.critical("value: idle until the config is fixed and the process restarted: %s", problem)
         stop.wait()
         return
-    poll = get_config().value.service.poll_seconds
-    log.info("value: running; checking for a settled session every %ds", poll)
+    cfg = get_config().value
+    poll, fast = cfg.service.poll_seconds, cfg.telegram.commands_poll_seconds
+    log.info("value: running; commands every %ds, a settled session every %ds", fast, poll)
+    last_slow = time.monotonic() - poll  # the first tick runs the slow work at once
     while True:
         try:
-            _tick()
-        except Exception:  # noqa: BLE001 - a failed night is retried at the next poll
-            log.exception("value: the nightly run failed; retrying at the next poll")
-        try:
-            _claude_tick()
-        except Exception:  # noqa: BLE001 - a failed read is recorded; the queue waits
-            log.exception("value: claude reads failed; the queue waits for the next poll")
-        try:
-            _book_tick()
-        except Exception:  # noqa: BLE001 - a failed cycle sends nothing; the next one retries
-            log.exception("value: the book cycle failed; retrying at the next poll")
-        if stop.wait(poll):
+            _drain_commands()
+        except Exception:  # noqa: BLE001 - commands wait for the next tick
+            log.exception("value: the command drain failed; retrying at the next tick")
+        if time.monotonic() - last_slow >= poll:
+            last_slow = time.monotonic()
+            try:
+                _tick()
+            except Exception:  # noqa: BLE001 - a failed night is retried at the next poll
+                log.exception("value: the nightly run failed; retrying at the next poll")
+            try:
+                _claude_tick()
+            except Exception:  # noqa: BLE001 - a failed read is recorded; the queue waits
+                log.exception("value: claude reads failed; the queue waits for the next poll")
+            try:
+                _book_tick()
+            except Exception:  # noqa: BLE001 - a failed cycle sends nothing; the next one retries
+                log.exception("value: the book cycle failed; retrying at the next poll")
+        if stop.wait(fast):
             break
 
 

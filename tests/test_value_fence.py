@@ -300,10 +300,46 @@ def test_the_value_entrypoint_imports_only_its_feed_and_the_service() -> None:
         "src.storage.system_settings",
         "src.value.notify",
         "src.value.stage3",
+        # Part 6: the value process drains its own command kinds (spec §9.7)
+        "time",
+        "src.common.value_commands",
+        "src.value.commands",
+        "src.storage.app_commands",
+        "src.storage.db",
+        "src.value.store",
     )
     mods = imported_modules(ROOT / "scripts" / "run_value.py")
     extra = sorted(m for m in mods if not any(m == a or m.startswith(a + ".") for a in allowed))
     assert extra == []
+
+
+def test_the_value_entrypoint_drains_lazily() -> None:
+    """Part 6: scripts/run_value.py reaches the trading DB's command queue only inside a function
+    body, so importing the value process loads no wheel layer (the sys.modules probe below)."""
+    tree = ast.parse((ROOT / "scripts" / "run_value.py").read_text(encoding="utf-8"))
+    lazy = ("src.storage.app_commands", "src.storage.db")
+
+    def names(node: ast.AST) -> set[str]:
+        if isinstance(node, ast.Import):
+            return {a.name for a in node.names}
+        if isinstance(node, ast.ImportFrom) and node.module:
+            return {node.module}
+        return set()
+
+    top: set[str] = set()
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            for sub in ast.walk(node):
+                top |= names(sub)
+    inside = {
+        m
+        for fn in ast.walk(tree)
+        if isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef)
+        for sub in ast.walk(fn)
+        for m in names(sub)
+    }
+    assert not [m for m in top if m in lazy]
+    assert set(lazy) <= inside
 
 
 def test_the_value_process_loads_no_wheel_layer_and_no_ibkr() -> None:

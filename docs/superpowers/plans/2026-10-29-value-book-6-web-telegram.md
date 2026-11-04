@@ -135,8 +135,8 @@ is the executing agent's own model name.
 | Section / task | Status | Commits | Gate | Date | Rulings |
 |---|---|---|---|---|---|
 | **Plan written** | done | (plan file only, uncommitted) | n/a | 2026-11-04 | Written by an Opus subagent after Parts 1–5 merged. Three operator questions were asked and answered the same day (rulings 1, 9 and 18); the plan writer's defaults on the digest, the watchdog, `/value NAME` and the web set were accepted by the operator (rulings 13, 15, 12, 30). |
-
 | **Section A entry** | done | 0 commits on `main..HEAD` | A1-A4 pass; worktree `.claude/worktrees/value-book-6`; baseline `python -m pytest -q` = **5506 passed, 1 skipped**; ruff clean; mypy 348 files clean | 2026-11-04 | Operator (2026-11-04) authorised running A through the Review Fix Pass without asking between sections; stops before the web (F-I). Section A exit target: 5506 + 28 = 5534. |
+| **Task 1** — value kinds, fingerprint, trading drain's skip | done | `11a490f` | targeted (`test_value_commands`, `test_value_fence`, `test_command_schemas`, `test_write_path_invariants`, `test_value_config`, `test_drain_promote`) 112 passed; `-k "command_drain or drain"` 137 passed; `test_openapi_current` 1 passed; ruff clean; mypy 349 files clean. **12 new** (11 in `test_value_commands.py`, the parametrised case counting five, + 1 fence) | 2026-11-04 | (a) `web/lib/api-types.ts` **not** regenerated: the orchestrator ruled api-types regeneration out of Section A, so only `docs/web/openapi.json` was regenerated (the pytest contract check); the Section A exit's web check is therefore "`web/` diff empty". Cost if wrong: one `npx openapi-typescript` run in a later section (E regenerates after its routes). (b) `docs/web/commands.md` documents kinds as sections, not table rows: added one section "The value book's kinds" holding a table with one row per kind, plus `value_put` on `promote`, the no-dedupe-key list in the routes table and the drain loop's step 2. Cost: wording. (c) Step 8's "(10 new)" disagrees with its own tests (11 + 1 fence = 12, as the File structure says); 12 is what landed. Cost: none. (d) `_LIVE_CONFIRM_KINDS` is the five-member set, written multi-line by `ruff format`. (e) `dedupe_key_for`'s docstring keeps its "twelve repeatable kinds" list and gains the plan's one sentence for the three value read-side kinds. Cost: wording. |
 
 *(Rows are added as each section and task lands; a ruling is any deviation from the task text, and why.)*
 
@@ -510,7 +510,7 @@ Record the Section A entry row; exit target: baseline + 28 (Tasks 1–3).
 `src/storage/app_commands.py`, `src/notify/command_drain.py`, `src/common/config.py`, `config/examples/value.yaml`,
 `docs/web/commands.md`, `tests/test_value_fence.py`; create `tests/test_value_commands.py`.
 
-- [ ] **Step 1: the failing tests.** Create `tests/test_value_commands.py` with these nine tests (Task 1's part; Tasks 2–3
+- [x] **Step 1: the failing tests.** Create `tests/test_value_commands.py` with these nine tests (Task 1's part; Tasks 2–3
   append their own):
 
 ```python
@@ -595,10 +595,10 @@ def test_the_trading_drain_never_reads_a_value_kind(db) -> None:
   (Eleven collected items, the parametrised case counting five; with Step 6's fence test, Task 1 adds **12**.) The drain test uses `tests/conftest.py`'s `db` fixture
   (line 561: an isolated trading DB behind `session_scope`); read it first and adapt the seeding to it.
 
-- [ ] **Step 2: run them red.** `python -m pytest tests/test_value_commands.py -q` → collection `ModuleNotFoundError:
+- [x] **Step 2: run them red.** `python -m pytest tests/test_value_commands.py -q` → collection `ModuleNotFoundError:
   No module named 'src.common.value_commands'`.
 
-- [ ] **Step 3: the neutral module.** Create `src/common/value_commands.py`:
+- [x] **Step 3: the neutral module.** Create `src/common/value_commands.py`:
 
 ```python
 """The value book's command kinds, proposal fingerprint and Telegram callback format (Part 6, spec §9.7).
@@ -657,7 +657,7 @@ def parse_callback(data: str) -> tuple[Action, int, str] | None:
     return _ACTION[m.group(1)], int(m.group(2)), m.group(3)
 ```
 
-- [ ] **Step 4: the API models.** In `src/api/models/commands.py`:
+- [x] **Step 4: the API models.** In `src/api/models/commands.py`:
   - after line 42 (`NEWS_BRIEF = "news_brief"`) add the six members `VALUE_APPROVE = "value_approve"`,
     `VALUE_REJECT = "value_reject"`, `VALUE_TRIM = "value_trim"`, `VALUE_SNAPSHOT = "value_snapshot"`,
     `VALUE_ANALYSE = "value_analyse"`, `VALUE_REFRESH = "value_refresh"`;
@@ -715,7 +715,7 @@ class ValueSnapshotPayload(BaseModel):
   and the comment above it gains: "`value_approve` and `value_trim` reach an order through the value process (an
   approved buy may release wheel capital), so they confirm in live too, though the value process refuses live."
 
-- [ ] **Step 5: the trading drain skips them.** In `src/storage/app_commands.py` replace `pending_commands` (line 68) with:
+- [x] **Step 5: the trading drain skips them.** In `src/storage/app_commands.py` replace `pending_commands` (line 68) with:
 
 ```python
 def pending_commands(
@@ -740,7 +740,7 @@ def pending_commands(
   docstring's design point 2: "The value kinds (`src/common/value_commands.VALUE_KINDS`) are never read here: the value
   process drains them (spec §9.7); the TTL sweep still expires one it never picked up."
 
-- [ ] **Step 6: config and the fence.** In `src/common/config.py` after `ValueServiceCfg` add:
+- [x] **Step 6: config and the fence.** In `src/common/config.py` after `ValueServiceCfg` add:
 
 ```python
 class ValueTelegramCfg(_ValueModel):
@@ -791,13 +791,13 @@ def test_value_commands_is_stdlib_only() -> None:
   and add `"src.notify.command_drain"` to nothing: the existing `test_the_trading_path_never_imports_the_value_book`
   already covers `src/notify/` (it checks `src.value`, and `src.common.value_commands` is not under it).
 
-- [ ] **Step 7: docs/web/commands.md.** Add one table row per new kind in the file's existing format: who sends it (web,
+- [x] **Step 7: docs/web/commands.md.** Add one table row per new kind in the file's existing format: who sends it (web,
   Telegram), its payload, its dedupe key, **"drained by the value process (`scripts/run_value.py`), not by
   `approval_service`"**, its failure reasons (`no_such_proposal`, `stale_proposal`, `already_<status>`, `expired`,
   `not_paper`, `already_trimmed`, `claude_off`, `invalid_symbol`) and that a `value_approve` may cause capital-release
   closes of wheel CSPs (Part 5 ruling 7). Add `value_put` to the `promote` row.
 
-- [ ] **Step 8: gates.** `python -m pytest tests/test_value_commands.py tests/test_value_fence.py tests/test_command_schemas.py
+- [x] **Step 8: gates.** `python -m pytest tests/test_value_commands.py tests/test_value_fence.py tests/test_command_schemas.py
   tests/test_write_path_invariants.py tests/test_value_config.py tests/test_drain_promote.py -q` green (10 new);
   `python -m pytest tests -q -k "command_drain or drain"` green; regenerate the contract
   (`IBKR_CONFIG_USE_EXAMPLES=1 python -c "import json; from src.api.main import create_app; ..."` — use the exact
