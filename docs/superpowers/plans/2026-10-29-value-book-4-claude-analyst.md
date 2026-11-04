@@ -111,6 +111,8 @@ is the executing agent's own model name.
 | Section A entry | checks A0–A4 passed | 0 (branch `feat/value-book-4` at `da5d3c3`) | **baseline: pytest 5305 passed, 1 skipped**; ruff clean; mypy 325 source files; df 30 GiB free | 2026-11-04 | A3 line numbers matched exactly; v3 hash `ad8841127029` confirmed; no Part 4 code present. Section A exit target: baseline + 23 = 5328 passed, 1 skipped |
 | A1 (Task 1) ruleset v4 | done | `4757ffd` | task gate: 72 passed (config, dry-run, service, scorecard, private-config, config-keys); ruff check + format clean; mypy clean on `config.py`, `ruleset.py`; v4 hash printed `be30d1eaa915` | 2026-11-04 | No deviation from the task text; the diffs were applied with Edit (same content). `claude` workdir default `~/.cache/ibkr-value-ai` passes the outside-repo validator. Cost-if-wrong: none beyond ruling 1 (before the first v4 night, re-pin; after it, a v5). |
 | A2 (Task 2) shapes, scorecard inputs, Claude's fair value | done | `dc19945` | task gate: 65 passed (valuation, scorecard, shadow, service); ruff check + format clean on the 5 touched files; mypy clean on the 3 src files; the 8 + 1 new tests all pinned numbers matched first time | 2026-11-04 | No deviation. The scorecard's new `metrics` keys moved no verdict (shadow and service tests green). Cost-if-wrong: none. |
+| A3 (Task 3) effective verdict, Claude's tables | done | `39387a0` | task gate: 35 passed (effective, store, fence); ruff check + format clean; mypy clean on `effective.py`, `store.py` | 2026-11-04 | No deviation. `Effective`/`ClaudeOpinion` and the seven `value_claude_*`/`value_effective` tables as written; the new tables are created by the existing `create_all` in `init_value_db` (no migration needed, all new). Cost-if-wrong: one function (`effective.py`) per ruling 4. |
+| **Section A exit** | done | 3 task commits + this docs(plan) commit = 4 (`git log --oneline main..HEAD \| wc -l` printed 3 before it) | **full gate: pytest 5328 passed, 1 skipped (baseline 5305 + 23)**; `ruff check .` clean; `mypy src` 328 source files, clean; protected-file diff empty; `py_compile scripts/run_value.py` silent; `git status --short` clean | 2026-11-04 | Section B entry: new-test running total 23 of 77; baseline for later targets stays 5305. |
 
 ## Roadmap (this plan is Part 4 of 6)
 
@@ -2039,7 +2041,7 @@ index 3edfe46..542a38d 100644
   git commit -m "feat(value): the effective verdict and Claude's tables in value.db"
   ```
 
-- [ ] **Section A exit** — run the full gate from the worktree root (pytest = baseline + 23,
+- [x] **Section A exit** — run the full gate from the worktree root (pytest = baseline + 23,
   `ruff check .` clean, `mypy src` clean), the protected-file diff (empty), `py_compile` of
   `scripts/run_value.py` (silent) and `git status --short` (clean); fill the Task 3 row and the
   section-exit numbers in the Progress log, then:
