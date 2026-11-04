@@ -224,7 +224,8 @@ def test_the_value_scorecard_loads_no_wheel_layer_even_transitively() -> None:
         "import src.value.scorecard, src.value.store, src.value.ticker_file, src.value.funnel\n"
         "import src.value.exits, src.value.shadow, src.value.service, src.value.report\n"
         "import src.value.residuals, src.value.reevaluate\n"
-        "import src.value.claude_valuation, src.value.effective\n"
+        "import src.value.claude_valuation, src.value.effective, src.value.claude_verdicts\n"
+        "import src.value.claude_reads\n"
         "import src.common.value_inputs, src.common.value_universe\n"
         "print(json.dumps(sorted(m for m in sys.modules if m.startswith('src.'))))\n"
     )
@@ -264,13 +265,18 @@ def test_the_value_entrypoint_imports_only_its_feed_and_the_service() -> None:
     """scripts/run_value.py is never imported (it starts a service), so its own imports are
     checked by name; everything it reaches is in the sys.modules probe below."""
     allowed = (
+        "asyncio",
+        "datetime",
         "logging",
         "signal",
         "threading",
         "scripts.value_feed",
         "src.common.config",
         "src.common.logging",
+        "src.common.value_ai_types",
+        "src.value.claude_reads",
         "src.value.service",
+        "src.value_ai.analyst",
     )
     mods = imported_modules(ROOT / "scripts" / "run_value.py")
     extra = sorted(m for m in mods if not any(m == a or m.startswith(a + ".") for a in allowed))

@@ -115,6 +115,7 @@ is the executing agent's own model name.
 | Section B entry | checks B1–B4 passed | 4 commits on branch | pytest 5328 passed, 1 skipped (re-verified by orchestrator); ruff clean; mypy 328 files | 2026-11-04 | B3 line numbers matched exactly; no `src/value_ai`. Section B exit target: baseline 5305 + 47 = 5352 passed, 1 skipped |
 | **Section A exit** | done | 3 task commits + this docs(plan) commit = 4 (`git log --oneline main..HEAD \| wc -l` printed 3 before it) | **full gate: pytest 5328 passed, 1 skipped (baseline 5305 + 23)**; `ruff check .` clean; `mypy src` 328 source files, clean; protected-file diff empty; `py_compile scripts/run_value.py` silent; `git status --short` clean | 2026-11-04 | Section B entry: new-test running total 23 of 77; baseline for later targets stays 5305. |
 | B1 (Task 4) the analyst `src/value_ai/` and its fences | done | `c9ae196` | task gate: 71 passed (value_ai, value_fence, eval_skills, spreads_fence, news_fence, value_config); ruff check + format clean; mypy clean on `src/value_ai`, `config.py`; 11 new tests (9 + 2 fence) | 2026-11-04 | No deviation from the task text; files written whole, fence diffs applied with Edit. Ruling: the red run (Step 2) was skipped for this task, the tests and package were written together and first run green (the other tasks ran red first); cost-if-wrong: none, the tests assert the behaviour either way. The probe test confirms importing the analyst loads only `src.claude.cli` from the reasoning layer. |
+| B2 (Task 5) accepting a read: verdicts, opinions, effective verdict, breaker | done | `4cfca99` | red first (`ImportError: cannot import name 'claude_verdicts'`), then task gate: 26 passed (value_claude, value_fence); ruff check + format clean; mypy clean on `claude_verdicts.py`; 9 new tests | 2026-11-04 | No deviation; module and tests written whole as given. The pinned numbers (46.85 x 1.5, uncapped 106.19, 68.72) matched first time. Cost-if-wrong: per rulings 4, 5 and 8 (one function, one branch in `accept`, config numbers). |
 
 ## Roadmap (this plan is Part 4 of 6)
 
@@ -3121,7 +3122,7 @@ plus tonight: with 2 more (8 against 3) it holds (8 is not above 9); with 4 more
 trips. The clamp rate: three earlier nights of 2 values and none clamped plus tonight's 3 clamped of
 3 is 3 of 9 values (33% > 25%, at least 8 values).
 
-- [ ] **Step 1: Write the failing tests** — create `tests/test_value_claude.py`:
+- [x] **Step 1: Write the failing tests** — create `tests/test_value_claude.py`:
 
 ```python
 """Claude's reads on the value side: acceptance, opinions, the effective verdict, the breaker and
@@ -3386,12 +3387,12 @@ def test_the_breaker_trips_on_the_ready_multiple_and_on_the_clamp_rate(value_db)
         assert "set 3 of 9" in cv.breaker_state(s)["reason"]
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_claude.py`
   Expected: FAIL — `ModuleNotFoundError: No module named 'src.value.claude_verdicts'`.
 
-- [ ] **Step 3: The module** — create `src/value/claude_verdicts.py`:
+- [x] **Step 3: The module** — create `src/value/claude_verdicts.py`:
 
 ```python
 """Accepting Claude's reads, and what they decide (spec §6.7, §8.2, §8.3, §8.5).
@@ -3744,12 +3745,12 @@ def persist_effective(
     return out
 ```
 
-- [ ] **Step 4: Run them to see them pass**
+- [x] **Step 4: Run them to see them pass**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_claude.py tests/test_value_fence.py`
   Expected: PASS.
 
-- [ ] **Step 5: Gates and commit**
+- [x] **Step 5: Gates and commit**
 
   Run: `.venv/bin/ruff check` and `.venv/bin/ruff format --check` on the two files;
   `.venv/bin/mypy src/value/claude_verdicts.py`.
@@ -3779,7 +3780,7 @@ def persist_effective(
   clamped, applied, breaker, top, stale}`; `scripts/run_value.py::_claude_tick`;
   `scripts/value_claude.py::main(argv)`.
 
-- [ ] **Step 1: Write the failing tests** — apply to `tests/test_value_claude.py` and
+- [x] **Step 1: Write the failing tests** — apply to `tests/test_value_claude.py` and
   `tests/test_value_fence.py`:
 
 ```diff
@@ -3958,13 +3959,13 @@ index 7309a72..3807034 100644
      extra = sorted(m for m in mods if not any(m == a or m.startswith(a + ".") for a in allowed))
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_claude.py tests/test_value_fence.py`
   Expected: FAIL — `ModuleNotFoundError: No module named 'src.value.claude_reads'` (collection
   error) and, once that exists, the entrypoint allowlist test.
 
-- [ ] **Step 3: The queue** — create `src/value/claude_reads.py`:
+- [x] **Step 3: The queue** — create `src/value/claude_reads.py`:
 
 ```python
 """Which names Claude reads, when, and at what cost (spec §8.3, §8.5).
@@ -4329,7 +4330,7 @@ def run_queue(
     return summary
 ```
 
-- [ ] **Step 4: The night** — apply to `src/value/service.py`:
+- [x] **Step 4: The night** — apply to `src/value/service.py`:
 
 ```diff
 diff --git a/src/value/service.py b/src/value/service.py
@@ -4390,7 +4391,7 @@ index 1e90f84..b2670c1 100644
                  vs,
 ```
 
-- [ ] **Step 5: The process** — apply to `scripts/run_value.py` (never import it; it is checked
+- [x] **Step 5: The process** — apply to `scripts/run_value.py` (never import it; it is checked
   with `py_compile`):
 
 ```diff
@@ -4471,7 +4472,7 @@ index eab10ba..a4a23a9 100644
  
 ```
 
-- [ ] **Step 6: The operator's CLI** — create `scripts/value_claude.py`:
+- [x] **Step 6: The operator's CLI** — create `scripts/value_claude.py`:
 
 ```python
 """The operator's handle on Claude's side of the value book (spec §8.2, §8.3, §8.5).
@@ -4533,13 +4534,13 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 7: Run them to see them pass**
+- [x] **Step 7: Run them to see them pass**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_claude.py tests/test_value_fence.py tests/test_value_service.py tests/test_value_shadow.py`
   and `.venv/bin/python -m py_compile scripts/run_value.py scripts/value_claude.py`.
   Expected: PASS; `py_compile` silent.
 
-- [ ] **Step 8: Gates and commit**
+- [x] **Step 8: Gates and commit**
 
   Run: `.venv/bin/ruff check` and `.venv/bin/ruff format --check` on the six touched files;
   `.venv/bin/mypy src/value/claude_reads.py src/value/service.py scripts/run_value.py scripts/value_claude.py`.

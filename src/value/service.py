@@ -8,6 +8,11 @@ news volume from news.db, yfinance market facts) and calls :func:`plan_run` and
 No IBKR connection and no clientId in Parts 1-4 (clientId 31 arrives with Stage 3). Reads
 research.db read-only through ``src/common/value_inputs.py``; writes value.db only. One run is
 one transaction: a run that fails leaves value.db as it was, and the next poll retries it.
+
+Part 4 (spec §6.7, §8): the night also reads Claude's stored verdicts (recomputing each fair value
+on tonight's scorecard), writes the effective verdict of every name and list, checks the breaker,
+and queues tomorrow's automatic reads. The reads themselves run after the night commits
+(``src/value/claude_reads.py::run_queue``, driven by the entrypoint).
 """
 
 from __future__ import annotations
@@ -28,7 +33,8 @@ from src.common.config import get_config
 from src.common.value_keep_fresh import write_keep_fresh
 from src.common.value_types import Classification, MarketFacts, NewsVolume, ValueInputs
 from src.common.value_universe import build_value_universe
-from src.value import reevaluate, shadow
+from src.value import claude_verdicts, reevaluate, shadow
+from src.value.claude_reads import plan_auto_reads
 from src.value.rank import filed_lists, rank_list, rs_cutoff
 from src.value.ruleset import ruleset_id
 from src.value.scorecard import build_scorecard
@@ -281,6 +287,21 @@ def run_nightly(
                     session_row=tag != "lookup",
                 )
             vs.flush()
+            review = vcfg.rules.margin_of_safety.review_above_pct
+            ops = claude_verdicts.opinions(vs, cards, vcfg.rules)
+            claude_night = claude_verdicts.night_counts(cards, plan.tags, ops, review)
+            applied = claude_verdicts.applies(vs, vcfg, is_live=get_config().is_live)
+            claude_verdicts.persist_effective(
+                vs,
+                cards,
+                ops,
+                applied=applied,
+                as_of=plan.as_of,
+                now=started,
+                review_above_pct=review,
+            )
+            tripped = claude_verdicts.check_breaker(vs, vcfg, claude_night, started)
+            queued = plan_auto_reads(vs, started, vcfg) if vcfg.claude.enabled else {}
             stepped = reevaluate.regime_stepped(
                 previous_regime(vs), regime, vcfg.rules.reevaluation
             )
@@ -312,6 +333,7 @@ def run_nightly(
                     1 for i in inputs if not i.classification.is_etf and i.yf_market_cap is None
                 ),
                 "shadow": asdict(record),
+                "claude": {**claude_night, "applied": applied, "breaker": tripped, **queued},
             }
             record_run(
                 vs,

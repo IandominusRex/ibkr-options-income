@@ -4,22 +4,31 @@ the queue (value book spec §6.7, §8.2, §8.3, §8.5)."""
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
 
 import src.value.store as store
-from src.common.config import get_config
+from src.common.config import ValueCfg, get_config
 from src.common.value_ai_types import (
     AnalystCall,
     AnalystReply,
+    AnalystRequest,
     AnalystResult,
     Drivers,
     KillTrigger,
     ListCall,
 )
 from src.value import claude_verdicts as cv
+from src.value.claude_reads import (
+    build_request,
+    plan_auto_reads,
+    queue_read,
+    reads_left,
+    render_card,
+    run_queue,
+)
 from src.value.scorecard import build_scorecard
 from src.value.store import (
     ValueClaudeNoteRow,
@@ -32,9 +41,11 @@ from src.value.store import (
     init_value_db,
     value_session,
 )
+from src.value.ticker_file import persist
 from tests.value_fixtures import financials, inputs
 
 CFG = get_config().value
+ON = CFG.model_copy(update={"claude": CFG.claude.model_copy(update={"enabled": True})})
 NOW = datetime(2026, 11, 2, 15, 0)  # naive UTC, 10:00 ET
 CHEAP = build_scorecard(inputs(close=30.0), CFG)  # deep: Python FV 46.85, READY
 DEAR = build_scorecard(inputs(close=40.0), CFG)  # deep: Python WAIT
@@ -50,6 +61,19 @@ def value_db(tmp_path, monkeypatch):
     init_value_db()
     yield
     store.reset_engine()
+
+
+def _file(card, *, universe: str = "trading", rank: float = 0.9) -> None:
+    with value_session() as s:
+        persist(
+            s,
+            card,
+            universe=universe,
+            ranks={"deep_value": rank, "quality_growth": rank},
+            filed="deep_value",
+            cfg=CFG.ticker_file,
+            session_row=False,
+        )
 
 
 def _result(read_id: int, *, verdict="READY", drivers=GOOD_DRIVERS, backend="cli", **reply):
@@ -258,3 +282,69 @@ def test_the_breaker_trips_on_the_ready_multiple_and_on_the_clamp_rate(value_db)
         tonight = {"ready": 0, "baseline_ready": 0, "values": 3, "clamped": 3}
         assert cv.check_breaker(s, CFG, tonight, NOW) is True
         assert "set 3 of 9" in cv.breaker_state(s)["reason"]
+
+
+def test_the_queue_reads_the_top_unread_trading_names_and_stale_ones(value_db) -> None:
+    _file(CHEAP)
+    _file(build_scorecard(inputs(symbol="EVID", close=30.0), CFG), universe="evidence")
+    with value_session() as s:
+        assert plan_auto_reads(s, NOW, ON) == {"top": 1, "stale": 0}
+        assert [r.symbol for r in s.scalars(select(ValueClaudeReadRow))] == ["STDY"]
+    _accept(CHEAP, _result(0))
+    with value_session() as s:
+        assert plan_auto_reads(s, NOW, ON) == {"top": 0, "stale": 0}  # read, nothing changed
+    filed = build_scorecard(inputs(close=30.0, fin=financials(accn="0000000001-26-000002")), CFG)
+    _file(filed)
+    with value_session() as s:
+        assert plan_auto_reads(s, NOW, ON) == {"top": 0, "stale": 1}  # a new filing
+
+
+def test_the_daily_caps_and_a_disabled_switch(value_db) -> None:
+    _file(CHEAP)
+    tight = ON.model_copy(
+        update={"claude": ON.claude.model_copy(update={"standard_reads_per_day": 1})}
+    )
+    seen: list[AnalystRequest] = []
+
+    def reader(req: AnalystRequest) -> AnalystResult:
+        seen.append(req)
+        return _result(req.read_id)
+
+    with value_session() as s:
+        queue_read(s, "STDY", kind="standard", reason="request", now=NOW)
+    assert run_queue(reader, now=NOW, cfg=CFG) == {
+        "done": 0,
+        "failed": 0,
+        "skipped": 0,
+        "waiting": 0,
+    }
+    assert run_queue(reader, now=NOW, cfg=tight)["done"] == 1
+    (req,) = seen
+    assert req.lists == ["deep_value", "quality_growth"] and req.bounds
+    assert req.kill_menu["guidance_cut"] is None and req.model == get_config().claude.model
+    with value_session() as s:
+        assert reads_left(s, NOW, tight) == (0, 3)
+        queue_read(s, "STDY", kind="standard", reason="request", now=NOW)
+    assert run_queue(reader, now=NOW, cfg=tight)["done"] == 0  # today's cap is spent
+    with value_session() as s:
+        assert reads_left(s, NOW + timedelta(days=1), tight) == (1, 3)  # a new ET day
+
+
+def test_the_request_carries_the_card_the_bounds_and_the_kind_model(value_db) -> None:
+    models = ValueCfg(
+        ruleset_version="v4", claude={"models": {"verdict": "claude-opus-4-7"}}
+    ).model_copy(update={"rules": CFG.rules})
+    row = ValueClaudeReadRow(id=9, symbol="STDY", kind="standard", reason="top", priority=3)
+    req = build_request(row, CHEAP, models)
+    assert req.model == "claude-opus-4-7" and req.read_id == 9
+    assert "deep_value: Python READY · fair value 46.85" in req.card_text
+    assert render_card(CHEAP).count("\n") >= 6
+
+
+def test_the_operator_script_queues_a_read_and_resets_the_breaker(value_db, capsys) -> None:
+    from scripts.value_claude import main
+
+    assert main(["--read", "nvda"]) == 0
+    assert main(["--read", "NVDA", "--reset-breaker"]) == 0
+    out = capsys.readouterr().out
+    assert "queued NVDA" in out and "NVDA: already queued" in out and "breaker reset" in out
