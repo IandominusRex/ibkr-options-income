@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -33,12 +34,14 @@ from src.common.config import get_config
 from src.common.value_keep_fresh import write_filing_reads, write_keep_fresh
 from src.common.value_types import Classification, MarketFacts, NewsVolume, ValueInputs
 from src.common.value_universe import build_value_universe
-from src.value import claude_verdicts, reevaluate, shadow
+from src.value import claude_verdicts, live, reevaluate, shadow, sizing
+from src.value.book import set_state
 from src.value.claude_reads import plan_auto_reads, plan_filing_reads
 from src.value.rank import filed_lists, rank_list, rs_cutoff
 from src.value.ruleset import ruleset_id
 from src.value.scorecard import build_scorecard
 from src.value.store import (
+    ValuePositionRow,
     ValueRunRow,
     ValueShadowRow,
     ValueTickerFileRow,
@@ -151,6 +154,23 @@ def previous_regime(vs: Session) -> str | None:
     return regime if isinstance(regime, str) else None
 
 
+@dataclass(frozen=True)
+class BookHooks:
+    """What the night's book step reads from the trading side (Part 5), passed in by the
+    entrypoint so ``src/value/`` stays free of the trading database's settings: the autonomy
+    ladder for buys, the auto-close switch for Python's sells, the kill switch, live or paper."""
+
+    may_auto_open: Callable[[str], bool]
+    auto_close: bool
+    halted: bool
+    is_live: bool
+
+
+def held_names(vs: Session) -> set[str]:
+    """Names the value book holds (Part 5): scored nightly, kept fresh, read for filings."""
+    return set(vs.scalars(select(ValuePositionRow.symbol).where(ValuePositionRow.status == "open")))
+
+
 def plan_run(now: datetime | None = None, universe: dict[str, Any] | None = None) -> RunPlan | None:
     """Tonight's plan, or None when no newly settled session is waiting. *as_of* is SPY's newest
     bar dated before today (ET): a bar dated today may still be forming."""
@@ -179,6 +199,8 @@ def plan_run(now: datetime | None = None, universe: dict[str, Any] | None = None
             tags.setdefault(symbol, f"held:{entered_from}")
         for symbol in followed_names(vs, now, vcfg.ticker_file.follow_days):
             tags.setdefault(symbol, "lookup")
+        for symbol in held_names(vs):
+            tags.setdefault(symbol, "held:trading")  # held by the book, out of the universe
         positions = open_positions(vs)
     companies = [s for s in u.all_names() if s not in u.etfs]
     with vi.research_read() as rs:
@@ -252,6 +274,7 @@ def run_nightly(
     now: datetime | None = None,
     recent_earnings: dict[str, list[date]] | None = None,
     news: dict[str, NewsVolume] | None = None,
+    book: BookHooks | None = None,
 ) -> dict[str, Any]:
     """Score, rank, persist the ticker files, run the shadow record and log the run, all in one
     value.db transaction. Returns the run's summary. *recent_earnings* (report dates up to the
@@ -306,6 +329,7 @@ def run_nightly(
                     for (sym, _), eff in effective.items()
                     if eff.verdict == "READY" and plan.tags.get(sym) == "trading"
                 }
+                | held_names(vs)
             )
             tripped = claude_verdicts.check_breaker(vs, vcfg, claude_night, started)
             kill = claude_verdicts.update_kill_triggers(vs, cards, vcfg, plan.as_of)
@@ -336,6 +360,11 @@ def run_nightly(
                 opinions=ops,
                 kill=kill,
             )
+            book_summary: dict[str, Any] = {}
+            if vcfg.book.enabled and book is not None:
+                book_summary = _book_night(
+                    vs, rs, cards, effective, plan, book, now=started, cfg=vcfg
+                )
             verdicts = {
                 name: dict(Counter(c.verdict_for(name) for c in cards))
                 for name in ("deep_value", "quality_growth")
@@ -349,6 +378,7 @@ def run_nightly(
                 ),
                 "shadow": asdict(record),
                 "claude": {**claude_night, "applied": applied, "breaker": tripped, **queued},
+                "book": book_summary,
             }
             record_run(
                 vs,
@@ -362,10 +392,54 @@ def run_nightly(
                 rs_cutoff_6m=cutoff,
                 summary_json=json.dumps(summary, sort_keys=True),
             )
-            keep_fresh = sorted(shadow_names(vs))
+            keep_fresh = sorted(set(shadow_names(vs)) | held_names(vs))
     # After the commit: a failed night leaves the previous list in place. The research sweep
     # reads this file to keep held names' bars and filings current (spec §6.9).
     write_keep_fresh(keep_fresh)
     write_filing_reads(deep_reads if vcfg.claude.enabled else [])
     log.info("value nightly %s: %d names; %s", plan.as_of, len(cards), json.dumps(summary))
     return summary
+
+
+def _book_night(
+    vs: Session,
+    rs: Session,
+    cards: list[Any],
+    effective: dict[tuple[str, str], Any],
+    plan: RunPlan,
+    hooks: BookHooks,
+    *,
+    now: datetime,
+    cfg: Any,
+) -> dict[str, Any]:
+    """The night's money step (Part 5): mirror tonight's re-evaluations onto held positions, set
+    the trend brake, step the held plans and propose tonight's buys and sells."""
+    by_symbol = {c.symbol: c for c in cards}
+    names = held_names(vs) | {s for (s, _), e in effective.items() if e.verdict == "READY"}
+    bars = shadow.load_bars(rs, names | {shadow.BENCHMARK}, plan.as_of)
+    spy = [(b.date, b.close) for b in bars.get(shadow.BENCHMARK, [])]
+    brake = bool(sizing.trend_brake(sizing.month_end_closes(spy)))
+    set_state(vs, "trend", {"brake": brake, "as_of": plan.as_of.isoformat()}, now)
+    mirrored = live.mirror_reevaluations(vs, plan.as_of, now)
+    facts = {}
+    for (symbol, list_name), eff in effective.items():
+        fact = shadow.day_facts(by_symbol.get(symbol), list_name, None, eff.fair_value)
+        if fact is not None:
+            facts[(symbol, list_name)] = fact
+    night = live.plan_night(
+        vs,
+        cards=by_symbol,
+        tags=plan.tags,
+        bars=bars,
+        facts=facts,
+        cfg=cfg,
+        portfolio=get_config().risk.get("portfolio", {}),
+        now=now,
+        today=plan.as_of,
+        may_auto_open=hooks.may_auto_open,
+        auto_close=hooks.auto_close,
+        halted=hooks.halted,
+        is_live=hooks.is_live,
+        trend_brake=brake,
+    )
+    return {**asdict(night), "trend_brake": brake, "mirrored": mirrored}
