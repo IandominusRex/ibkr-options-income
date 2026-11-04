@@ -56,7 +56,9 @@ def actual_for(kind: str, card: ValueScorecard) -> float | None:
     if kind == "net_debt_to_ebitda_above":
         return _check_actual(card, "health.net_debt_to_ebitda")
     if kind == "dilution_above":
-        return _check_actual(card, "health.dilution")
+        # banks carry the same check under their own id (M8)
+        v = _check_actual(card, "health.dilution")
+        return v if v is not None else _check_actual(card, "bank.dilution")
     return None
 
 

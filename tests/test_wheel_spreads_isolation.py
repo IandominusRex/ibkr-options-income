@@ -102,3 +102,35 @@ def test_wheel_fill_recovery_needs_the_underlying_not_just_the_order_id() -> Non
         ),
     )
     assert _exec_matches_candidate(wheel_fill, wheel, 188)  # type: ignore[arg-type]
+
+
+def test_wheel_fill_recovery_refuses_a_value_book_stock_execution() -> None:
+    """Review I-6: the value book (clientId 31) buys shares of a shared underlying and its order
+    ids collide with ours; its stock fill must never be taken for a wheel CSP fill."""
+    from datetime import date
+    from types import SimpleNamespace
+
+    from src.execution.reconciliation import _exec_matches_candidate
+
+    wheel = SimpleNamespace(underlying="GOOGL", right="P", strike=150.0, expiry=date(2026, 12, 18))
+    stock = SimpleNamespace(
+        execution=SimpleNamespace(orderId=42, side="SLD", orderRef="value:7"),
+        contract=SimpleNamespace(symbol="GOOGL", secType="STK", right="", strike=0.0),
+    )
+    assert not _exec_matches_candidate(stock, wheel, 42)  # type: ignore[arg-type]
+    tagged_option = SimpleNamespace(
+        execution=SimpleNamespace(orderId=42, side="SLD", orderRef="value:7"),
+        contract=SimpleNamespace(symbol="GOOGL", secType="OPT", right="P", strike=150.0),
+    )
+    assert not _exec_matches_candidate(tagged_option, wheel, 42)  # type: ignore[arg-type]
+    ours = SimpleNamespace(
+        execution=SimpleNamespace(orderId=42, side="SLD", orderRef=""),
+        contract=SimpleNamespace(
+            symbol="GOOGL",
+            secType="OPT",
+            right="P",
+            strike=150.0,
+            lastTradeDateOrContractMonth="20261218",
+        ),
+    )
+    assert _exec_matches_candidate(ours, wheel, 42)  # type: ignore[arg-type]

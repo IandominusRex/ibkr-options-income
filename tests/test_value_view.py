@@ -23,6 +23,28 @@ def test_an_unreadable_value_db_fails_closed(tmp_path, monkeypatch) -> None:
     assert vv.read_book(NOW) is None
 
 
+def test_a_half_migrated_value_db_fails_closed_but_a_pre_part_5_one_is_empty(
+    tmp_path, monkeypatch
+) -> None:
+    import sqlite3
+
+    pre = tmp_path / "pre.db"  # before Part 5: no value_orders at all
+    sqlite3.connect(pre).close()
+    monkeypatch.setattr(vv, "_path", lambda: pre)
+    book = vv.read_book(NOW)
+    assert book is not None and book.holdings == {}
+    half = tmp_path / "half.db"  # value_orders exists, a later table does not
+    con = sqlite3.connect(half)
+    con.execute(
+        "CREATE TABLE value_orders (symbol TEXT, side TEXT, shares REAL, filled REAL, "
+        "avg_price REAL, status TEXT)"
+    )
+    con.commit()
+    con.close()
+    monkeypatch.setattr(vv, "_path", lambda: half)
+    assert vv.read_book(NOW) is None  # never an empty book: the wheel would count V as its own
+
+
 def test_holdings_earmarks_freezes_and_requests(value_book_db) -> None:
     order("GOOGL", shares=10, filled=10, avg=150.0)
     order("GOOGL", shares=10, filled=4, avg=160.0, status="partial")

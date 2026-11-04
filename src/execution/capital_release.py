@@ -31,6 +31,7 @@ import logging
 import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from ib_async import IB
 from sqlalchemy import select
@@ -59,7 +60,13 @@ _CLOSE_ID = re.compile(r"^close:[^:]+:\d{8}:([0-9.]+):P$")
 
 
 def _today_orders() -> list[OrderRow]:
-    start = datetime.combine(today_et(), datetime.min.time())
+    # ``created_at`` is stored as naive UTC: compare it with the Eastern midnight in UTC, not
+    # with a naive Eastern midnight (a few hours of skew at the day edge, review minor).
+    start = (
+        datetime.combine(today_et(), datetime.min.time(), tzinfo=ZoneInfo("America/New_York"))
+        .astimezone(UTC)
+        .replace(tzinfo=None)
+    )
     with session_scope() as s:
         return list(
             s.scalars(

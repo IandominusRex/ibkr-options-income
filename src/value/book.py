@@ -353,8 +353,7 @@ def step_held(
                     frac = cfg.rules.exits.half_sell_pct / 100.0
                     out.append(SellSignal(pos.id, pos.symbol, pos.list_name, frac, "half", cause))
                 elif e.kind == "proposal":
-                    half = "reached" in e.detail
-                    frac = cfg.rules.exits.half_sell_pct / 100.0 if half else 1.0
+                    frac = e.fraction if e.fraction > 0.0 else 1.0
                     out.append(
                         SellSignal(
                             pos.id, pos.symbol, pos.list_name, frac, "claude_value", "claude"

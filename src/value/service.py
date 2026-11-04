@@ -422,8 +422,11 @@ def _book_night(
     set_state(vs, "trend", {"brake": brake, "as_of": plan.as_of.isoformat()}, now)
     mirrored = live.mirror_reevaluations(vs, plan.as_of, now)
     facts = {}
+    going_concern = vi.going_concern_flags(rs, sorted(names), plan.as_of)
     for (symbol, list_name), eff in effective.items():
-        fact = shadow.day_facts(by_symbol.get(symbol), list_name, None, eff.fair_value)
+        fact = shadow.day_facts(
+            by_symbol.get(symbol), list_name, going_concern.get(symbol), eff.fair_value
+        )
         if fact is not None:
             facts[(symbol, list_name)] = fact
     night = live.plan_night(

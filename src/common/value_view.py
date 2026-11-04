@@ -122,11 +122,12 @@ def read_book(now: datetime | None = None) -> ValueBook | None:
                 + " FROM value_funding_requests WHERE status = 'open' ORDER BY id"
             ).fetchall()
     except sqlite3.OperationalError as exc:
-        if "no such table" in str(exc):
+        if "no such table: value_orders" in str(exc):
             return ValueBook()  # a value.db from before Part 5: no value order exists
+        # any other missing table is a half-migrated or damaged file: fail closed
         log.critical("value_view: value.db unreadable (%s): the wheel fails closed", exc)
         return None
-    except sqlite3.Error as exc:
+    except Exception as exc:  # noqa: BLE001 - the wheel must never read a damaged book as empty
         log.critical("value_view: value.db unreadable (%s): the wheel fails closed", exc)
         return None
     acc: dict[str, dict[str, float]] = {}

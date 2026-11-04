@@ -65,3 +65,9 @@ def test_a_number_is_matched_to_the_precision_written() -> None:
     assert number_in_quote(1600.0, "to $1,600 million")
     assert number_in_quote(45.2, "$45.2 million") and not number_in_quote(45.3, "$45.2 million")
     assert number_in_quote(18.0, "18% of revenue")
+
+
+def test_a_fragment_too_short_to_mean_anything_grounds_nothing() -> None:
+    """Review M4d: a null-valued fact (guidance_cut) was grounded by any substring."""
+    ok, why = check_fact(_fact(kind="guidance_cut", value=None, quote="expect revenue"), SECTIONS)
+    assert (ok, why) == (False, "the quote is too short to ground a fact")

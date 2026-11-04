@@ -300,6 +300,34 @@ def test_the_queue_reads_the_top_unread_trading_names_and_stale_ones(value_db) -
         assert plan_auto_reads(s, NOW, ON) == {"top": 0, "stale": 1}  # a new filing
 
 
+def test_a_crash_in_accept_closes_the_read_instead_of_re_spending_the_call(
+    value_db, monkeypatch
+) -> None:
+    """Review M6: a paid call whose acceptance crashed stayed queued and was re-run every poll."""
+    import src.value.claude_reads as cr
+
+    _file(CHEAP)
+    calls: list[int] = []
+
+    def reader(req: AnalystRequest) -> AnalystResult:
+        calls.append(req.read_id)
+        return _result(req.read_id)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("bad reply shape")
+
+    monkeypatch.setattr(cr, "accept", boom)
+    with value_session() as s:
+        queue_read(s, "STDY", kind="standard", reason="request", now=NOW)
+    assert run_queue(reader, now=NOW, cfg=ON)["failed"] == 1
+    assert run_queue(reader, now=NOW, cfg=ON)["failed"] == 0  # not queued any more
+    assert len(calls) == 1
+    with value_session() as s:
+        row = s.scalars(select(ValueClaudeReadRow)).one()
+        assert (row.status, row.read_at) == ("failed", NOW)
+        assert row.error == "RuntimeError" and "bad reply shape" in row.detail
+
+
 def test_the_daily_caps_and_a_disabled_switch(value_db) -> None:
     _file(CHEAP)
     tight = ON.model_copy(
@@ -524,3 +552,12 @@ def test_the_prompt_shows_dollar_metrics_in_millions() -> None:
     assert "1,050,000,000" not in text
     missing = CHEAP.model_copy(update={"metrics": {**CHEAP.metrics, "fcf_ttm": None}})
     assert "TTM FCF n/a ·" in render_card(missing)
+
+
+def test_the_newest_verdict_row_for_a_pair_is_the_one_that_applies(value_db) -> None:
+    """Review M8: ``opinions`` had no order_by, so a duplicated pair resolved arbitrarily."""
+    import inspect
+
+    from src.value import claude_verdicts as cv_mod
+
+    assert ".order_by(ValueClaudeVerdictRow.id)" in inspect.getsource(cv_mod.opinions)

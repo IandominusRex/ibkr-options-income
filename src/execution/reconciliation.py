@@ -37,6 +37,7 @@ from ib_async import IB
 from sqlalchemy import select
 
 from src.claude.memory import FILLED, record_outcome
+from src.common.books import VALUE_ORDER_PREFIX
 from src.common.config import get_config
 from src.common.schemas import CloseReason, OrderState
 from src.storage.db import session_scope
@@ -115,6 +116,15 @@ def _exec_matches_candidate(fill: object, candidate: CandidateRow, ib_order_id: 
         return False
 
     if getattr(contract, "symbol", None) != candidate.underlying:
+        return False
+    # A wheel opening order is an option SELL. The value book (clientId 31) buys shares of the
+    # same underlying and its order ids collide with ours, so refuse a stock execution and any
+    # execution the value book tagged (whole-branch review I-6).
+    sec_type = getattr(contract, "secType", None)
+    if isinstance(sec_type, str) and sec_type and sec_type != "OPT":
+        return False
+    order_ref = getattr(execution, "orderRef", None)
+    if isinstance(order_ref, str) and order_ref.startswith(VALUE_ORDER_PREFIX):
         return False
 
     if ib_order_id is not None and getattr(execution, "orderId", None) == ib_order_id:

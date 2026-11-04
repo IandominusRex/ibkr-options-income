@@ -30,6 +30,9 @@ SCALE = {
 }
 
 
+MIN_QUOTE_CHARS = 20  # a fragment this short sits in any filing and grounds nothing (M4d)
+
+
 def _norm(text: str) -> str:
     text = text.replace("’", "'").replace("‘", "'").replace("“", '"')
     return _SPACE.sub(" ", text.replace("”", '"')).strip()
@@ -72,6 +75,8 @@ def check_fact(
     text = " ".join(s.text for s in sections if s.accn == fact.accn)
     if not text:
         return False, "the accession is not a filing this read was given"
+    if len(_norm(fact.quote)) < MIN_QUOTE_CHARS:
+        return False, "the quote is too short to ground a fact"
     if _norm(fact.quote) not in _norm(text):
         return False, "the quote is not in the filing verbatim"
     if fact.value is not None and not number_in_quote(fact.value, fact.quote):

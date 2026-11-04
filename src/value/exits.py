@@ -53,7 +53,7 @@ EventKind = Literal[
 _DONE = 1e-9
 
 Sell = Callable[[float, "EventKind", str], None]
-Note = Callable[["EventKind", str], None]
+Note = Callable[..., None]  # (kind, detail, fraction=0.0)
 
 
 class DayFacts(BaseModel):
@@ -220,8 +220,10 @@ def step(
             ExitEvent(day=day.date, kind=kind, price=close, fraction=s.pending, detail=detail)
         )
 
-    def note(kind: EventKind, detail: str) -> None:
-        events.append(ExitEvent(day=day.date, kind=kind, price=close, detail=detail))
+    def note(kind: EventKind, detail: str, fraction: float = 0.0) -> None:
+        events.append(
+            ExitEvent(day=day.date, kind=kind, price=close, fraction=fraction, detail=detail)
+        )
 
     # A new filing re-marks fair value, up or down (spec §7). Price and news never do.
     # A Part 2 leg loads with seen_accn None, so its first v3 night counts as a filing night (the
@@ -357,7 +359,11 @@ def _full(
         and not s.peak_proposed
     ):
         s.peak_proposed = True
-        note("proposal", "the effective fair value alone is reached: a tap, no peak exit")
+        note(
+            "proposal",
+            "the effective fair value alone is reached: a tap, no peak exit",
+            fraction=cfg.half_sell_pct / 100.0,
+        )
     if not s.armed:
         return
     k = cfg.trail_atr_after_half if s.half_sold and s.above_fv_seen else cfg.trail_atr

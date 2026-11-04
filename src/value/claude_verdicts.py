@@ -243,11 +243,13 @@ def opinions(
     by_symbol = {c.symbol: c for c in cards}
     out: dict[tuple[str, str], tuple[ClaudeOpinion, ClaudeValue]] = {}
     rows = vs.scalars(
-        select(ValueClaudeVerdictRow).where(
+        select(ValueClaudeVerdictRow)
+        .where(
             ValueClaudeVerdictRow.superseded.is_(False),
             ValueClaudeVerdictRow.backend == "cli",
             ValueClaudeVerdictRow.symbol.in_(list(by_symbol)),
         )
+        .order_by(ValueClaudeVerdictRow.id)  # the newest row for a pair wins, deterministically
     )
     for row in rows:
         card = by_symbol[row.symbol]

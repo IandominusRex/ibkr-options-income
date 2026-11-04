@@ -89,7 +89,12 @@ def test_a_shadow_reevaluation_tonight_is_mirrored_onto_the_held_position(value_
         assert held_names(s) == {"STDY"}
 
 
-def test_the_notifier_logs_and_sends_nothing_without_a_token() -> None:
+def test_the_notifier_logs_and_sends_nothing_without_a_token(monkeypatch) -> None:
+    # A developer's .env carries the real token: without this the test posted to Telegram.
+    from types import SimpleNamespace
+
+    blank = SimpleNamespace(telegram_bot_token="", telegram_chat_id="", telegram_thread_value="")
+    monkeypatch.setattr(notify, "get_config", lambda: SimpleNamespace(secrets=blank))
     assert asyncio.run(notify.send(["Value book: test"])) == 0
 
 

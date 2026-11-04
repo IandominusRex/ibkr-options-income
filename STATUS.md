@@ -396,10 +396,19 @@ Plan: `docs/superpowers/plans/2026-10-29-value-book-5-money-paper.md`. Paper onl
   `as_of` (the cycle that wrote `needed_usd`), skipping a request older than two cycles; a buy that
   misses its fill lapses its request (cooldown); a restart or unconfirmed cancel is resolved from the
   broker/ledger at the next cycle (`live.resolve_working_orders`); a tapped review-line buy is no
-  longer re-refused; the sent-but-unfilled buy is earmarked; `price_stale_at_send` can now fire. **Open (operator ruling 2026-11-04):** the wheel's fill
-  recovery (`reconciliation._exec_matches_candidate`) can still take a value stock execution for a
-  wheel CSP fill on a shared name; the reviewed fix is not committed and is a must-do before
-  `value.book.enabled` is turned on (plan operator to-do 2b).
+  longer re-refused; the sent-but-unfilled buy is earmarked; `price_stale_at_send` can now fire. **Fixed (2026-11-04, after the review):** the wheel's fill recovery
+  (`reconciliation._exec_matches_candidate`) now refuses a stock execution and any execution
+  tagged `value:` (review I-6). Same day, from the deferred minors: `read_book` fails closed on any
+  half-migrated `value.db` (only a missing `value_orders` reads as an empty book) and on any error,
+  not only `sqlite3.Error`; a crash in `accept` closes the Claude read as `failed` instead of
+  re-spending the call each poll (Part 4 M6); the book's night passes the going-concern flag to
+  the held names' exits; the half-sale proposal carries its fraction on the event (no string
+  match); the capital-release day window is the Eastern midnight in UTC; a grounded fact needs a
+  quote of at least 20 characters (M4d); the dilution kill trigger reads banks' `bank.dilution`;
+  `opinions()` orders by id; the notifier test no longer posts to a real Telegram chat.
+  **Still open:** a covered-call roll on a frozen name is not refused (a design choice: refusing
+  could force a called-away); the capital-release runner quotes every put while a request is open
+  (bounded by the daily caps); the sector tally ignores the value book's holdings; also the `select_releases` pool of 20, `ingest` re-tagging on a non-value orderRef, an unexplained stock dropping out of the wheel's view until the freeze, and the prompt not stating the 20-character quote minimum.
 - The new reason codes (`release_not_paper`, `book_attribution_mismatch`,
   `value_book_unreadable`, `gross_notional_cap`, `combined_name_cap`, `price_stale_at_send`,
   `above_value_ceiling`, ...) have no card label: a card shows the raw code

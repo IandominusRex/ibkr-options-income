@@ -382,18 +382,31 @@ def run_queue(
             card = _card(vs, row.symbol) if row is not None else None
             if row is None or card is None:
                 continue
-            done = accept(
-                vs,
-                row,
-                result,
-                card,
-                cfg,
-                now=now,
-                sections=sections,
-                financials=financials_for(row.symbol)
-                if financials_for and row.kind == "filing"
-                else None,
-            )
+            try:
+                done = accept(
+                    vs,
+                    row,
+                    result,
+                    card,
+                    cfg,
+                    now=now,
+                    sections=sections,
+                    financials=financials_for(row.symbol)
+                    if financials_for and row.kind == "filing"
+                    else None,
+                )
+            except Exception as exc:  # noqa: BLE001 - the call is paid for; never re-spend it
+                # Review M6: left queued, a crash here re-ran the same Claude call every poll,
+                # outside the daily caps (those count committed ``read_at``). Close the read.
+                log.exception("value claude read %s %s: accept crashed", row.symbol, row.kind)
+                vs.rollback()
+                row = vs.get(ValueClaudeReadRow, read_id)
+                if row is not None:
+                    row.status, row.read_at = "failed", now
+                    row.error = type(exc).__name__[:32]
+                    row.detail = f"accept crashed: {exc}"[:500]
+                summary["failed"] += 1
+                continue
             summary["done" if result.reply is not None else "failed"] += 1
             log.info(
                 "value claude read %s %s (%s): %s; %d verdict(s), %d trigger(s)",
