@@ -120,6 +120,7 @@ is the executing agent's own model name.
 |---|---|---|---|---|---|
 | Section A entry | checks A1–A5 passed | 0 (branch `feat/value-book-5` at `490d8ca` = main with Part 4 merged locally, not pushed) | **baseline: pytest 5393 passed, 1 skipped**; ruff clean; mypy 338 source files; df 29 GiB free | 2026-11-04 | **A1 reconciliation with Part 4 as merged:** every A4 grep matched at the quoted line numbers (Part 4's prototype numbers held exactly). Part 4's review fixes (`reset_at` in the breaker state, `ready_names` in the night summary, `Accepted.refused`/`kept_earlier`, `filing_text`, `FACT_UNITS`) touch nothing Part 5 references; `queue_read(vs, symbol, *, kind, reason, now, accn=None, reevaluation_id=None)`, `ValueEffectiveRow`'s columns and `value_claude_state` match this plan's use. **Operator answers (2026-11-04):** E1–E8 approved; the five HANDOFF questions accepted at their defaults (release inherits its buy's approval; combined name cap 15%; release thresholds 0% floor / 25% prefer / 3 closes per request / 4 a day / 10% of net liq a day; "trim to half" is a card in Part 6). Part 4 merged locally to main (fast-forward), NOT pushed. Section A exit target: baseline 5393 + 12 = 5405 passed, 1 skipped |
 | Task 1 - the book's configuration | done | `2c762d5` | tests/test_value_config.py 21 passed (+3), with test_config_keys and test_private_config 37 passed; v4 ruleset hash unchanged (`FROZEN["v4"]`); ruff check/format and `mypy src/common/config.py` clean | 2026-11-04 | No deviation from the task text. Red run: 2 of 3 new tests failed as written; `test_nonsense_book_keys_are_refused` was green before the code because an unknown `book` key was itself refused, so after the code I confirmed by hand that each of its six cases raises for its own reason (cost if wrong: none, the test is a little weaker than it reads at the red stage). `book` is outside `rules:` per ruling 8, so v4 stays |
+| Task 2 - the book's tables and the wheel's window | done | `324fca4` | tests/test_value_view.py 4 passed (+4); with test_value_store and test_value_fence 30 passed; ruff check/format and `mypy src/value/store.py src/common/value_view.py` clean | 2026-11-04 | No deviation. Red run: collection `ImportError` on `src.common.value_view`. `init_value_db()` adds `value_reevaluations.position_id` to an existing value.db through `_ADDED_COLUMNS` (checked: `_add_missing_columns` skips a column that already exists, so a fresh db created from the model is fine). The autouse `_value_view_in_tmp` points `value_view._path` at a file that never exists, so no test reads the operator's value.db (cost if wrong: none) |
 
 ## Roadmap (this plan is Part 5 of 6)
 
@@ -1345,7 +1346,7 @@ def put_ceiling(symbol: str) -> float | None:
 wheel_short_calls)`, `ValueExposure`, `value_exposure()`; `wheel_shares(symbols) ->
 dict[str, WheelShares(shares, avg_cost)]`, `split_ratio(description)`.
 
-- [ ] **Step 1: Write the failing tests** — create `tests/test_value_attribution.py` (Tasks 10 and
+- [x] **Step 1: Write the failing tests** — create `tests/test_value_attribution.py` (Tasks 10 and
   11 append to it):
 
 ```python
@@ -1405,8 +1406,8 @@ def test_value_exposure_is_nothing_while_the_book_is_off(value_book_db, monkeypa
     assert on.by_name == {"GOOGL": 15_000.0} and on.claim == pytest.approx(11_250.0)
 ```
 
-- [ ] **Step 2: Run them to see them fail** — `ImportError: cannot import name 'attribute'`.
-- [ ] **Step 3: The rule** — apply to `src/common/books.py`:
+- [x] **Step 2: Run them to see them fail** — `ImportError: cannot import name 'attribute'`.
+- [x] **Step 3: The rule** — apply to `src/common/books.py`:
 
 ```diff
 diff --git a/src/common/books.py b/src/common/books.py
@@ -1533,7 +1534,7 @@ index ec30b29..a33c62f 100644
 +    )
 ```
 
-- [ ] **Step 4: W** — create `src/storage/wheel_shares.py`:
+- [x] **Step 4: W** — create `src/storage/wheel_shares.py`:
 
 ```python
 """The wheel's own share count W (value book spec §9.2, Part 5): every stock execution in the
@@ -1638,9 +1639,9 @@ def split_ratio(description: str) -> float | None:
     return float(m.group(1)) / float(m.group(2))
 ```
 
-- [ ] **Step 5: Run them to see them pass** — `tests/test_value_attribution.py tests/test_ledger_ingest.py tests/test_engine.py`
+- [x] **Step 5: Run them to see them pass** — `tests/test_value_attribution.py tests/test_ledger_ingest.py tests/test_engine.py`
   (books.py is imported by the engine: the engine suite must stay green).
-- [ ] **Step 6: Gates and commit:**
+- [x] **Step 6: Gates and commit:**
 
   ```bash
   git add src/common/books.py src/storage/wheel_shares.py tests/test_value_attribution.py
