@@ -66,12 +66,64 @@ def test_drill_2_a_partial_value_fill(db, value_book_db) -> None:
 
 
 def test_drill_3_a_restart_mid_order(db, value_book_db) -> None:
-    """The order row was written before placeOrder, so after a restart the book still knows the
-    working order (V claims it) and the fill, when the ledger brings it, is tagged by its ref."""
+    """The order row was written before placeOrder; the process died while the order waited. The
+    next cycle rebuilds V from the broker (spec 9.2): the fill is recorded, the proposal is
+    terminal, the name can be proposed again; and the ledger tags the same fill by its ref."""
+    import asyncio
+
+    from sqlalchemy import select
+
+    from src.common.config import get_config
+    from src.value import live
+    from src.value.executor import Found, Outcome
+    from src.value.store import ValueOrderRow, ValueProposalRow
+    from tests.value_book_fixtures import proposal
+
+    pid = proposal("GOOGL", status="sent", cost=4_500.0)
     oid = order("GOOGL", shares=30, filled=0, avg=None, status="submitted")
-    assert read_book(NOW).holding("GOOGL").claimed == 30.0
+    with value_session() as s:
+        s.get(ValueOrderRow, oid).proposal_id = pid
+    assert read_book(NOW).holding("GOOGL").claimed == 30.0  # the working row claims the shares
+
+    class RestartedBroker:
+        async def lookup(self, order_ref):
+            assert order_ref == f"value:{oid}"
+            return Found(Outcome(30.0, 150.0, True), None)  # IBKR shows the fill
+
+    msgs = asyncio.run(
+        live.resolve_working_orders(
+            value_session, RestartedBroker(), now=NOW, cfg=get_config().value
+        )
+    )
+    assert msgs[0] == f"Value book: recovered a buy of 30 GOOGL (order value:{oid})"
+    assert msgs[1].startswith("Value book: bought 30 GOOGL")
+    with value_session() as s:
+        row = s.scalars(select(ValueOrderRow)).one()
+        assert (row.status, row.filled, row.avg_price) == ("filled", 30.0, 150.0)
+        assert s.get(ValueProposalRow, pid).status == "done"
+        assert (
+            book.propose(
+                s,
+                kind="buy",
+                symbol="GOOGL",
+                list_name="deep_value",
+                shares=5,
+                price=150.0,
+                reason="tranche 2",
+                cause="python",
+                auto=True,
+                now=NOW,
+                ttl_hours=30,
+                tranche=2,
+            )
+            is not None
+        )  # a 'sent' proposal that never ends used to block this for good
+    h = read_book(NOW).holding("GOOGL")
+    assert (h.filled, h.pending_buy) == (30.0, 0.0)
     _ingest(_exec(30, 150.0, "2026-11-02T15:05:00", exec_id="v1", ref=f"value:{oid}"))
-    assert _w() == 0.0  # the fill is the value book's, not the wheel's
+    assert (
+        _w() == 0.0
+    )  # and when the ledger brings the fill it is the value book's, not the wheel's
 
 
 def test_drill_4_a_split_freezes_until_restated_and_cleared(db, value_book_db) -> None:
@@ -135,11 +187,13 @@ def test_drill_6_flex_only_arrival_of_a_fill(db, value_book_db) -> None:
 
 
 def test_drill_7_value_db_unreadable(db, monkeypatch, tmp_path) -> None:
+    from src.common.value_keep_fresh import write_keep_fresh
     from src.ibkr.portfolio import wheel_view
 
     bad = tmp_path / "value.db"
     bad.write_bytes(b"garbage")
     monkeypatch.setattr("src.common.value_view._path", lambda: bad)
+    write_keep_fresh(["GOOGL"])  # the book is off here: only the names it may hold are checked
     assert read_book(NOW) is None
     _ingest(_exec(100, 140.0, "2026-10-01T15:00:00", exec_id="w1"))
     pos = [

@@ -243,7 +243,16 @@ def expire(vs: Session, now: datetime) -> int:
         n += 1
     for req in vs.scalars(select(ValueFundingRow).where(ValueFundingRow.status == "open")):
         prop = vs.get(ValueProposalRow, req.proposal_id)
-        if now >= req.expires_at or prop is None or prop.status not in ("approved", "funding"):
+        if (
+            now >= req.expires_at
+            or prop is None
+            or prop.status
+            not in (
+                "approved",
+                "funding",
+                "sent",
+            )
+        ):
             req.status, req.closed_at = "lapsed", now
             req.detail = "expired" if now >= req.expires_at else "the buy is no longer approved"
     return n

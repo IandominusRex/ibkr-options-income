@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from dataclasses import dataclass
 from datetime import date
 from typing import cast
@@ -73,6 +74,13 @@ def close_candidate_id(pos: PositionSnapshot) -> str:
     return f"close:{pos.underlying or pos.symbol}:{expiry}:{pos.strike:g}:{pos.right.value}"
 
 
+def floor_to_tick(price: float) -> float:
+    """Round a premium DOWN to its exchange tick (the same $0.01 / $0.05 tiers as the entry
+    path), so a cap on what a buy-to-close may pay is never exceeded by rounding."""
+    tick = 0.01 if price < 3.0 else 0.05
+    return round(math.floor(price / tick + 1e-9) * tick, 2)
+
+
 async def close_short_position(
     ib_exec: IB,
     pos: PositionSnapshot,
@@ -81,12 +89,18 @@ async def close_short_position(
     *,
     reason: CloseReason,
     note: str = "",
+    max_price: float | None = None,
 ) -> CloseResult:
     """Buy-to-close a short option position at mid, recording the full order/fill lifecycle.
 
     Idempotent at the contract level: if an active close order already exists for this
     position, returns ``status="skipped"`` without placing anything. *reason* is stamped on
     the OrderRow and the BUY FillRow so a loss exit is never recorded as a profit-take.
+
+    *max_price* (per share; ``None`` for every close but a capital release) caps what the close
+    may pay: the opening limit is clamped to it, every reprice step is bounded by it, and a cap
+    below the bid sends nothing (a limit under the bid would only sit). It is rounded down to the
+    tick, so rounding can never carry the order above it.
     """
     assert pos.expiry is not None and pos.strike is not None and pos.right is not None
 
@@ -97,6 +111,14 @@ async def close_short_position(
     mid = (bid + ask) / 2 if bid > 0 else ask
     tick = 0.01 if mid < 3.0 else 0.05
     limit_price = round(round(mid / tick) * tick, 2)
+    cap = None if max_price is None else floor_to_tick(max_price)
+    if cap is not None:
+        if cap < bid or cap <= 0:
+            log.info(
+                "close: cap %.2f is below the bid %.2f for %s — not sent", cap, bid, pos.symbol
+            )
+            return CloseResult("skipped", pos.symbol, qty, limit_price, detail="cap_below_bid")
+        limit_price = min(limit_price, cap)
 
     # 1. Idempotency + OrderRow creation in one transaction. has_active_order blocks a
     #    second close while the first is still working (the F1 stacking path).
@@ -173,7 +195,7 @@ async def close_short_position(
                 cur_limit = _safe_float(order.lmtPrice)
                 fresh_bid, fresh_ask = await _refetch_bid_ask(ib_exec, qualified)
                 new_price = (
-                    reprice_limit("BUY", cur_limit, fresh_bid, fresh_ask, step_pct)
+                    reprice_limit("BUY", cur_limit, fresh_bid, fresh_ask, step_pct, ceiling=cap)
                     if cur_limit is not None and fresh_ask is not None
                     else None
                 )

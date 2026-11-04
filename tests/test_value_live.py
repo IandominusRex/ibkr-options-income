@@ -11,7 +11,7 @@ from sqlalchemy import select
 from src.common.config import get_config
 from src.common.value_types import DayBar
 from src.value import book, live
-from src.value.executor import Outcome, Placed, Quote, send_order
+from src.value.executor import Found, Outcome, Placed, Quote, send_order
 from src.value.exits import DayFacts
 from src.value.scorecard import build_scorecard
 from src.value.store import (
@@ -35,11 +35,26 @@ CARD = build_scorecard(inputs(symbol="STDY", close=30.0), CFG)  # deep READY, FV
 
 
 class FakeBroker:
-    def __init__(self, *, fill: float | None = None, price: float = 30.0) -> None:
+    def __init__(
+        self,
+        *,
+        fill: float | None = None,
+        price: float = 30.0,
+        found: dict | None = None,
+        quote_age: float = 0.0,
+        cancel_done: bool = True,
+    ) -> None:
         self.fill, self.price, self.placed = fill, price, []
+        self.found, self.cancelled, self.quote_age = found or {}, [], quote_age
+        self.cancel_done = cancel_done
 
     async def quote(self, symbol):
-        return Quote(self.price - 0.05, self.price + 0.05, NOW)
+        return Quote(
+            self.price - 0.05, self.price + 0.05, NOW - timedelta(seconds=self.quote_age), NOW
+        )
+
+    async def lookup(self, order_ref):
+        return self.found.get(order_ref)
 
     async def place(self, symbol, side, shares, limit, order_ref):
         with value_session() as s:  # the pending row exists before placeOrder (spec §9.2)
@@ -53,10 +68,13 @@ class FakeBroker:
         return Outcome(filled, self.price, filled >= self.placed[-1][2])
 
     async def cancel(self, placed):
-        return Outcome(self.fill or 0.0, self.price if self.fill else None, True)
+        self.cancelled.append(placed)
+        return Outcome(self.fill or 0.0, self.price if self.fill else None, self.cancel_done)
 
 
-def _effective(symbol="STDY", list_name="deep_value", verdict="READY", fv=46.85, by="python"):
+def _effective(
+    symbol="STDY", list_name="deep_value", verdict="READY", fv=46.85, by="python", review=False
+):
     with value_session() as s:
         s.add(
             ValueEffectiveRow(
@@ -65,6 +83,7 @@ def _effective(symbol="STDY", list_name="deep_value", verdict="READY", fv=46.85,
                 as_of=date(2026, 10, 30),
                 verdict=verdict,
                 decided_by=by,
+                mos_review=review,
                 python_verdict=verdict,
                 fair_value=fv,
                 entry_ceiling=fv * 0.75,
@@ -86,7 +105,7 @@ def _effective(symbol="STDY", list_name="deep_value", verdict="READY", fv=46.85,
 SNAP = live.Snapshot(net_liq=100_000.0, adv={"STDY": 1e9})
 
 
-def _cycle(broker, snap=SNAP, now=NOW):
+def _cycle(broker, snap=SNAP, now=NOW, **kw):
     return asyncio.run(
         live.cycle(
             value_session,
@@ -99,6 +118,7 @@ def _cycle(broker, snap=SNAP, now=NOW):
             halted=False,
             is_live=False,
             trend_brake=False,
+            **kw,
         )
     )
 
@@ -426,3 +446,287 @@ def test_on_a_frozen_name_only_a_stop_or_thesis_sale_sends(value_book_db) -> Non
     _proposal(kind="sell", shares=50, reason="catastrophe")
     _cycle(broker, snap)
     assert broker.placed[0][1:3] == ("sell", 50.0)
+
+
+# --- Whole-branch review fixes -------------------------------------------------------------
+
+FULL = live.Snapshot(net_liq=100_000.0, csp_by_name={"AAA": 99_800.0}, adv={"STDY": 1e9})
+ROOM = live.Snapshot(net_liq=100_000.0, csp_by_name={"AAA": 89_800.0}, adv={"STDY": 1e9})
+
+
+def test_a_funded_buy_that_does_not_fill_lapses_its_request_and_the_cooldown_applies(
+    value_book_db,
+) -> None:
+    """Review I-4: funded only by the buy's FILL. A mid limit that misses used to mark the
+    request funded, so the cooldown (keyed on lapsed) never held and the next night asked again."""
+    _effective()
+    pid = _proposal()
+    _cycle(FakeBroker(), FULL)
+    msgs = _cycle(FakeBroker(fill=0.0), ROOM)
+    assert "did not fill" in msgs[-1]
+    with value_session() as s:
+        assert s.get(ValueProposalRow, pid).status == "expired"
+        assert s.scalars(select(ValueFundingRow)).one().status == "lapsed"
+    _proposal()  # the next night proposes again: the cooldown refuses to ask for capital again
+    msgs = _cycle(FakeBroker(), FULL)
+    assert "cooldown" in msgs[-1]
+    with value_session() as s:
+        assert len(s.scalars(select(ValueFundingRow)).all()) == 1
+
+
+def test_the_funding_request_carries_the_cycle_that_wrote_its_need(value_book_db) -> None:
+    """Review (b): needed_usd is rewritten each cycle from a fresh snapshot; as_of says when."""
+    _effective()
+    _proposal()
+    _cycle(FakeBroker(), FULL)
+    with value_session() as s:
+        assert s.scalars(select(ValueFundingRow)).one().as_of == NOW
+    later = NOW + timedelta(minutes=15)
+    short = live.Snapshot(net_liq=100_000.0, csp_by_name={"AAA": 99_500.0}, adv={"STDY": 1e9})
+    _cycle(FakeBroker(), short, now=later)
+    with value_session() as s:
+        req = s.scalars(select(ValueFundingRow)).one()
+        assert (req.as_of, req.needed_usd) == (later, 101.0)  # re-written from the new snapshot
+
+
+def test_a_review_line_buy_the_operator_tapped_is_sent_not_refused(value_book_db) -> None:
+    """Review I-7: the night makes a tap-only proposal for a margin above the review line (the
+    gate's only refusal is data_unreliable from mos_review). Once a human taps it, the send-time
+    gate must not re-refuse it for the very reason the tap was asked for."""
+    _effective(review=True)
+    with value_session() as s:
+        book.set_state(s, live.SNAPSHOT, {"net_liq": 100_000.0, "adv": {"STDY": 1e9}}, NOW)
+    out = _night([])
+    assert (out.buys, out.tap) == (1, 1)
+    with value_session() as s:
+        p = s.scalars(select(ValueProposalRow)).one()
+        assert (p.status, p.needs_tap) == ("pending", True)
+        assert book.decide(s, p.id, approve=True, now=NOW, by="cli") == "approved"
+    broker = FakeBroker()
+    msgs = _cycle(broker)
+    assert msgs and msgs[0].startswith("Value book: bought")
+    assert len(broker.placed) == 1
+
+
+def test_an_untapped_review_line_buy_is_still_refused_at_send_time(value_book_db) -> None:
+    _effective(review=True)
+    pid = _proposal()  # auto-approved by the system: nobody tapped it
+    msgs = _cycle(FakeBroker())
+    assert "data_unreliable" in msgs[-1]
+    with value_session() as s:
+        assert s.get(ValueProposalRow, pid).status == "refused"
+
+
+def test_a_quote_older_than_the_limit_refuses_the_buy_at_send_time(value_book_db) -> None:
+    """Review minor: the quote's age is measured from its own time, so price_stale_at_send fires."""
+    _effective()
+    pid = _proposal()
+    broker = FakeBroker(quote_age=CFG.book.quote_max_age_seconds + 10)
+    msgs = _cycle(broker)
+    assert "price_stale_at_send" in msgs[-1] and broker.placed == []
+    with value_session() as s:
+        assert s.get(ValueProposalRow, pid).status == "refused"
+
+
+def test_a_cancel_the_broker_has_not_confirmed_leaves_the_order_to_be_resolved(
+    value_book_db,
+) -> None:
+    """Review I-5: never record 'cancelled' for an order the broker may still fill."""
+    _effective()
+    pid = _proposal()
+    msgs = _cycle(FakeBroker(fill=0.0, cancel_done=False))
+    assert "not confirmed" in msgs[-1]
+    with value_session() as s:
+        row = s.scalars(select(ValueOrderRow)).one()
+        assert row.status == "submitted" and row.filled == 0.0
+        assert s.get(ValueProposalRow, pid).status == "sent"
+
+
+def _stuck_buy(*, status="submitted", with_order=True) -> tuple[int, str | None]:
+    """A buy a restart left half-way: proposal 'sent', its order row written (and 'submitted')."""
+    _effective()
+    pid = _proposal()
+    with value_session() as s:
+        s.get(ValueProposalRow, pid).status = "sent"
+        if not with_order:
+            return pid, None
+        row = ValueOrderRow(
+            symbol="STDY",
+            list_name="deep_value",
+            side="buy",
+            tranche=1,
+            reason="tranche 1",
+            proposal_id=pid,
+            shares=20,
+            limit_price=30.0,
+            status=status,
+            ib_order_id=41,
+            created_at=NOW - timedelta(minutes=20),
+            sent_at=NOW - timedelta(minutes=20),
+        )
+        s.add(row)
+        s.flush()
+        row.order_ref = f"value:{row.id}"
+        return pid, row.order_ref
+
+
+def test_a_restart_mid_order_resolves_the_fill_from_the_broker(value_book_db) -> None:
+    """Spec 9.2 drill 3, for real: the process died while the order waited. The next cycle finds
+    the fill at the broker, V is right, the proposal is terminal and the name can be proposed
+    again."""
+    from src.common.value_view import read_book
+
+    pid, ref = _stuck_buy()
+    assert read_book(NOW).holding("STDY").claimed == 20.0  # the working row claims the shares
+    broker = FakeBroker(found={ref: Found(Outcome(20.0, 29.95, True), None)})
+    msgs = _cycle(broker)
+    assert "recovered" in msgs[0] and broker.placed == []
+    with value_session() as s:
+        row = s.scalars(select(ValueOrderRow)).one()
+        assert (row.status, row.filled, row.avg_price) == ("filled", 20.0, 29.95)
+        assert s.get(ValueProposalRow, pid).status == "done"
+        assert s.scalars(select(ValuePositionRow)).one().status == "open"
+        assert book.totals(s).names["STDY"].filled == 20.0
+        assert (
+            book.propose(
+                s,
+                kind="buy",
+                symbol="STDY",
+                list_name="deep_value",
+                shares=5,
+                price=30.0,
+                reason="tranche 2",
+                cause="python",
+                auto=True,
+                now=NOW,
+                ttl_hours=30,
+                tranche=2,
+            )
+            is not None
+        )  # not blocked by a 'sent' proposal that never ends
+    h = read_book(NOW).holding("STDY")
+    assert (h.filled, h.pending_buy) == (20.0, 0.0)
+
+
+def test_a_working_order_past_its_timeout_is_cancelled_and_what_filled_is_recorded(
+    value_book_db,
+) -> None:
+    pid, ref = _stuck_buy()
+    broker = FakeBroker(
+        fill=5.0, found={ref: Found(Outcome(5.0, 30.0, False), Placed(41, 4100, "handle"))}
+    )
+    _cycle(broker)
+    assert broker.cancelled and broker.cancelled[0].handle == "handle"
+    with value_session() as s:
+        row = s.scalars(select(ValueOrderRow)).one()
+        assert (row.status, row.filled) == ("cancelled", 5.0)
+        assert s.get(ValueProposalRow, pid).status == "done"
+
+
+def test_a_fill_only_the_ledger_knows_is_recorded(value_book_db) -> None:
+    pid, ref = _stuck_buy()
+    _cycle(FakeBroker(), ledger_fill=lambda r: (20.0, 29.9) if r == ref else (0.0, None))
+    with value_session() as s:
+        row = s.scalars(select(ValueOrderRow)).one()
+        assert (row.status, row.filled, row.avg_price) == ("filled", 20.0, 29.9)
+        assert s.get(ValueProposalRow, pid).status == "done"
+
+
+def test_an_order_found_nowhere_is_closed_out_unfilled_and_the_name_is_free(value_book_db) -> None:
+    from src.common.value_view import read_book
+
+    pid, ref = _stuck_buy()
+    _cycle(FakeBroker(), now=NOW + timedelta(days=1))  # a DAY order cannot still be working
+    with value_session() as s:
+        row = s.scalars(select(ValueOrderRow)).one()
+        assert (row.status, row.filled) == ("cancelled", 0.0) and "not found" in row.detail
+        assert s.get(ValueProposalRow, pid).status == "expired"
+        assert book.totals(s).positions_open == 0
+    assert read_book(NOW).holding("STDY").claimed == 0.0
+
+
+def test_a_sent_proposal_with_no_order_goes_back_to_approved_and_is_sent_again(
+    value_book_db,
+) -> None:
+    pid, _ = _stuck_buy(with_order=False)
+    broker = FakeBroker()
+    _cycle(broker)
+    assert len(broker.placed) == 1  # re-gated and sent this very cycle
+    with value_session() as s:
+        assert s.get(ValueProposalRow, pid).status == "done"
+
+
+def test_a_broker_that_cannot_be_asked_leaves_the_working_order_alone(value_book_db) -> None:
+    pid, ref = _stuck_buy()
+
+    class Down(FakeBroker):
+        async def lookup(self, order_ref):
+            raise TimeoutError("reqExecutions")
+
+    _cycle(Down())
+    with value_session() as s:
+        assert s.scalars(select(ValueOrderRow)).one().status == "submitted"
+        assert s.get(ValueProposalRow, pid).status == "sent"
+
+
+def _ib_trade(*, ref="value:3", filled=0.0, done=False, order_id=41):
+    from types import SimpleNamespace
+
+    state = {"done": done}
+    trade = SimpleNamespace(
+        order=SimpleNamespace(orderRef=ref, orderId=order_id, permId=4100),
+        orderStatus=SimpleNamespace(filled=filled, avgFillPrice=30.0 if filled else 0.0),
+        isDone=lambda: state["done"],
+    )
+    return trade, state
+
+
+def test_the_ibkr_broker_confirms_a_cancel_before_calling_it_done() -> None:
+    from types import SimpleNamespace
+
+    from src.value.executor import IbkrValueBroker
+
+    trade, state = _ib_trade()
+    cancelled = []
+    ib = SimpleNamespace(cancelOrder=lambda order: cancelled.append(order))
+    broker = IbkrValueBroker(ib, cancel_confirm_seconds=0.6)
+    out = asyncio.run(broker.cancel(Placed(41, 4100, trade)))
+    assert cancelled and out.done is False  # IBKR never confirmed: not recorded as cancelled
+    trade2, state2 = _ib_trade()
+    ib2 = SimpleNamespace(cancelOrder=lambda order: state2.update(done=True))
+    assert asyncio.run(IbkrValueBroker(ib2).cancel(Placed(41, 4100, trade2))).done is True
+
+
+def test_the_ibkr_broker_finds_an_order_open_or_by_its_executions() -> None:
+    from types import SimpleNamespace
+
+    from src.value.executor import IbkrValueBroker
+
+    async def open_orders():
+        return [_ib_trade(ref="value:9")[0], _ib_trade(ref="value:3", filled=4.0)[0]]
+
+    fills = [
+        SimpleNamespace(execution=SimpleNamespace(orderRef="value:5", shares=12, price=30.0)),
+        SimpleNamespace(execution=SimpleNamespace(orderRef="value:5", shares=8, price=31.0)),
+        SimpleNamespace(execution=SimpleNamespace(orderRef="", shares=99, price=1.0)),
+    ]
+
+    async def executions():
+        return fills
+
+    ib = SimpleNamespace(reqOpenOrdersAsync=open_orders, reqExecutionsAsync=executions)
+    broker = IbkrValueBroker(ib)
+    open_ = asyncio.run(broker.lookup("value:3"))
+    assert open_.placed is not None and open_.outcome.filled == 4.0
+    done = asyncio.run(broker.lookup("value:5"))
+    assert done.placed is None and (done.outcome.filled, done.outcome.avg_price) == (
+        20.0,
+        (12 * 30.0 + 8 * 31.0) / 20.0,
+    )
+    assert asyncio.run(broker.lookup("value:6")) is None
+
+
+def test_a_quotes_age_runs_from_its_own_time_to_when_it_arrived() -> None:
+    q = Quote(29.95, 30.05, NOW - timedelta(seconds=45), NOW)
+    assert q.age_seconds == 45.0
+    assert Quote(29.95, 30.05, NOW).age_seconds == 0.0

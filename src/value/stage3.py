@@ -22,6 +22,30 @@ from src.value.store import value_session
 log = logging.getLogger(__name__)
 
 
+def ledger_fill(order_ref: str) -> tuple[float, float | None]:
+    """Shares and average price the broker-truth ledger holds for one value order (its
+    ``book="value"`` rows, matched by ``orderRef``), for resolving an order a restart left
+    working. Read-only; ``(0, None)`` when the ledger has none (yet: Flex lags)."""
+    from sqlalchemy import select
+
+    from src.storage.db import session_scope
+    from src.storage.models import BrokerExecutionRow as Row
+
+    with session_scope() as s:
+        rows = s.execute(
+            select(Row.source_kind, Row.quantity, Row.price).where(
+                Row.order_ref == order_ref,
+                Row.sec_type == "STK",
+                Row.superseded_by.is_(None),
+            )
+        ).all()
+    execs = [r for r in rows if r[0] == "exec"] or list(rows)
+    qty = sum(abs(float(q)) for _, q, _ in execs)
+    if qty <= 0:
+        return 0.0, None
+    return qty, sum(abs(float(q)) * float(p) for _, q, p in execs) / qty
+
+
 def build_snapshot(positions: list[PositionSnapshot], net_liq: float) -> live.Snapshot:
     """The broker's view as plain numbers: stock shares and marks (both books), the wheel's short
     calls per name (the sell cap) and its short puts' collateral per name."""
@@ -83,6 +107,7 @@ async def run_cycle(cfg: Config, *, now: datetime, hourly: bool) -> list[str]:
             halted=is_halted(),
             is_live=cfg.is_live,
             trend_brake=trend,
+            ledger_fill=ledger_fill,
         )
         if hourly:
             with value_session() as vs:

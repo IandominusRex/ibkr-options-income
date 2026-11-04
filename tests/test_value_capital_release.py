@@ -154,16 +154,13 @@ def test_the_runner_closes_after_a_second_gate_on_a_fresh_quote(
     credits = {"AAA": 2.0, "BBB": 2.0}
     monkeypatch.setattr(cr, "chain_entry_credit_per_share", lambda s, pos: credits[pos.underlying])
     monkeypatch.setattr(cr, "is_halted", lambda: False)
-    # The fixtures' clock (NOW), not the wall clock: the request lapses 30 hours after NOW.
-    read_book = cr.read_book
-    monkeypatch.setattr(cr, "read_book", lambda: read_book(NOW))
     quotes = {"AAA": [(0.95, 1.05), (0.95, 1.05)], "BBB": [(1.75, 1.85)]}
     closes: list[tuple[str, CloseReason, str]] = []
 
     async def quote(pos):
         return quotes[pos.underlying].pop(0)
 
-    async def close(ib, pos, bid, ask, *, reason, note):
+    async def close(ib, pos, bid, ask, *, reason, note, max_price=None):
         closes.append((pos.underlying, reason, note))
         return CloseResult("filled", pos.symbol, 1, (bid + ask) / 2, 1, (bid + ask) / 2)
 
@@ -174,6 +171,7 @@ def test_the_runner_closes_after_a_second_gate_on_a_fresh_quote(
         cr.run_capital_release(
             object(),
             object(),
+            now=NOW,  # the fixtures' clock: the request lapses 30 hours after NOW
             quote=quote,
             positions_fn=lambda: [_put("AAA", 100.0), _put("BBB", 150.0)],
             net_liq_fn=net_liq,
@@ -219,3 +217,193 @@ def test_request_progress_reads_its_own_closes(db) -> None:
     assert request_progress(rows, 3) == (False, 10_000.0)
     assert request_progress(rows, 4) == (True, 0.0)
     assert day_counts(rows) == (2, 10_000.0)
+
+
+# --- Whole-branch review fixes -------------------------------------------------------------
+
+
+class _Harness:
+    """Drives ``run_capital_release`` with fake quotes and a recording ``close``."""
+
+    def __init__(self, cr, monkeypatch, *, credits, quote_of, results=None) -> None:
+        self.cr, self.closes, self.max_prices = cr, [], []
+        self.results = results or {}
+        monkeypatch.setattr(
+            cr, "chain_entry_credit_per_share", lambda s, pos: credits[pos.underlying]
+        )
+        monkeypatch.setattr(cr, "is_halted", lambda: False)
+        monkeypatch.setattr(cr, "today_et", lambda: NOW.date())
+        self.quote_of = quote_of
+
+    async def quote(self, pos):
+        return self.quote_of[pos.underlying]
+
+    async def close(self, ib, pos, bid, ask, *, reason, note, max_price=None):
+        self.closes.append(pos.underlying)
+        self.max_prices.append(max_price)
+        status = self.results.get(pos.underlying, "filled")
+        filled = 1 if status == "filled" else 0
+        return CloseResult(status, pos.symbol, 1, (bid + ask) / 2, filled, (bid + ask) / 2)
+
+    def run(self, puts, *, now=NOW) -> int:
+        async def net_liq():
+            return 100_000.0
+
+        return asyncio.run(
+            self.cr.run_capital_release(
+                object(),
+                object(),
+                now=now,
+                quote=self.quote,
+                positions_fn=lambda: puts,
+                net_liq_fn=net_liq,
+                close=self.close,
+            )
+        )
+
+
+def _today_close(db, strike: float, request: int = 99, *, updated_at=NOW, state="filled") -> None:
+    from src.storage.models import OrderRow
+
+    with db() as s:
+        s.add(
+            OrderRow(
+                candidate_id=f"close:ZZZ:20261120:{strike:g}:P",
+                state=state,
+                limit_price=1.0,
+                filled_qty=1 if state == "filled" else 0,
+                detail=f"buy-to-close (capital_release) capital release request {request} for X",
+                close_reason="capital_release",
+                created_at=NOW,
+                updated_at=updated_at,
+            )
+        )
+
+
+def test_a_set_that_would_pass_the_days_close_count_is_never_started(
+    value_book_db, book_on, monkeypatch, db
+) -> None:
+    """Review (c): three closes today and a cap of four leave room for one; a request that only a
+    pair of closes covers sends nothing rather than a partial release."""
+    from src.execution import capital_release as cr
+
+    funding("GOOGL", 5_500.0, proposal_id=proposal("GOOGL", status="funding"))
+    for strike in (10.0, 11.0, 12.0):  # 3,300 released: well under the notional cap
+        _today_close(db, strike, request=99)
+    h = _Harness(
+        cr,
+        monkeypatch,
+        credits={"AAA": 2.0, "CCC": 2.0},
+        quote_of={"AAA": (0.95, 1.05), "CCC": (0.95, 1.05)},
+    )
+    # AAA and CCC free 3,000 each: only the pair covers 5,500, and the day has room for one
+    assert h.run([_put("AAA", 30.0), _put("CCC", 30.0)]) == 0
+    assert h.closes == []
+
+
+def test_a_set_that_would_pass_the_days_release_cap_is_never_started(
+    value_book_db, book_on, monkeypatch, db
+) -> None:
+    from src.execution import capital_release as cr
+
+    funding("GOOGL", 8_000.0, proposal_id=proposal("GOOGL", status="funding"))
+    _today_close(db, 50.0, request=99)  # 5,000 already released today; the cap is 10,000
+    h = _Harness(
+        cr,
+        monkeypatch,
+        credits={"AAA": 2.0, "CCC": 2.0},
+        quote_of={"AAA": (0.95, 1.05), "CCC": (0.95, 1.05)},
+    )
+    # each close alone fits (5,000 + 4,000), the pair does not (5,000 + 8,000 > 10,000)
+    assert h.run([_put("AAA", 40.0), _put("CCC", 40.0)]) == 0
+    assert h.closes == []
+
+
+def test_a_cancelled_unfilled_close_stops_the_set(value_book_db, book_on, monkeypatch, db) -> None:
+    """Review I-1: if the first close of a pair is cancelled unfilled, the second is not sent
+    (its premium would be given up for a release that cannot cover the request)."""
+    from src.execution import capital_release as cr
+
+    funding("GOOGL", 9_000.0, proposal_id=proposal("GOOGL", status="funding"))
+    h = _Harness(
+        cr,
+        monkeypatch,
+        credits={"AAA": 2.0, "CCC": 2.0},
+        quote_of={"AAA": (0.95, 1.05), "CCC": (0.95, 1.05)},
+        results={"AAA": "working", "CCC": "working"},
+    )
+    assert h.run([_put("AAA", 60.0), _put("CCC", 40.0)]) == 0
+    assert len(h.closes) == 1  # whichever went first was cancelled: the other waits a cycle
+
+
+def test_every_close_is_capped_at_the_entry_credit_less_the_required_profit(
+    value_book_db, book_on, monkeypatch, db
+) -> None:
+    """Review I-2: the gate judges the mid; the order may never pay more than the cap."""
+    from src.execution import capital_release as cr
+
+    funding("GOOGL", 9_000.0, proposal_id=proposal("GOOGL", status="funding"))
+    h = _Harness(cr, monkeypatch, credits={"AAA": 1.0}, quote_of={"AAA": (0.92, 1.08)})
+    assert h.run([_put("AAA", 100.0)]) == 1
+    assert h.max_prices == [1.0]  # entry 1.00 x (1 - 0/100), floored to the tick
+    # a market whose bid is already above the cap is not closed into (the gate sees mid <= credit
+    # only on a two-sided quote; here the cap sits under the bid)
+    monkeypatch.setattr(get_config().value.book.release, "min_profit_pct", 20.0)
+    h2 = _Harness(cr, monkeypatch, credits={"AAA": 1.0}, quote_of={"AAA": (0.85, 0.87)})
+    monkeypatch.setattr(get_config().value.book.release, "preferred_profit_pct", 20.0)
+    assert h2.run([_put("AAA", 100.0)]) == 0  # cap 0.80 < bid 0.85
+    assert h2.closes == []
+
+
+def test_a_stale_request_is_not_served(value_book_db, book_on, monkeypatch, db) -> None:
+    """Review (b): needed_usd is rewritten each value cycle; when its as_of is older than two
+    cycles the value process is not running and no more puts are closed for it."""
+    from src.execution import capital_release as cr
+
+    funding("GOOGL", 9_000.0, proposal_id=proposal("GOOGL", status="funding"), as_of=NOW)
+    h = _Harness(cr, monkeypatch, credits={"AAA": 2.0}, quote_of={"AAA": (0.95, 1.05)})
+    cycle = get_config().value.book.cycle_minutes
+    assert h.run([_put("AAA", 100.0)], now=NOW + timedelta(minutes=2 * cycle + 1)) == 0
+    assert h.closes == []
+    assert h.run([_put("AAA", 100.0)], now=NOW + timedelta(minutes=2 * cycle - 1)) == 1
+
+
+def test_only_closes_after_the_requests_as_of_come_off_its_need(
+    value_book_db, book_on, monkeypatch, db
+) -> None:
+    """Review (b): needed_usd is written from a snapshot that already excludes closes made
+    before it, so they may not be subtracted a second time; closes after it may."""
+    from sqlalchemy import select
+
+    from src.execution import capital_release as cr
+    from src.storage.models import OrderRow
+
+    _today_close(db, 20.0, request=1, updated_at=NOW - timedelta(minutes=10))  # before as_of
+    _today_close(db, 10.0, request=1, updated_at=NOW + timedelta(minutes=5))  # after as_of
+    with db() as s:
+        rows = list(s.scalars(select(OrderRow)))
+    assert cr.request_progress(rows, 1) == (False, 3_000.0)  # no as_of: every close counts
+    assert cr.request_progress(rows, 1, as_of=NOW) == (False, 1_000.0)  # only the later one
+
+    # Through the runner: needed_usd 4,000 was written at NOW from a snapshot that already lacks
+    # the 2,000 close; the 1,000 close after it comes off: 3,000 still to free. A 2,500 put does
+    # not cover it (subtracting both closes would have read 1,000 and sent it).
+    funding("GOOGL", 4_000.0, proposal_id=proposal("GOOGL", status="funding"), as_of=NOW)
+    later = NOW + timedelta(minutes=6)
+    h = _Harness(cr, monkeypatch, credits={"BBB": 2.0}, quote_of={"BBB": (0.95, 1.05)})
+    assert h.run([_put("BBB", 25.0)], now=later) == 0
+    assert h.run([_put("BBB", 30.0)], now=later) == 1
+
+
+def test_the_release_is_paper_only(value_book_db, book_on, monkeypatch, db) -> None:
+    """Review I-3: the runner returns early in live and the gate names the reason."""
+    from src.execution import capital_release as cr
+
+    funding("GOOGL", 9_000.0, proposal_id=proposal("GOOGL", status="funding"))
+    win = _c("AAA:1", 100.0, 2.0, 1.0)
+    args = dict(right=OptionRight.PUT, closes_today=0, released_today=0.0, net_liq=100_000.0)
+    assert validate_release(win, **args) == []
+    monkeypatch.setattr(get_config().secrets, "live_trading", True)
+    assert "release_not_paper" in validate_release(win, **args)
+    h = _Harness(cr, monkeypatch, credits={"AAA": 2.0}, quote_of={"AAA": (0.95, 1.05)})
+    assert h.run([_put("AAA", 100.0)]) == 0 and h.closes == []

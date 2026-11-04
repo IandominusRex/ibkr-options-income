@@ -744,6 +744,8 @@ def validate_release(
     call is refused; so is a spreads-book contract (the wheel never touches one)."""
     release = get_config().value.book.release.model_dump()
     reasons: list[str] = []
+    if get_config().is_live:  # the value book is paper only (Part 5): never a live close
+        reasons.append("release_not_paper")
     if right != OptionRight.PUT:
         reasons.append("release_not_csp")
     if is_spreads_underlying(c.underlying):

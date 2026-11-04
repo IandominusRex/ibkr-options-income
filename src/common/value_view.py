@@ -54,12 +54,19 @@ class FundingRequest:
     needed_usd: float
     created_at: datetime
     expires_at: datetime
+    # When the value process last wrote ``needed_usd`` from a fresh account snapshot (naive UTC).
+    # ``needed_usd`` already excludes every close made before it, so only releases after this
+    # moment may be subtracted from it; a request whose ``as_of`` has gone stale is not served
+    # (the value process is not running). A row from before the column is read as ``created_at``.
+    as_of: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class ValueBook:
     holdings: dict[str, ValueHolding] = field(default_factory=dict)
-    earmarked_usd: float = 0.0  # approved buys not yet filled: cash the wheel must not re-use
+    earmarked_usd: float = (
+        0.0  # approved and sent buys not yet filled: cash the wheel must not re-use
+    )
     frozen: frozenset[str] = frozenset()  # names whose attribution is frozen (spec §9.2)
     requests: tuple[FundingRequest, ...] = ()  # open capital-release requests
 
@@ -98,12 +105,21 @@ def read_book(now: datetime | None = None) -> ValueBook | None:
                 "SELECT COALESCE(SUM(cost_usd), 0) FROM value_proposals "
                 "WHERE kind = 'buy' AND status IN ('approved', 'funding')"
             ).fetchone()[0]
+            sent = con.execute(
+                "SELECT p.id, p.cost_usd, o.shares, o.filled, o.limit_price, o.status "
+                "FROM value_proposals p LEFT JOIN value_orders o ON o.proposal_id = p.id "
+                "WHERE p.kind = 'buy' AND p.status = 'sent'"
+            ).fetchall()
             attribution = con.execute(
                 "SELECT symbol, state, mark FROM value_attribution"
             ).fetchall()
+            has_as_of = any(
+                r[1] == "as_of" for r in con.execute("PRAGMA table_info(value_funding_requests)")
+            )
             requests = con.execute(
-                "SELECT id, proposal_id, symbol, needed_usd, created_at, expires_at "
-                "FROM value_funding_requests WHERE status = 'open' ORDER BY id"
+                "SELECT id, proposal_id, symbol, needed_usd, created_at, expires_at, "
+                + ("as_of" if has_as_of else "NULL")
+                + " FROM value_funding_requests WHERE status = 'open' ORDER BY id"
             ).fetchall()
     except sqlite3.OperationalError as exc:
         if "no such table" in str(exc):
@@ -135,18 +151,38 @@ def read_book(now: datetime | None = None) -> ValueBook | None:
         avg_cost = v["spent"] / v["bought"] if v["bought"] else 0.0
         holdings[s] = ValueHolding(s, held, v["buy"], v["sell"], held * avg_cost, marks.get(s))
     reqs = tuple(
-        FundingRequest(int(i), int(p), str(s).upper(), float(n), created, expires)
-        for i, p, s, n, c, e in requests
+        FundingRequest(
+            int(i), int(p), str(s).upper(), float(n), created, expires, _naive(a) or created
+        )
+        for i, p, s, n, c, e, a in requests
         if (created := _naive(c)) is not None
         and (expires := _naive(e)) is not None
         and expires > now
     )
     return ValueBook(
         holdings=holdings,
-        earmarked_usd=float(earmark or 0.0),
+        earmarked_usd=float(earmark or 0.0) + _sent_earmark(sent),
         frozen=frozenset(str(sym).upper() for sym, state, _ in attribution if state == "frozen"),
         requests=reqs,
     )
+
+
+def _sent_earmark(rows: list[tuple]) -> float:
+    """Buys the value process has sent but not finished: the unfilled remainder of each working
+    order at its limit (market value counts filled shares only), else the proposal's whole cost
+    while its order row is not written yet. A sent proposal whose orders are all over adds 0."""
+    total = 0.0
+    by_proposal: dict[int, list[tuple]] = {}
+    for pid, cost, shares, filled, limit, status in rows:
+        by_proposal.setdefault(int(pid), []).append((cost, shares, filled, limit, status))
+    for items in by_proposal.values():
+        if all(it[1] is None for it in items):
+            total += float(items[0][0] or 0.0)
+            continue
+        for _, shares, filled, limit, status in items:
+            if shares is not None and status in ("pending", "submitted", "partial"):
+                total += max(0.0, float(shares) - float(filled or 0.0)) * float(limit or 0.0)
+    return total
 
 
 def put_ceiling(symbol: str) -> float | None:

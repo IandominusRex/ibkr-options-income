@@ -124,3 +124,40 @@ def test_the_operator_cli_taps_clears_and_restates(value_book_db, capsys) -> Non
     with value_session() as s:
         assert totals(s).names["STDY"].filled == 40.0
         assert s.scalars(select(ValueOrderRow)).one().avg_price == 15.0
+
+
+def test_the_ledger_fill_of_a_value_order_is_read_by_its_order_ref(db) -> None:
+    """Review I-5: a restart's working order is resolved from the ledger's book="value" rows."""
+    from datetime import UTC, datetime
+
+    from src.common.schemas import ParsedExecution, ParsedStatement
+    from src.ledger.contracts import stock_contract
+    from src.ledger.ingest import ingest
+    from src.value.stage3 import ledger_fill
+
+    def ex(qty, price, exec_id, ref):
+        return ParsedExecution(
+            contract=stock_contract("STDY", "USD"),
+            trade_time=datetime(2026, 11, 2, 15, 5, tzinfo=UTC),
+            quantity=qty,
+            price=price,
+            proceeds=-qty * price,
+            exec_id=exec_id,
+            account="U0000001",
+            source_kind="exec",
+            order_ref=ref,
+        )
+
+    ingest(
+        ParsedStatement(
+            account="U0000001",
+            executions=[
+                ex(12, 30.0, "a", "value:7"),
+                ex(8, 31.0, "b", "value:7"),
+                ex(5, 9.0, "c", None),
+            ],
+        ),
+        source="flex",
+    )
+    assert ledger_fill("value:7") == (20.0, (12 * 30.0 + 8 * 31.0) / 20.0)
+    assert ledger_fill("value:8") == (0.0, None)

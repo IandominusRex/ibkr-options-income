@@ -369,7 +369,7 @@ Plan: `docs/superpowers/plans/2026-10-29-value-book-5-money-paper.md`. Paper onl
   freezes the name until `value_book --split` and `--clear`; not live: a separate live plan is
   needed.
 - New in the trading path (the only Rules-Engine edits, each inert while `value.book.enabled` is
-  false): `capital.py` (value claim, extra exposure, `ReleaseCandidate` / `release_reasons` /
+  false, except `wheel_view` with an unreadable value.db, see the review fixes below): `capital.py` (value claim, extra exposure, `ReleaseCandidate` / `release_reasons` /
   `select_releases`), `risk_engine.py` (`book_attribution_mismatch`, `value_book_unreadable`,
   `gross_notional_cap`, `combined_name_cap`, `validate_release` with the `release_*` reasons),
   `regime_limits.py` and `strategies/cash_secured_put.py` (the same claim), `ibkr/portfolio.py`
@@ -386,11 +386,27 @@ Plan: `docs/superpowers/plans/2026-10-29-value-book-5-money-paper.md`. Paper onl
   through both the live hook and a Flex pull (so the freshly bought shares tag `book="value"` and
   W stays the wheel's); the grace window against a real Flex lag; the account's trade history
   imported into the ledger first.
-- Flagged for review (not changed): `wheel_view` reads value.db even with the book off, so a
-  present-but-unreadable value.db fails the wheel closed on stock the ledger cannot explain;
-  `capital_release._service` subtracts today's filled release closes from a stored `needed_usd`
-  that the value process already rewrites net of them (errs toward closing less); value rows show in
-  the whole-account trade ledger as account truth, not split out (Part 6).
+- Whole-branch review fixes (2026-11-04, plan Progress log "Whole-branch review"): with the book
+  off and value.db unreadable, `wheel_view` fail-closes only on the names in
+  `data/value_keep_fresh.json` (a missing file: none; an unreadable file: every name; the book on:
+  every name), so the wheel no longer fails open on concentration; `value_exposure()`/`wheel_view`
+  are off in live and the release runner/gate refuse in live (`release_not_paper`); a release close
+  is capped at the entry credit less `min_profit_pct` (order and every reprice), stops the set at
+  the first close that does not fill, and subtracts only closes made after the funding request's
+  `as_of` (the cycle that wrote `needed_usd`), skipping a request older than two cycles; a buy that
+  misses its fill lapses its request (cooldown); a restart or unconfirmed cancel is resolved from the
+  broker/ledger at the next cycle (`live.resolve_working_orders`); a tapped review-line buy is no
+  longer re-refused; the sent-but-unfilled buy is earmarked; `price_stale_at_send` can now fire. **Open (operator ruling 2026-11-04):** the wheel's fill
+  recovery (`reconciliation._exec_matches_candidate`) can still take a value stock execution for a
+  wheel CSP fill on a shared name; the reviewed fix is not committed and is a must-do before
+  `value.book.enabled` is turned on (plan operator to-do 2b).
+- The new reason codes (`release_not_paper`, `book_attribution_mismatch`,
+  `value_book_unreadable`, `gross_notional_cap`, `combined_name_cap`, `price_stale_at_send`,
+  `above_value_ceiling`, ...) have no card label: a card shows the raw code
+  (`formatters` falls back to `code.replace("_", " ")`).
+- Still flagged for review: value rows show in the whole-account trade ledger as account truth, not
+  split out (Part 6); minors deferred by the whole-branch review are listed in the plan's Progress
+  log.
 
 ## Built (2026-10-30 — value book Part 4: Claude as the analyst)
 

@@ -9,7 +9,10 @@ must not load. Paper only (the caller refuses in live). Every order:
 2. is a ``LimitOrder`` at the mid of a fresh quote (``req_fresh_mkt_data``, never ``reqMktData``),
    on a contract ``qualifyContracts`` resolved, sent from clientId 31;
 3. waits for its fills up to ``book.fill_timeout_seconds``, then is cancelled; what filled is
-   recorded.
+   recorded. A cancel the broker has not confirmed is **not** recorded as cancelled (the DAY order
+   may still fill after clientId 31 disconnects): the row stays ``submitted`` and the next cycle
+   resolves it from the broker (``live.resolve_working_orders``, spec §9.2: V is rebuilt from the
+   broker and the ledger, never from this process's memory).
 
 ``ValueBroker`` is the boundary (``IbkrValueBroker`` wraps ib_async); tests pass a fake.
 """
@@ -37,11 +40,17 @@ SessionFactory = Callable[[], AbstractContextManager[Session]]
 class Quote:
     bid: float
     ask: float
-    at: datetime  # naive UTC
+    at: datetime  # naive UTC: the quote's own last update (the ticker's time), not our clock
+    received: datetime | None = None  # naive UTC: when it reached us; None: no age to speak of
 
     @property
     def mid(self) -> float:
         return round((self.bid + self.ask) / 2.0, 2)
+
+    @property
+    def age_seconds(self) -> float:
+        """How old the quote already was when it reached us, for the gate's staleness check."""
+        return 0.0 if self.received is None else max(0.0, (self.received - self.at).total_seconds())
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +67,15 @@ class Outcome:
     done: bool  # the order reached a terminal state by itself
 
 
+@dataclass(frozen=True, slots=True)
+class Found:
+    """An order the broker still knows by its ``orderRef``: what it shows as filled, and the
+    handle to cancel it when it is still open (``placed`` is None once it is no longer open)."""
+
+    outcome: Outcome
+    placed: Placed | None = None
+
+
 class ValueBroker(Protocol):
     async def quote(self, symbol: str) -> Quote | None: ...
     async def place(
@@ -65,10 +83,23 @@ class ValueBroker(Protocol):
     ) -> Placed: ...
     async def wait(self, placed: Placed, timeout: float) -> Outcome: ...
     async def cancel(self, placed: Placed) -> Outcome: ...
+    async def lookup(self, order_ref: str) -> Found | None:
+        """The order with this ``orderRef`` on clientId 31: open (``placed`` set) or done (its
+        executions), else None. Raises when the broker cannot be asked (the caller then leaves
+        the row alone)."""
+        ...
 
 
 def _now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _ticker_time(ticker: Any, fallback: datetime) -> datetime:
+    """The ticker's own last-update time as naive UTC (``fallback`` when it carries none)."""
+    t = getattr(ticker, "time", None)
+    if not isinstance(t, datetime):
+        return fallback
+    return t.astimezone(UTC).replace(tzinfo=None) if t.tzinfo else t
 
 
 async def send_order(
@@ -124,9 +155,16 @@ async def send_order(
         r = vs.get(ValueOrderRow, order_id)
         assert r is not None
         r.filled, r.avg_price = outcome.filled, outcome.avg_price
-        # a part-filled order is cancelled for the rest: what filled stands and counts in V
-        r.status = "filled" if outcome.filled >= shares - 1e-9 else "cancelled"
-        r.done_at = _now()
+        if outcome.filled >= shares - 1e-9:
+            r.status, r.done_at = "filled", _now()
+        elif not outcome.done:
+            # the broker never confirmed the cancel: it may still fill, so the row stays
+            # working (V counts it) and the next cycle resolves it from the broker
+            r.status = "partial" if outcome.filled > 0 else "submitted"
+            r.detail = "cancel not confirmed; resolved from the broker next cycle"
+        else:
+            # a part-filled order is cancelled for the rest: what filled stands and counts in V
+            r.status, r.done_at = "cancelled", _now()
         status = r.status
     log.info("value order %s %s %g %s: %s %g", ref, side, shares, symbol, status, outcome.filled)
     return order_id
@@ -135,9 +173,18 @@ async def send_order(
 class IbkrValueBroker:
     """``ValueBroker`` over an ib_async ``IB`` connected as clientId 31."""
 
-    def __init__(self, ib: Any, *, quote_seconds: float = 5.0) -> None:
+    def __init__(
+        self,
+        ib: Any,
+        *,
+        quote_seconds: float = 5.0,
+        cancel_confirm_seconds: float = 10.0,
+        executions_timeout_seconds: float = 20.0,
+    ) -> None:
         self.ib = ib
         self.quote_seconds = quote_seconds
+        self.cancel_confirm_seconds = cancel_confirm_seconds
+        self.executions_timeout_seconds = executions_timeout_seconds
 
     async def _contract(self, symbol: str) -> Any:
         from ib_async import Stock
@@ -158,7 +205,8 @@ class IbkrValueBroker:
             while loop.time() < deadline:
                 bid, ask = getattr(ticker, "bid", None), getattr(ticker, "ask", None)
                 if bid and ask and bid > 0 and ask > 0 and bid == bid and ask == ask:
-                    return Quote(float(bid), float(ask), _now())
+                    received = _now()
+                    return Quote(float(bid), float(ask), _ticker_time(ticker, received), received)
                 await asyncio.sleep(0.1)
             return None
         finally:
@@ -185,11 +233,35 @@ class IbkrValueBroker:
         return self._outcome(trade)
 
     async def cancel(self, placed: Placed) -> Outcome:
+        """Cancel and **confirm**: poll until the order reaches a terminal state (the outcome's
+        ``done`` says whether it did within ``cancel_confirm_seconds``)."""
         trade = placed.handle
         if not trade.isDone():
             self.ib.cancelOrder(trade.order)
-            await asyncio.sleep(2.0)
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + self.cancel_confirm_seconds
+            while not trade.isDone() and loop.time() < deadline:
+                await asyncio.sleep(0.5)
         return self._outcome(trade)
+
+    async def lookup(self, order_ref: str) -> Found | None:
+        """This client's open order with *order_ref*, else its executions (today's, at IBKR)."""
+        for trade in await self.ib.reqOpenOrdersAsync():
+            if getattr(trade.order, "orderRef", "") == order_ref:
+                oid, pid = int(trade.order.orderId) or None, int(trade.order.permId) or None
+                return Found(self._outcome(trade), Placed(oid, pid, trade))
+        fills = await asyncio.wait_for(
+            self.ib.reqExecutionsAsync(), timeout=self.executions_timeout_seconds
+        )
+        qty = notional = 0.0
+        for f in fills:
+            ex: Any = getattr(f, "execution", None)
+            if ex is not None and getattr(ex, "orderRef", "") == order_ref:
+                qty += float(ex.shares)
+                notional += float(ex.shares) * float(ex.price)
+        if qty <= 0:
+            return None
+        return Found(Outcome(qty, notional / qty, True), None)
 
     @staticmethod
     def _outcome(trade: Any) -> Outcome:

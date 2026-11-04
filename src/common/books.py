@@ -109,9 +109,10 @@ def value_exposure() -> ValueExposure:
     """Spec §9.3 item 1: ``claim = Σ value market value x (1 - m) + earmarked buys``, m the
     maintenance rate (``portfolio.value_maintenance_pct``, 25%: buying $X of stock with cash
     lowers excess liquidity by only m x X, so subtracting less would hand the wheel the rest).
-    Off (and free of I/O) while ``value.book.enabled`` is false."""
+    Off (and free of I/O) while ``value.book.enabled`` is false, and in live: the book is paper
+    only, so a paper value.db may never feed a live gate."""
     cfg = get_config()
-    if not cfg.value.book.enabled:
+    if not cfg.value.book.enabled or cfg.is_live:
         return ValueExposure(active=False, readable=True)
     book = read_book()
     if book is None:

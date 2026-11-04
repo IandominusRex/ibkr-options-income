@@ -57,7 +57,15 @@ def proposal(symbol: str, *, status: str = "approved", cost: float = 1000.0, kin
         return row.id
 
 
-def funding(symbol: str, needed: float, *, proposal_id: int = 1, status: str = "open", hours=30):
+def funding(
+    symbol: str,
+    needed: float,
+    *,
+    proposal_id: int = 1,
+    status: str = "open",
+    hours=30,
+    as_of: datetime | None = NOW,
+):
     with value_session() as s:
         row = ValueFundingRow(
             proposal_id=proposal_id,
@@ -66,6 +74,7 @@ def funding(symbol: str, needed: float, *, proposal_id: int = 1, status: str = "
             status=status,
             created_at=NOW,
             expires_at=NOW + timedelta(hours=hours),
+            as_of=as_of,
         )
         s.add(row)
         s.flush()

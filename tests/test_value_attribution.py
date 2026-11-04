@@ -148,13 +148,75 @@ def test_get_positions_gives_the_wheel_its_own_shares_at_its_own_cost(db, value_
     assert next(p for p in out if p.symbol == "MSFT").position == 50  # not shared: untouched
 
 
-def test_unreadable_value_db_drops_unexplained_stock(db, monkeypatch, tmp_path) -> None:
-    from src.ibkr.portfolio import wheel_view
-
+def _bad_value_db(monkeypatch, tmp_path) -> None:
     bad = tmp_path / "value.db"
     bad.write_bytes(b"garbage")
     monkeypatch.setattr("src.common.value_view._path", lambda: bad)
+
+
+def test_unreadable_value_db_drops_unexplained_stock(db, monkeypatch, tmp_path) -> None:
+    from src.common.config import get_config
+    from src.ibkr.portfolio import wheel_view
+
+    _bad_value_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(get_config().value.book, "enabled", True)  # the book is on: every name
     assert wheel_view([_pos("MSFT", 50)]) == []  # W is 0 in an empty ledger: 50 unexplained
+
+
+def test_with_the_book_off_an_unreadable_value_db_checks_only_the_names_it_may_hold(
+    db, monkeypatch, tmp_path
+) -> None:
+    """Review I-10: book off + value.db unreadable used to put EVERY stock name through the W
+    check, so positions vanished from every wheel caller (the wheel failed open on concentration).
+    Now only the names in data/value_keep_fresh.json are checked; the wheel's other stock stays."""
+    from src.common.config import get_config
+    from src.common.value_keep_fresh import write_keep_fresh
+    from src.ibkr.portfolio import wheel_view
+
+    assert get_config().value.book.enabled is False
+    _bad_value_db(monkeypatch, tmp_path)
+    write_keep_fresh(["GOOGL"])
+    out = wheel_view([_pos("GOOGL", 130), _pos("MSFT", 50)])
+    assert [p.symbol for p in out] == ["MSFT"]  # GOOGL: 130 unexplained -> none; MSFT untouched
+    assert out[0].position == 50
+
+
+def test_with_the_book_off_no_keep_fresh_file_means_the_value_book_never_ran(
+    db, monkeypatch, tmp_path
+) -> None:
+    from src.ibkr.portfolio import wheel_view
+
+    _bad_value_db(monkeypatch, tmp_path)  # no value_keep_fresh.json (the fixture's tmp one)
+    assert [p.symbol for p in wheel_view([_pos("MSFT", 50)])] == ["MSFT"]
+
+
+def test_with_the_book_off_an_unreadable_keep_fresh_file_keeps_the_all_names_rule(
+    db, monkeypatch, tmp_path
+) -> None:
+    import src.common.value_keep_fresh as kf
+    from src.ibkr.portfolio import wheel_view
+
+    _bad_value_db(monkeypatch, tmp_path)
+    kf.KEEP_FRESH_FILE.write_text("not json at all", encoding="utf-8")
+    assert wheel_view([_pos("MSFT", 50)]) == []  # neither file readable: fail closed on everything
+
+
+def test_in_live_the_wheel_view_and_the_value_exposure_ignore_a_paper_value_db(
+    db, value_book_db, monkeypatch
+) -> None:
+    """Review I-3: the book runs in paper only, so a paper value.db may never feed live gates."""
+    from src.common.books import value_exposure
+    from src.common.config import get_config
+    from src.ibkr.portfolio import wheel_view
+
+    order("GOOGL", shares=30, filled=30, avg=150.0)
+    monkeypatch.setattr(get_config().value.book, "enabled", True)
+    assert wheel_view([_pos("GOOGL", 130)]) == []  # paper: W is 0 in an empty ledger
+    assert value_exposure().active is True
+    monkeypatch.setattr(get_config().secrets, "live_trading", True)
+    assert wheel_view([_pos("GOOGL", 130)])[0].position == 130  # the wheel's own, untouched
+    off = value_exposure()
+    assert (off.active, off.claim, off.by_name, off.earmarked) == (False, 0.0, {}, 0.0)
 
 
 def test_a_split_corporate_action_restates_the_wheels_count() -> None:

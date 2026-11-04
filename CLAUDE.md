@@ -133,6 +133,17 @@ a tap). `value_claude_verdicts` holds each verdict with its clamped drivers and 
 computed from them (beside Python's own); the verdict that decides, and the baseline it replaced,
 are in `value_effective`, and the `claude` shadow track measures it (`python -m scripts.value_report`).
 
+**Said outright, because it is a consequence and not a side note:** a Claude-decided effective READY
+that Python's gate passes can make the value book *auto-buy* (the autonomy ladder allows it), and an
+auto buy short of cash opens a funding request whose capital-release closes of **wheel cash-secured
+puts need no tap** (a release inherits its buy's approval, Part 5 ruling 7). So an LLM verdict can,
+through two deterministic steps, cause the wheel to close puts. Python gates every step twice
+(`value.risk.validate` at decision and send time, `risk_engine.validate_release` at decision and send
+time on a fresh quote), the close may never pay more than the entry credit less the required profit,
+and Claude selects, sizes, prices and gates nothing in it: with `value.claude.apply_live: false` it
+reads as Python's baseline in live, the book idles in live in any case, and `value.book.enabled`
+ships `false`.
+
 ## The fence — the enrichment learning loop may not touch the deterministic layer
 
 `src/claude/eval/` closes a read-only feedback loop around Claude's reviews: an **outcome ledger**
@@ -289,8 +300,8 @@ imports nothing from `src.claude`, directly or at import time: `live.py` imports
 (`Fill`/`Execution`/`CommissionReport`) are converted to the ledger's own `ParsedExecution`
 schema — never passed across a module boundary raw, and never elsewhere in the ledger code.
 Since the value book (Part 5, spec §9.2) every execution also carries the broker's `orderRef`
-(`ParsedExecution.order_ref`, the `broker_executions.order_ref` column; live, Flex and the backfill
-the live and Flex feeds fill it; `ingest.py` backfills it onto an existing row), and `ingest.py` tags a `value:`-prefixed ref `book="value"` — the tag
+(`ParsedExecution.order_ref`, the `broker_executions.order_ref` column; the live and Flex feeds fill
+it, and `ingest.py` backfills it onto an existing row), and `ingest.py` tags a `value:`-prefixed ref `book="value"` — the tag
 `src/storage/wheel_shares.py` excludes when it computes the wheel's own share count.
 Enforced by `tests/test_web_fence.py::test_the_trading_path_never_imports_the_ledger` (grepping
 engine/execution/strategies for `src.ledger`/`trade_ledger`), `::test_the_ledger_never_imports_the_enrichment_layer`
@@ -461,8 +472,13 @@ the value book. It is **deterministic tier**:
   `mode=ro` with plain SQL; imports only `src.common.config`) and `src/common/books.py`
   (`attribute`, `value_sell_cap`, `value_exposure`); its own share count W comes from the ledger
   (`src/storage/wheel_shares.py`), never broker minus value. Nothing on the trading path imports
-  `src.value`. While `value.book.enabled` is false every one of these is inert and the wheel is
-  unchanged.
+  `src.value`. While `value.book.enabled` is false these are inert and the wheel is unchanged, with
+  one exact exception: if value.db exists but cannot be read, `wheel_view` still checks stock against
+  the ledger's W, but only for the names in `data/value_keep_fresh.json` (the value process's held
+  and shadow names; a missing file means the book never ran: none; an unreadable file, or the book
+  being on, means every name); `value_exposure()` and `wheel_view` are off in live, where a paper
+  value.db never feeds a gate. `capital_release` and `validate_release` refuse in live
+  (`release_not_paper`).
 - **Capital release (revision 4, 2026-10-30)**: the value book holds no cash back; an approved buy
   short of cash opens a funding request, and the trading process (`src/execution/
   capital_release.py`, every intraday cycle) closes the fewest wheel cash-secured puts at breakeven

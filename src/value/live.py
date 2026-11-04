@@ -35,9 +35,8 @@ from src.common.books import is_spreads_underlying, value_sell_cap
 from src.common.config import ValueCfg
 from src.common.value_types import DayBar
 from src.value import sizing
-from src.value.book import expire as expire_proposals
-from src.value.book import get_state as book_state
 from src.value.book import (
+    WORKING,
     open_position,
     propose,
     reconcile,
@@ -46,6 +45,8 @@ from src.value.book import (
     step_held,
     totals,
 )
+from src.value.book import expire as expire_proposals
+from src.value.book import get_state as book_state
 from src.value.claude_reads import queue_read
 from src.value.executor import ValueBroker, send_order
 from src.value.exits import DayFacts
@@ -65,6 +66,7 @@ from src.value.store import (
 log = logging.getLogger(__name__)
 SessionFactory = Callable[[], AbstractContextManager[Session]]
 SNAPSHOT = "snapshot"
+LedgerFill = Callable[[str], tuple[float, float | None]]  # orderRef -> (shares filled, avg price)
 PYTHON_STOPS = ("stop", "trail", "thesis", "catastrophe", "remark_below")
 
 
@@ -393,9 +395,14 @@ async def cycle(
     halted: bool,
     is_live: bool,
     trend_brake: bool,
+    ledger_fill: LedgerFill | None = None,
 ) -> list[str]:
-    """One RTH cycle. Returns the messages to send (fills, freezes, funding)."""
-    msgs: list[str] = []
+    """One RTH cycle. Returns the messages to send (fills, freezes, funding). It starts by
+    resolving any order a restart or an unconfirmed cancel left working (spec §9.2: V is rebuilt
+    from the broker and the ledger, never from this process's memory)."""
+    msgs: list[str] = await resolve_working_orders(
+        session, broker, now=now, cfg=cfg, ledger_fill=ledger_fill
+    )
     with session() as vs:
         frozen = reconcile(
             vs,
@@ -445,6 +452,89 @@ async def cycle(
             is_live=is_live,
             trend_brake=trend_brake,
         )
+    return msgs
+
+
+async def resolve_working_orders(
+    session: SessionFactory,
+    broker: ValueBroker,
+    *,
+    now: datetime,
+    cfg: ValueCfg,
+    ledger_fill: LedgerFill | None = None,
+) -> list[str]:
+    """Recovery at cycle start (spec §9.2 "rebuild V from the ledger's value: rows / the broker").
+
+    Cycles never overlap, so any order still ``pending``/``submitted``/``partial`` now was left by
+    a restart or by a cancel the broker never confirmed. Each is looked up on the broker by its
+    ``orderRef``: still open (so past its timeout) -> cancelled, and confirmed, before anything is
+    recorded; done -> its executions; unknown to the broker -> the ledger's ``book="value"`` rows;
+    found nowhere -> a DAY order cannot still be working, so it is closed out unfilled (a fill the
+    broker no longer shows and the ledger has not yet brought freezes the name at the reconcile,
+    for a human). A broker that cannot be asked leaves the row alone for the next cycle. Then every
+    proposal still ``sent`` is settled: terminal orders end it (as the live path would have), and
+    one with no order goes back to ``approved`` to be re-gated."""
+    with session() as vs:
+        working = [
+            (o.id, o.order_ref, o.symbol, o.side)
+            for o in vs.scalars(
+                select(ValueOrderRow)
+                .where(ValueOrderRow.status.in_(WORKING))
+                .order_by(ValueOrderRow.id)
+            )
+        ]
+    msgs: list[str] = []
+    for oid, ref, symbol, side in working:
+        try:
+            found = await broker.lookup(ref)
+            outcome = None if found is None else found.outcome
+            if found is not None and found.placed is not None:
+                outcome = await broker.cancel(found.placed)
+                if not outcome.done:
+                    log.warning("value order %s: cancel still unconfirmed; will retry", ref)
+                    continue
+        except Exception:  # noqa: BLE001 - the broker cannot be asked: leave the row as it is
+            log.exception("value order %s: could not be resolved from the broker", ref)
+            continue
+        filled, avg = (outcome.filled, outcome.avg_price) if outcome is not None else (0.0, None)
+        if ledger_fill is not None:
+            l_filled, l_avg = ledger_fill(ref)
+            if l_filled > filled:
+                filled, avg = l_filled, l_avg
+        with session() as vs:
+            row = vs.get(ValueOrderRow, oid)
+            assert row is not None
+            row.filled, row.avg_price = filled, avg
+            row.status = "filled" if filled >= row.shares - 1e-9 else "cancelled"
+            row.done_at = now
+            note = (
+                "recovered at cycle start from the broker/ledger"
+                if (outcome is not None or filled > 0)
+                else "not found at the broker or the ledger: closed out unfilled"
+            )
+            row.detail = f"{row.detail} | {note}" if row.detail else note
+        log.warning("value order %s %s %s: %s (filled %g)", ref, side, symbol, note, filled)
+        if filled > 0:
+            msgs.append(f"Value book: recovered a {side} of {filled:g} {symbol} (order {ref})")
+    with session() as vs:
+        for prop in vs.scalars(select(ValueProposalRow).where(ValueProposalRow.status == "sent")):
+            orders = list(
+                vs.scalars(
+                    select(ValueOrderRow)
+                    .where(ValueOrderRow.proposal_id == prop.id)
+                    .order_by(ValueOrderRow.id)
+                )
+            )
+            if any(o.status in WORKING for o in orders):
+                continue  # still being resolved
+            if not orders:
+                prop.status = "approved"  # never reached the broker: re-gated and sent afresh
+                continue
+            msgs += (
+                _finish_buy(vs, prop, orders[-1], cfg, now)
+                if prop.kind == "buy"
+                else _finish_sell(vs, prop, orders[-1], now)
+            )
     return msgs
 
 
@@ -514,17 +604,28 @@ async def _sell(
         order = vs.get(ValueOrderRow, order_id)
         prop = vs.get(ValueProposalRow, pid)
         assert order is not None and prop is not None
-        prop.order_id = order_id
-        prop.status = "done" if order.filled > 0 else "approved"
-        left = totals(vs).names.get(symbol)
-        if left is not None and left.filled < 1:
-            for pos in vs.scalars(
-                select(ValuePositionRow).where(
-                    ValuePositionRow.symbol == symbol, ValuePositionRow.status == "open"
-                )
-            ):
-                pos.status, pos.closed_on = "closed", now.date()
-        return [f"Value book: sold {order.filled:g} {symbol} ({reason}) at {order.avg_price}"]
+        return _finish_sell(vs, prop, order, now)
+
+
+def _finish_sell(
+    vs: Session, prop: ValueProposalRow, order: ValueOrderRow, now: datetime
+) -> list[str]:
+    symbol = prop.symbol
+    prop.order_id = order.id
+    if order.status in WORKING:
+        return [
+            f"Value book: {symbol} sell not confirmed cancelled; resolved from the broker next cycle"
+        ]
+    prop.status = "done" if order.filled > 0 else "approved"
+    left = totals(vs).names.get(symbol)
+    if left is not None and left.filled < 1:
+        for pos in vs.scalars(
+            select(ValuePositionRow).where(
+                ValuePositionRow.symbol == symbol, ValuePositionRow.status == "open"
+            )
+        ):
+            pos.status, pos.closed_on = "closed", now.date()
+    return [f"Value book: sold {order.filled:g} {symbol} ({prop.reason}) at {order.avg_price}"]
 
 
 async def _buy(
@@ -566,9 +667,20 @@ async def _buy(
             trend_brake=trend_brake,
             drawdown_stop=bool(peak.get("stop")),
             exclude_proposal=pid,
-            quote_age_seconds=(now - quote.at).total_seconds(),
+            quote_age_seconds=quote.age_seconds,
         )
         reasons = ["no_effective_verdict"] if ctx is None else _gate(ctx, cfg, portfolio)
+        if (
+            ctx is not None
+            and "data_unreliable" in reasons
+            and ctx.data_quality == "pass"
+            and prop.needs_tap
+            and prop.decided_by not in (None, "system")
+        ):
+            # The night made this a tap-only proposal precisely because the margin of safety is
+            # above the review line (data quality itself passes); a human has tapped it, so the
+            # send-time gate may not refuse it for the reason the tap was asked for (ruling 10).
+            reasons = [r for r in reasons if r != "data_unreliable"]
         prop.gate_json = json.dumps(reasons)
         if reasons and ctx is not None and fundable_only(reasons) and cfg.book.release.enabled:
             msg = _fund(vs, prop, ctx, cfg, portfolio, now)
@@ -600,31 +712,49 @@ async def _buy(
         order = vs.get(ValueOrderRow, order_id)
         prop = vs.get(ValueProposalRow, pid)
         assert order is not None and prop is not None
-        prop.order_id = order_id
-        prop.status = "done" if order.filled > 0 else "expired"
-        for req in vs.scalars(
-            select(ValueFundingRow).where(
-                ValueFundingRow.proposal_id == pid, ValueFundingRow.status == "open"
-            )
-        ):
-            req.status, req.closed_at = "funded", now
-        if order.filled <= 0:
-            return [f"Value book: {symbol} buy did not fill; the proposal is closed"]
-        card = _card(vs, symbol)
-        eff = vs.get(ValueEffectiveRow, (symbol, list_name))
-        ev = card.lists.get(list_name) if card else None
-        open_position(
-            vs,
-            order,
-            day=now.date(),
-            atr14=None,
-            fair_value=ev.fair_value if ev else None,
-            effective_fair_value=eff.fair_value if eff else None,
-            fv_accn=card.fingerprint.latest_accn if card else None,
-            cfg=cfg,
-            decided_by=eff.decided_by if eff else "python",
+        return _finish_buy(vs, prop, order, cfg, now)
+
+
+def _finish_buy(
+    vs: Session, prop: ValueProposalRow, order: ValueOrderRow, cfg: ValueCfg, now: datetime
+) -> list[str]:
+    """A buy's order is over: settle the proposal, its funding request and the position. Also the
+    end of a recovered order (``resolve_working_orders``). An order the broker has not confirmed
+    cancelled is not over: the proposal stays ``sent`` until the next cycle resolves it."""
+    symbol, list_name = prop.symbol, prop.list_name
+    prop.order_id = order.id
+    if order.status in WORKING:
+        return [
+            f"Value book: {symbol} buy not confirmed cancelled; resolved from the broker next cycle"
+        ]
+    prop.status = "done" if order.filled > 0 else "expired"
+    # funded only by the buy's FILL: a limit that misses leaves the request lapsed, so the
+    # cooldown holds and the freed cash is not asked for again at once (review I-4)
+    for req in vs.scalars(
+        select(ValueFundingRow).where(
+            ValueFundingRow.proposal_id == prop.id, ValueFundingRow.status == "open"
         )
-        return [f"Value book: bought {order.filled:g} {symbol} at {order.avg_price} ({list_name})"]
+    ):
+        req.status, req.closed_at = ("funded" if order.filled > 0 else "lapsed"), now
+        if order.filled <= 0:
+            req.detail = "the buy did not fill"
+    if order.filled <= 0:
+        return [f"Value book: {symbol} buy did not fill; the proposal is closed"]
+    card = _card(vs, symbol)
+    eff = vs.get(ValueEffectiveRow, (symbol, list_name))
+    ev = card.lists.get(list_name) if card else None
+    open_position(
+        vs,
+        order,
+        day=now.date(),
+        atr14=None,
+        fair_value=ev.fair_value if ev else None,
+        effective_fair_value=eff.fair_value if eff else None,
+        fv_accn=card.fingerprint.latest_accn if card else None,
+        cfg=cfg,
+        decided_by=eff.decided_by if eff else "python",
+    )
+    return [f"Value book: bought {order.filled:g} {symbol} at {order.avg_price} ({list_name})"]
 
 
 def _fund(
@@ -641,7 +771,9 @@ def _fund(
     The shortfall is recomputed from the fresh account every cycle (``ctx.gross_used`` was built
     from this cycle's broker snapshot) and overwrites the stored ``needed_usd``: it is never the
     old figure less the closes made since, because those closes are already out of the snapshot's
-    CSP collateral. Subtracting them again would count the same freed dollars twice."""
+    CSP collateral. Subtracting them again would count the same freed dollars twice. ``as_of``
+    records which cycle wrote the figure: the wheel subtracts only closes made after it, and
+    stops serving a request whose ``as_of`` has gone stale (this process is not running)."""
     room = ctx.net_liq * float(portfolio.get("max_gross_notional_pct", 100.0)) / 100.0
     needed = round(ctx.cost - (room - ctx.gross_used), 2)
     prop.status = "funding"
@@ -651,7 +783,7 @@ def _fund(
         )
     ).first()
     if open_req is not None:
-        open_req.needed_usd = needed
+        open_req.needed_usd, open_req.as_of = needed, now
         return None
     cool = now - timedelta(days=cfg.book.release.cooldown_days)
     lapsed = vs.scalars(
@@ -672,6 +804,7 @@ def _fund(
             status="open",
             created_at=now,
             expires_at=now + timedelta(hours=cfg.book.release.request_ttl_hours),
+            as_of=now,
         )
     )
     return f"Value book: {prop.symbol} needs ${needed:,.0f} released (capital release requested)"

@@ -203,3 +203,65 @@ async def test_close_reprice_steps_toward_ask(tmp_path, monkeypatch):
         row = s.query(OrderRow).first()
         # Initial mid = (0.38+0.42)/2 = 0.40; reprice("BUY", 0.40, ask=0.42, step=0.5) = 0.41.
         assert row.limit_price == pytest.approx(0.41)
+
+
+async def test_a_capped_close_never_goes_above_the_cap_even_when_chasing(tmp_path, monkeypatch):
+    """Review I-2: a capital-release close must never pay more than the entry credit less the
+    required profit, at the opening limit or on any reprice step toward the ask."""
+    _db_setup(tmp_path, monkeypatch)
+    import src.execution.position_manager as pm
+
+    cfg = MagicMock()
+    cfg.is_live = False
+    cfg.execution.fill_timeout_minutes = 1
+    cfg.execution.reprice_enabled = True
+    cfg.execution.reprice_interval_seconds = 0.0
+    cfg.execution.max_reprices = 5
+    cfg.execution.reprice_step_pct = 0.5
+    monkeypatch.setattr(pm, "get_config", lambda: cfg)
+    monkeypatch.setattr(pm.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(pm, "_refetch_bid_ask", AsyncMock(return_value=(0.92, 1.08)))
+
+    ib = _make_close_ib(filled=True, fill_qty=2.0, avg_price=1.0)
+    sent: list[float] = []
+    ib.placeOrder.side_effect = lambda _c, order: (
+        sent.append(order.lmtPrice) or ib.placeOrder.return_value
+    )
+    calls = {"n": 0}
+
+    def _isdone() -> bool:
+        calls["n"] += 1
+        return calls["n"] >= 8  # several polls: every allowed reprice gets its chance
+
+    ib.placeOrder.return_value.isDone.side_effect = _isdone
+    # Entry credit 1.00, cap 1.00 less 2% -> 0.98: the 0.92/1.08 mid (1.00) is clamped to it.
+    result = await pm.close_short_position(
+        ib, _make_pos(), 0.92, 1.08, reason=CloseReason.CAPITAL_RELEASE, max_price=0.985
+    )
+    assert result.status == "filled"
+    assert sent and max(sent) <= 0.98 + 1e-9  # floored to the tick, opening and every reprice
+    assert sent[0] == pytest.approx(0.98)
+
+
+async def test_a_cap_below_the_bid_sends_nothing(tmp_path, monkeypatch):
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch)
+    ib = _make_close_ib()
+    result = await close_short_position(
+        ib, _make_pos(), 0.92, 1.08, reason=CloseReason.CAPITAL_RELEASE, max_price=0.90
+    )
+    assert (result.status, result.detail) == ("skipped", "cap_below_bid")
+    assert ib.placeOrder.call_count == 0
+    from src.storage.db import session_scope
+
+    with session_scope() as s:
+        assert s.query(OrderRow).count() == 0
+
+
+def test_floor_to_tick_never_rounds_up() -> None:
+    from src.execution.position_manager import floor_to_tick
+
+    assert floor_to_tick(0.985) == 0.98
+    assert floor_to_tick(1.0) == 1.0
+    assert floor_to_tick(3.04) == 3.0
+    assert floor_to_tick(3.07) == 3.05

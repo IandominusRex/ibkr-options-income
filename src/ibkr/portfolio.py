@@ -117,22 +117,34 @@ def wheel_view(positions: list[PositionSnapshot]) -> list[PositionSnapshot]:
     ``min(W, broker - V claimed)`` shares (never below zero), at the wheel's own average cost from
     the ledger, so a race in which a value fill lands first makes the wheel see fewer shares, never
     more, and a value purchase never moves the wheel's covered-call strike floor. With value.db
-    unreadable every stock position is checked against W and kept only where the broker agrees
-    (no covered call on unexplained shares). A name left with no wheel share is dropped.
+    unreadable the stock positions in scope are checked against W and kept only where the broker
+    agrees (no covered call on unexplained shares); scope is every name while the book is on, and
+    while it is off only the names in ``data/value_keep_fresh.json`` (the value process's held and
+    shadow names; a missing file means the book never ran: none; an unreadable one: every name).
+    A name left with no wheel share is dropped. In live the value book does not run: untouched.
     """
+    from src.common.value_keep_fresh import read_keep_fresh_checked
     from src.common.value_view import read_book
     from src.storage.wheel_shares import wheel_shares
 
+    cfg = get_config()
     stock = [p for p in positions if p.sec_type == "STK" and p.position]
-    if not stock:
+    if not stock or cfg.is_live:
         return positions
     book = read_book()
+    scope: set[str] | None = None  # None: every name is in scope when value.db is unreadable
+    if book is None and not cfg.value.book.enabled:
+        listed = read_keep_fresh_checked()
+        scope = None if listed is None else set(listed)
     shared = {
         (p.underlying or p.symbol).upper()
         for p in stock
-        if book is None
-        or book.holding(p.underlying or p.symbol).claimed > 0
-        or book.holding(p.underlying or p.symbol).pending_sell > 0
+        if (
+            (scope is None or (p.underlying or p.symbol).upper() in scope)
+            if book is None
+            else book.holding(p.underlying or p.symbol).claimed > 0
+            or book.holding(p.underlying or p.symbol).pending_sell > 0
+        )
     }
     if not shared:
         return positions

@@ -13,7 +13,16 @@ stamped ``CloseReason.CAPITAL_RELEASE`` with the request in the order's detail.
 It never buys: the value process confirms the freed cash on its own fresh account snapshot and
 only then re-gates and sends the buy. A request exists only for an approved buy, so a release
 inherits the buy's approval (Part 5 plan, ruling 7). Nothing here reads an LLM output. Skipped
-while halted (the buy could not send) and while the book or release is off.
+while halted (the buy could not send), while the book or release is off, and in live (the book is
+paper only).
+
+Three guarantees the whole-branch review added: a close is **capped** at the entry credit less
+``release.min_profit_pct`` (``close_short_position(max_price=...)``), so "never at a loss" holds
+for the order and not just for the mid the gate saw; the set stops at the first close that does
+not fill (a cancelled close would otherwise leave a partial release); and ``needed_usd`` is
+read as of ``FundingRequest.as_of`` (the value cycle that wrote it from a fresh snapshot), so only
+closes made after it come off the need, and a request whose ``as_of`` is older than two cycles is
+not served (the value process is not running).
 """
 
 from __future__ import annotations
@@ -21,7 +30,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from ib_async import IB
 from sqlalchemy import select
@@ -33,7 +42,12 @@ from src.common.schemas import CloseReason, OptionRight, OrderState, PositionSna
 from src.common.value_view import FundingRequest, read_book
 from src.engine.capital import ReleaseCandidate, select_releases
 from src.engine.risk_engine import validate_release
-from src.execution.position_manager import CloseResult, close_candidate_id, close_short_position
+from src.execution.position_manager import (
+    CloseResult,
+    close_candidate_id,
+    close_short_position,
+    floor_to_tick,
+)
 from src.storage.db import session_scope
 from src.storage.models import OrderRow
 from src.storage.roll_chains import chain_entry_credit_per_share
@@ -73,8 +87,13 @@ def day_counts(orders: list[OrderRow]) -> tuple[int, float]:
     return len(sent), released
 
 
-def request_progress(orders: list[OrderRow], request_id: int) -> tuple[bool, float]:
-    """(a close for this request is still working, collateral already released for it)."""
+def request_progress(
+    orders: list[OrderRow], request_id: int, as_of: datetime | None = None
+) -> tuple[bool, float]:
+    """(a close for this request is still working, collateral released for it that the stored
+    need does not already exclude). The need is written from a fresh account snapshot at
+    *as_of*, which already lacks every close made before it, so only a close last updated after
+    *as_of* (naive UTC) counts; ``None`` counts them all."""
     working, released = False, 0.0
     for o in orders:
         m = _REQUEST.search(o.detail or "")
@@ -82,6 +101,8 @@ def request_progress(orders: list[OrderRow], request_id: int) -> tuple[bool, flo
             continue
         if o.state in (OrderState.QUEUED, OrderState.SUBMITTED):
             working = True
+        if as_of is not None and (o.updated_at is None or o.updated_at <= as_of):
+            continue
         strike = _strike(o.candidate_id)
         if strike is not None:
             released += strike * 100.0 * float(o.filled_qty or 0.0)
@@ -101,14 +122,28 @@ async def run_capital_release(
     positions_fn: Callable[[], list[PositionSnapshot]] | None = None,
     net_liq_fn: Callable[[], Awaitable[float]] | None = None,
     close: Callable[..., Awaitable[CloseResult]] = close_short_position,
+    now: datetime | None = None,
 ) -> int:
-    """Service every open funding request once. Returns the closes sent."""
+    """Service every open funding request once. Returns the closes that filled."""
     cfg = get_config()
     book_cfg = cfg.value.book
+    if cfg.is_live:  # the value book is paper only: a paper value.db never closes a live put
+        return 0
     if not (book_cfg.enabled and book_cfg.release.enabled) or ib_exec is None or is_halted():
         return 0
-    book = read_book()
+    now = now or datetime.now(UTC).replace(tzinfo=None)
+    book = read_book(now)
     if book is None or not book.requests:
+        return 0
+    stale_after = timedelta(minutes=2 * book_cfg.cycle_minutes)
+    requests = [r for r in book.requests if now - (r.as_of or r.created_at) <= stale_after]
+    if len(requests) < len(book.requests):
+        log.warning(
+            "capital release: %d request(s) not served, their need is older than two value "
+            "cycles (is the value process running?)",
+            len(book.requests) - len(requests),
+        )
+    if not requests:
         return 0
     from src.execution.profit_take import _quote_short
     from src.ibkr.portfolio import get_account_snapshot_async, get_positions
@@ -132,7 +167,7 @@ async def run_capital_release(
         return 0
     net_liq = await (net_liq_fn or _net_liq)()
     sent = 0
-    for req in book.requests:
+    for req in requests:
         sent += await _service(req, puts, net_liq, quote, close, ib_exec)
     return sent
 
@@ -164,7 +199,7 @@ async def _service(
     ib_exec: IB,
 ) -> int:
     orders = _today_orders()
-    working, released = request_progress(orders, req.id)
+    working, released = request_progress(orders, req.id, req.as_of)
     needed = req.needed_usd - released
     if working or needed <= 0:
         return 0
@@ -223,6 +258,12 @@ async def _service(
         if fresh is None or reasons:
             log.warning("capital release: %s refused at send time: %s", c.key, reasons)
             return sent  # the set no longer covers the request: the rest waits a cycle
+        # Never at a loss, for the order and not just the mid the gate saw: the close may pay at
+        # most the entry credit less the required profit, whatever the tick rounding or a chase.
+        cap = fresh.entry_credit * (1.0 - float(release["min_profit_pct"]) / 100.0)
+        if floor_to_tick(cap) < fresh.bid:
+            log.warning("capital release: %s not sent, the cap %.2f is under the bid", c.key, cap)
+            return sent
         result = await close(
             ib_exec,
             pos,
@@ -230,9 +271,14 @@ async def _service(
             fresh.ask or 0.0,
             reason=CloseReason.CAPITAL_RELEASE,
             note=f"capital release request {req.id} for {req.symbol}",
+            max_price=cap,
         )
         log.info("capital release: %s for request %d -> %s", c.key, req.id, result.status)
-        if result.status in ("filled", "partial", "working"):
+        if result.status in ("filled", "partial"):
             sent += 1
+        if result.status != "filled":
+            # A cancelled, skipped or part-filled close leaves the set short of the request:
+            # sending the rest would give up premium for a release that cannot cover the buy.
+            return sent
         released_today += c.released
     return sent

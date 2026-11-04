@@ -520,6 +520,9 @@ class ValueFundingRow(ValueBase):
     expires_at: Mapped[datetime] = mapped_column(DateTime)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     detail: Mapped[str] = mapped_column(Text, default="")
+    # Naive UTC: the cycle that last wrote ``needed_usd`` from a fresh account snapshot. The
+    # wheel subtracts only releases made after it and ignores a request whose ``as_of`` is stale.
+    as_of: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class ValueAttributionRow(ValueBase):
@@ -561,6 +564,7 @@ _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
     "value_shadow_legs": (("plan", "VARCHAR(8) NOT NULL DEFAULT 'main'"),),
     "value_shadow_events": (("plan", "VARCHAR(8) NOT NULL DEFAULT 'main'"),),
     "value_reevaluations": (("position_id", "INTEGER"),),
+    "value_funding_requests": (("as_of", "DATETIME"),),
 }
 
 

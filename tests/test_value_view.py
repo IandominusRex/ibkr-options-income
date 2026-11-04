@@ -83,3 +83,32 @@ def test_the_put_ceiling_is_the_highest_effective_ceiling_of_a_live_list(value_b
         )
     assert vv.put_ceiling("googl") == 180.0
     assert vv.put_ceiling("SICK") is None  # NO: no value-suggested put
+
+
+def test_a_sent_buy_is_earmarked_by_its_unfilled_remainder(value_book_db) -> None:
+    """Review I-8: between 'sent' and the fill the wheel's gross cap must still see the buy:
+    market_value counts filled shares only, so the working remainder (at its limit) is earmarked."""
+    from src.value.store import ValueOrderRow
+
+    pid = proposal("META", status="sent", cost=30_000.0)  # no order row yet: the full cost
+    assert vv.read_book(NOW).earmarked_usd == 30_000.0
+    with value_session() as s:
+        s.add(
+            ValueOrderRow(
+                symbol="META",
+                list_name="deep_value",
+                side="buy",
+                proposal_id=pid,
+                shares=100,
+                filled=40,
+                limit_price=300.0,
+                avg_price=299.0,
+                status="partial",
+                created_at=NOW,
+            )
+        )
+    assert vv.read_book(NOW).earmarked_usd == 18_000.0  # 60 unfilled x 300
+    with value_session() as s:
+        row = s.query(ValueOrderRow).one()
+        row.status = "cancelled"  # nothing is working any more
+    assert vv.read_book(NOW).earmarked_usd == 0.0

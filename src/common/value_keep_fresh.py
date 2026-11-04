@@ -55,6 +55,22 @@ def read_keep_fresh() -> list[str]:
     return _read(KEEP_FRESH_FILE)
 
 
+def read_keep_fresh_checked() -> list[str] | None:
+    """Like ``read_keep_fresh`` but tells a missing file (``[]``: the value process has never
+    written one) from a file that exists and cannot be read (``None``). The wheel's fail-closed
+    scope when value.db is unreadable and the book is off uses it (src/ibkr/portfolio.py)."""
+    path = KEEP_FRESH_FILE
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, list):
+        return None
+    return sorted({s.upper() for s in data if isinstance(s, str) and s})
+
+
 def write_filing_reads(symbols: Iterable[str]) -> None:
     _write(FILING_READS_FILE, symbols)
 

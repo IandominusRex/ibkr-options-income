@@ -2112,6 +2112,11 @@ adds **re-evaluations** (spec §7.1) and **Stage 1b**, the point-in-time backtes
     (`portfolio.max_gross_notional_pct`, `max_combined_name_pct`, `value_maintenance_pct`) from
     their examples; set `TELEGRAM_THREAD_VALUE` in `.env` (optional); import the account's trade
     history into the ledger (Flex or an Activity CSV) so the wheel's own share count is complete;
+    **add "Order Reference" to the Activity Flex Query's Trades fields** (Client Portal -> Flex
+    Queries -> edit the query -> Trades -> Order Reference). The value book's fills reach the ledger
+    mainly through Flex, and a Flex query returns only the fields it selects: without Order
+    Reference every value fill arrives untagged, counts as the wheel's shares (W), and the name
+    freezes after `attribution_grace_hours` (36 h); re-pull after changing the query;
     and run the seven scripted fault drills of the Part 5 plan. Then the night proposes buys for
     READY names with a tranche due (auto when the autonomy ladder allows, else a tap) and sells from
     each held position's `value` plan (Python's exits auto with `automation.auto_close_enabled`;
