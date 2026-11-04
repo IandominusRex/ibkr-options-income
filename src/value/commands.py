@@ -11,6 +11,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from src.common.value_commands import VALUE_ORDER_KINDS, proposal_fingerprint
+from src.value import cards
 from src.value.book import BookRefused, decide, trim_to_half
 from src.value.store import ValueProposalRow
 
@@ -87,8 +88,8 @@ def _trim(vs: Session, payload: dict, by: str, now: datetime) -> dict:
 
 
 def outcome_line(kind: str, result: dict | None, reason: str | None) -> str:
-    """The plain reply the value process posts to TELEGRAM_THREAD_VALUE after a tap."""
-    return f"{kind}: {reason or 'done'}"  # Task 4 moves the wording to cards.outcome_line
+    """The plain reply the value process posts to TELEGRAM_THREAD_VALUE after a tap (the words are cards.py's)."""
+    return cards.outcome_line(kind, result, reason)
 
 
 # --- the drain (the entrypoint's loop body, testable without importing scripts/run_value.py) ---

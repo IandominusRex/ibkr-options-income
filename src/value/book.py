@@ -41,7 +41,7 @@ WORKING = ("pending", "submitted", "partial")
 PYTHON_SELLS = ("stop", "trail", "peak", "thesis", "remark_below", "catastrophe", "time")
 TRIM_TTL_HOURS = 30.0  # a trim's approved sells: the same horizon as a funding request
 # the drawdown trim's episode in the high_water state (Part 6, ruling 11); a reset drops them
-TRIM_STATE_KEYS = ("trim_offered_at", "episode", "trimmed", "trimmed_at")
+TRIM_STATE_KEYS = ("trim_offered_at", "episode", "trimmed", "trimmed_at", "trim_posted")
 
 
 class BookRefused(Exception):
@@ -177,6 +177,7 @@ def clear_attribution(vs: Session, symbol: str, now: datetime) -> bool:
     if row is None or row.state == "ok":
         return False
     row.state, row.since, row.cleared_at = "ok", None, now
+    row.posted_at = None  # a later freeze of the name posts its own card
     return True
 
 

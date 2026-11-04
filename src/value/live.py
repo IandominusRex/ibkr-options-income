@@ -416,12 +416,7 @@ async def cycle(
         )
         expire_proposals(vs, now)
         set_state(vs, SNAPSHOT, asdict(snap), now)
-        trim_offered = _high_water(vs, snap, cfg, now)
-        if trim_offered is not None:  # Task 4 renders the card with its one button
-            hw = book_state(vs, "high_water") or {}
-            high, value = float(hw.get("high", 0.0)), float(hw.get("value", 0.0))
-            down = (high - value) / high * 100.0 if high > 0 else 0.0
-            msgs.append(f"The value book is down {down:.0f}% from its high: trim to half?")
+        _high_water(vs, snap, cfg, now)  # a new episode is posted as a card by src.value.outbox
         sells = [
             (p.id, p.symbol, p.list_name, p.shares, p.reason)
             for p in vs.scalars(

@@ -136,7 +136,7 @@ async def run_cycle(cfg: Config, *, now: datetime, hourly: bool) -> list[str]:
                     ruleset_version=version,
                     ruleset_hash=digest,
                 )
-            msgs += [f"Value book: {s} re-evaluation opened (adds paused)" for s in opened]
+            log.info("value: re-evaluations opened on %s (the outbox posts the cards)", opened)
         return msgs
     finally:
         ib.disconnect()

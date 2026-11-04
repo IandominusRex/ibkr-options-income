@@ -232,6 +232,28 @@ def _drain_commands() -> int:
     return len(outcomes)
 
 
+def _post_outbox() -> int:
+    """Post the cards that are due (proposals, Major re-evaluations, the trim, a freeze) once each
+    (Part 6, rulings 11 and 14). Reads value.db and sends in one short transaction, marks the keys
+    that went out in a second, so a failed send is retried at the next tick."""
+    import src.value.notify as notify
+    import src.value.outbox as outbox
+    from src.value.store import init_value_db, value_session
+
+    cfg = get_config().value
+    now = datetime.now(UTC).replace(tzinfo=None)
+    init_value_db()
+    with value_session() as vs:
+        cards = outbox.due(vs, now, cfg)
+    if not cards:
+        return 0
+    sent = asyncio.run(notify.send_cards(cards))
+    if sent:
+        with value_session() as vs:
+            outbox.mark_posted(vs, sent, now)
+    return len(sent)
+
+
 def main() -> None:
     setup_logging()
     stop = threading.Event()
@@ -251,6 +273,10 @@ def main() -> None:
             _drain_commands()
         except Exception:  # noqa: BLE001 - commands wait for the next tick
             log.exception("value: the command drain failed; retrying at the next tick")
+        try:
+            _post_outbox()
+        except Exception:  # noqa: BLE001 - a card not posted is posted at the next tick
+            log.exception("value: the card outbox failed; retrying at the next tick")
         if time.monotonic() - last_slow >= poll:
             last_slow = time.monotonic()
             try:

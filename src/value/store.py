@@ -274,6 +274,9 @@ class ValueReevaluationRow(ValueBase):
     ruleset_hash: Mapped[str] = mapped_column(String(12))
     created_at: Mapped[datetime] = mapped_column(DateTime)
     position_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # held (Part 5)
+    posted_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )  # card posted (Part 6)
 
 
 class ValueClaudeReadRow(ValueBase):
@@ -501,6 +504,9 @@ class ValueProposalRow(ValueBase):
     decided_by: Mapped[str | None] = mapped_column(String(12), nullable=True)
     order_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     detail: Mapped[str] = mapped_column(Text, default="")
+    posted_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )  # card posted (Part 6)
 
 
 class ValueFundingRow(ValueBase):
@@ -543,6 +549,9 @@ class ValueAttributionRow(ValueBase):
     updated_at: Mapped[datetime] = mapped_column(DateTime)
     cleared_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     detail: Mapped[str] = mapped_column(Text, default="")
+    posted_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )  # freeze card posted
 
 
 class ValueBookStateRow(ValueBase):
@@ -563,8 +572,10 @@ _SessionLocal: sessionmaker[Session] | None = None
 _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
     "value_shadow_legs": (("plan", "VARCHAR(8) NOT NULL DEFAULT 'main'"),),
     "value_shadow_events": (("plan", "VARCHAR(8) NOT NULL DEFAULT 'main'"),),
-    "value_reevaluations": (("position_id", "INTEGER"),),
+    "value_reevaluations": (("position_id", "INTEGER"), ("posted_at", "DATETIME")),
     "value_funding_requests": (("as_of", "DATETIME"),),
+    "value_proposals": (("posted_at", "DATETIME"),),
+    "value_attribution": (("posted_at", "DATETIME"),),
 }
 
 
