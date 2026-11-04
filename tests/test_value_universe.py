@@ -170,6 +170,7 @@ def test_the_sweep_queues_only_what_each_name_lacks(research_db) -> None:
         "fundamentals": 1,
         "submissions": 1,
         "going_concern": 0,
+        "filing_sections": 0,
         "prices": 3,
         "no_cik": 1,
     }

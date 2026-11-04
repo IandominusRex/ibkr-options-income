@@ -18,7 +18,7 @@ from datetime import UTC, date, datetime, timedelta
 from sqlalchemy import func, select
 
 from src.common.config import get_config
-from src.common.value_keep_fresh import read_keep_fresh
+from src.common.value_keep_fresh import read_filing_reads, read_keep_fresh
 from src.common.value_universe import build_value_universe
 from src.research.ingest.materialize import enqueue
 from src.research.store.models import (
@@ -72,13 +72,14 @@ def enqueue_value_universe(
     bars_only: tuple[str, ...] | None = None,
 ) -> dict[str, int]:
     """Queue what each name lacks. Returns counts: fundamentals, submissions, going_concern,
-    prices, no_cik.
+    filing_sections, prices, no_cik.
 
     Bars are refetched until the newest is past the last weekday before *today*: a bar dated
     that weekday may have been written while its session was still forming (review M2), and the
     value book marks its shadow record every session. The nightly call (no *names*) also
     refreshes the benchmarks' bars (*bars_only*, default ``benchmark_names()``)."""
     held = set(read_keep_fresh())
+    filing_reads = set(read_filing_reads())
     if names is None:
         names = value_names()
         bars_only = benchmark_names() if bars_only is None else bars_only
@@ -86,7 +87,14 @@ def enqueue_value_universe(
     today = today or datetime.now(UTC).date()
     due = last_weekday_before(today)
     now = datetime.now(UTC).replace(tzinfo=None)
-    counts = {"fundamentals": 0, "submissions": 0, "going_concern": 0, "prices": 0, "no_cik": 0}
+    counts = {
+        "fundamentals": 0,
+        "submissions": 0,
+        "going_concern": 0,
+        "filing_sections": 0,
+        "prices": 0,
+        "no_cik": 0,
+    }
     with research_session() as s:
         ciks = {r.symbol: r.cik for r in s.query(SymbolRow).filter(SymbolRow.symbol.in_(names))}
         fetched = {
@@ -123,6 +131,9 @@ def enqueue_value_universe(
             if symbol in held:
                 enqueue(symbol, "going_concern")
                 counts["going_concern"] += 1
+            if symbol in filing_reads:  # a no-op once the newest filing is sliced (spec §8.5)
+                enqueue(symbol, "filing_sections")
+                counts["filing_sections"] += 1
     for symbol in [*names, *extra]:
         n, last = bars.get(symbol, (0, None))
         if n < MIN_BARS or last is None or last <= due:

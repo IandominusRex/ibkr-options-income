@@ -32,6 +32,7 @@ from pydantic import BaseModel
 
 from src.common.config import get_config
 from src.research.checks.payload import ChecksPayload, build_checks_payload
+from src.research.ingest.filing_sections import ingest_filing_sections
 from src.research.ingest.fundamentals import ingest_fundamentals, load_cached_financials
 from src.research.ingest.going_concern import ingest_going_concern
 from src.research.ingest.prices import ingest_daily_bars
@@ -421,6 +422,12 @@ def drain_ingest_jobs(max_jobs: int = 20) -> int:
             # A held name's newest periodic filings, read once for a going-concern doubt (§7).
             try:
                 ingest_going_concern(symbol, cik)
+            except Exception as exc:
+                error = str(exc)
+        elif kind == "filing_sections" and cik:
+            # The newest periodic filing cut into the sections a filing read needs (§8.5).
+            try:
+                ingest_filing_sections(symbol, cik)
             except Exception as exc:
                 error = str(exc)
         elif kind == "prices":

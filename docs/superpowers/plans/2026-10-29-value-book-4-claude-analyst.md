@@ -114,6 +114,7 @@ is the executing agent's own model name.
 | A3 (Task 3) effective verdict, Claude's tables | done | `39387a0` | task gate: 35 passed (effective, store, fence); ruff check + format clean; mypy clean on `effective.py`, `store.py` | 2026-11-04 | No deviation. `Effective`/`ClaudeOpinion` and the seven `value_claude_*`/`value_effective` tables as written; the new tables are created by the existing `create_all` in `init_value_db` (no migration needed, all new). Cost-if-wrong: one function (`effective.py`) per ruling 4. |
 | Section B entry | checks B1–B4 passed | 4 commits on branch | pytest 5328 passed, 1 skipped (re-verified by orchestrator); ruff clean; mypy 328 files | 2026-11-04 | B3 line numbers matched exactly; no `src/value_ai`. Section B exit target: baseline 5305 + 47 = 5352 passed, 1 skipped |
 | Section C entry | checks C1–C3 passed | 8 commits on branch | pytest 5352 passed, 1 skipped (re-verified by orchestrator); ruff clean; mypy 335 files | 2026-11-04 | C3 line numbers matched exactly. Section C exit target: baseline 5305 + 63 = 5368 passed, 1 skipped |
+| Section D entry | checks D1–D3 passed | 12 commits on branch | pytest 5368 passed, 1 skipped (re-verified by orchestrator); ruff clean; mypy 336 files | 2026-11-04 | D3 line numbers matched exactly. Section D exit target: baseline 5305 + 77 = 5382 passed, 1 skipped |
 | **Section A exit** | done | 3 task commits + this docs(plan) commit = 4 (`git log --oneline main..HEAD \| wc -l` printed 3 before it) | **full gate: pytest 5328 passed, 1 skipped (baseline 5305 + 23)**; `ruff check .` clean; `mypy src` 328 source files, clean; protected-file diff empty; `py_compile scripts/run_value.py` silent; `git status --short` clean | 2026-11-04 | Section B entry: new-test running total 23 of 77; baseline for later targets stays 5305. |
 | B1 (Task 4) the analyst `src/value_ai/` and its fences | done | `c9ae196` | task gate: 71 passed (value_ai, value_fence, eval_skills, spreads_fence, news_fence, value_config); ruff check + format clean; mypy clean on `src/value_ai`, `config.py`; 11 new tests (9 + 2 fence) | 2026-11-04 | No deviation from the task text; files written whole, fence diffs applied with Edit. Ruling: the red run (Step 2) was skipped for this task, the tests and package were written together and first run green (the other tasks ran red first); cost-if-wrong: none, the tests assert the behaviour either way. The probe test confirms importing the analyst loads only `src.claude.cli` from the reasoning layer. |
 | B2 (Task 5) accepting a read: verdicts, opinions, effective verdict, breaker | done | `4cfca99` | red first (`ImportError: cannot import name 'claude_verdicts'`), then task gate: 26 passed (value_claude, value_fence); ruff check + format clean; mypy clean on `claude_verdicts.py`; 9 new tests | 2026-11-04 | No deviation; module and tests written whole as given. The pinned numbers (46.85 x 1.5, uncapped 106.19, 68.72) matched first time. Cost-if-wrong: per rulings 4, 5 and 8 (one function, one branch in `accept`, config numbers). |
@@ -5789,10 +5790,10 @@ value-book sections (`CLAUDE.md` lines 105–120 and the value fence; `ARCHITECT
 
 **Entry checks (the orchestrator runs these before spawning):**
 
-- [ ] **D1. Section C is in.** `git log --oneline main..HEAD | wc -l` equals Section C's recorded
+- [x] **D1. Section C is in.** `git log --oneline main..HEAD | wc -l` equals Section C's recorded
   count; `git status --short` is clean.
-- [ ] **D2. A green start.** The full gate passes with pytest = baseline + 63; record it.
-- [ ] **D3. The code Section D edits is where this plan says** (line numbers after Section C):
+- [x] **D2. A green start.** The full gate passes with pytest = baseline + 63; record it.
+- [x] **D3. The code Section D edits is where this plan says** (line numbers after Section C):
 
   ```bash
   grep -nF 'class SubmissionsStateRow(Base):' src/research/store/models.py   # 223:
@@ -5817,7 +5818,7 @@ value-book sections (`CLAUDE.md` lines 105–120 and the value fence; `ARCHITECT
   grep -nF '## Built (2026-10-30 — value book Part 3: re-evaluation and Stage 1b)' STATUS.md   # 350:
   ```
 
-- [ ] **D4. No stray data file.** `ls data/value_filing_reads.json` fails (no such file) in the
+- [x] **D4. No stray data file.** `ls data/value_filing_reads.json` fails (no such file) in the
   worktree.
 
 **Section exit:** four task commits plus the section's final `docs(plan)` commit; full gate green

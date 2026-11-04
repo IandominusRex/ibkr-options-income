@@ -77,11 +77,14 @@ def _clear_effective_universe_cache():
 
 @pytest.fixture(autouse=True)
 def _value_keep_fresh_in_tmp(monkeypatch, tmp_path_factory):
-    """The value process writes data/value_keep_fresh.json after a night; no test may touch the
-    real one."""
+    """The value process writes data/value_keep_fresh.json and (Part 4)
+    data/value_filing_reads.json after a night; no test may touch the real ones."""
+    folder = tmp_path_factory.mktemp("keep_fresh")
     monkeypatch.setattr(
-        "src.common.value_keep_fresh.KEEP_FRESH_FILE",
-        tmp_path_factory.mktemp("keep_fresh") / "value_keep_fresh.json",
+        "src.common.value_keep_fresh.KEEP_FRESH_FILE", folder / "value_keep_fresh.json"
+    )
+    monkeypatch.setattr(
+        "src.common.value_keep_fresh.FILING_READS_FILE", folder / "value_filing_reads.json"
     )
 
 

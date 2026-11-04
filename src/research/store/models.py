@@ -193,7 +193,9 @@ class IngestJobRow(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     symbol: Mapped[str] = mapped_column(String(16), index=True)
-    kind: Mapped[str] = mapped_column(String(32))  # fundamentals|prices|submissions|going_concern
+    kind: Mapped[str] = mapped_column(
+        String(32)
+    )  # fundamentals|prices|submissions|going_concern|filing_sections
     status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[str | None] = mapped_column(Text)
@@ -218,6 +220,22 @@ class FilingIndexRow(Base):
     going_concern_detail: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (Index("ix_filing_index_cik_filed", "cik", "filed"),)
+
+
+class FilingSectionRow(Base):
+    """One slice of a periodic filing (value book spec §8.2, §8.5): the sections a filing read
+    needs (10-K Items 1, 1A and 7; 10-Q Item 2; 20-F Items 4 and 5), cut by the
+    ``filing_sections`` job so no model pays to read boilerplate."""
+
+    __tablename__ = "filing_sections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    accn: Mapped[str] = mapped_column(String(32), index=True)
+    cik: Mapped[str] = mapped_column(String(10))
+    form: Mapped[str] = mapped_column(String(16))
+    section: Mapped[str] = mapped_column(String(32))
+    text: Mapped[str] = mapped_column(Text)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime)
 
 
 class SubmissionsStateRow(Base):

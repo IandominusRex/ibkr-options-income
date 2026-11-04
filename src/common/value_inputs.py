@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from src.analytics.technicals import atr14_series, rsi14_series
 from src.common.config import get_config
+from src.common.value_ai_types import FilingSection
 from src.common.value_types import (
     AnnualPeriod,
     DayBar,
@@ -50,6 +51,7 @@ from src.research.store.models import (
     CompanyFactsRawRow,
     DailyBarRow,
     FilingIndexRow,
+    FilingSectionRow,
     FinancialRow,
     SymbolRow,
 )
@@ -417,6 +419,41 @@ def going_concern_flags(session: Session, symbols: list[str], as_of: date) -> di
     except OperationalError:
         return {}
     return {symbol: bool(flag) for symbol, flag in rows}  # the newest read wins
+
+
+def latest_periodic(session: Session, symbols: list[str]) -> dict[str, FilingEvent]:
+    """Each symbol's newest indexed periodic filing (10-K, 10-Q, 20-F, 40-F and amendments): what
+    a filing read reads (spec §8.3). Empty before the research worker built the index."""
+    periodic = ("10-K", "10-K/A", "10-Q", "10-Q/A", "20-F", "20-F/A", "40-F", "40-F/A")
+    if not symbols:
+        return {}
+    try:
+        rows = session.execute(
+            select(SymbolRow.symbol, FilingIndexRow)
+            .join(FilingIndexRow, FilingIndexRow.cik == SymbolRow.cik)
+            .where(SymbolRow.symbol.in_(symbols), FilingIndexRow.form.in_(periodic))
+            .order_by(FilingIndexRow.filed, FilingIndexRow.accn)
+        ).all()
+    except OperationalError:
+        return {}
+    return {
+        symbol: FilingEvent(accn=row.accn, form=row.form, filed=row.filed)
+        for symbol, row in rows  # the newest wins
+    }
+
+
+def filing_sections(session: Session, accn: str) -> list[FilingSection]:
+    """The sections the research worker cut from one filing (spec §8.5); ``[]`` before it has
+    (an empty marker row means it read the filing and found no item headings)."""
+    try:
+        rows = session.scalars(
+            select(FilingSectionRow)
+            .where(FilingSectionRow.accn == accn, FilingSectionRow.section != "")
+            .order_by(FilingSectionRow.id)
+        ).all()
+    except OperationalError:
+        return []
+    return [FilingSection(accn=r.accn, form=r.form, section=r.section, text=r.text) for r in rows]
 
 
 def current_fingerprint_parts(session: Session, symbol: str) -> dict[str, Any]:

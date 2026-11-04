@@ -22,22 +22,43 @@ log = logging.getLogger(__name__)
 KEEP_FRESH_FILE: Path = ROOT / "data" / "value_keep_fresh.json"
 
 
-def write_keep_fresh(symbols: Iterable[str]) -> None:
-    """Replace the list atomically (write a sibling temp file, then rename)."""
-    path = KEEP_FRESH_FILE
+# Part 4 (spec §8.3, §8.5): the names the value book wants a filing read of (held and READY
+# names); the research sweep queues a ``filing_sections`` job for each.
+FILING_READS_FILE: Path = ROOT / "data" / "value_filing_reads.json"
+
+
+def _write(path: Path, symbols: Iterable[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(sorted({s.upper() for s in symbols})), encoding="utf-8")
     os.replace(tmp, path)
 
 
-def read_keep_fresh() -> list[str]:
-    """The list, or ``[]`` when the file is missing or unreadable (the sweep then covers the
-    universes alone, as before)."""
+def _read(path: Path) -> list[str]:
     try:
-        data = json.loads(KEEP_FRESH_FILE.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
     if not isinstance(data, list):
         return []
     return sorted({s.upper() for s in data if isinstance(s, str) and s})
+
+
+def write_keep_fresh(symbols: Iterable[str]) -> None:
+    """Replace the list atomically (write a sibling temp file, then rename)."""
+    _write(KEEP_FRESH_FILE, symbols)
+
+
+def read_keep_fresh() -> list[str]:
+    """The list, or ``[]`` when the file is missing or unreadable (the sweep then covers the
+    universes alone, as before)."""
+    return _read(KEEP_FRESH_FILE)
+
+
+def write_filing_reads(symbols: Iterable[str]) -> None:
+    _write(FILING_READS_FILE, symbols)
+
+
+def read_filing_reads() -> list[str]:
+    """The names to slice filings for, or ``[]`` (no file: no filing reads)."""
+    return _read(FILING_READS_FILE)
