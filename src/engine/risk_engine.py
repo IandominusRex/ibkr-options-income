@@ -14,7 +14,7 @@ the cumulative budgets are consumed greedily in that order.
 
 from __future__ import annotations
 
-from src.common.books import is_spreads_underlying
+from src.common.books import ValueExposure, is_spreads_underlying, value_exposure
 from src.common.config import get_config
 from src.common.market_hours import today_et
 from src.common.schemas import (
@@ -31,7 +31,9 @@ from src.common.schemas import (
 from src.engine.capital import (
     Budgets,
     Caps,
+    ReleaseCandidate,
     charge,
+    release_reasons,
     resolve_caps,
     risk_units,
     scale_caps,
@@ -234,10 +236,21 @@ def validate_candidates(
     min_iv_rv = iv_cfg.get("min_iv_rv_ratio")
     blackout_days = events.get("earnings_blackout_days", 0)
 
-    caps = resolve_caps(account, risk)
+    # The value book (spec §9.2-§9.3, revision 4): off -> nothing below changes the wheel.
+    vx: ValueExposure = value_exposure()
+    caps = resolve_caps(account, risk, value_claim=vx.claim)
     sector_of_fn = get_config().universe.get("sectors", {}).get
     budgets: Budgets = seed_budgets(
-        positions, sector_of_fn, iv_by_symbol.get if iv_by_symbol else None, caps=caps
+        positions,
+        sector_of_fn,
+        iv_by_symbol.get if iv_by_symbol else None,
+        caps=caps,
+        extra_exposure=vx.by_name,
+    )
+    gross_cap = net_liq * float(portfolio.get("max_gross_notional_pct", 100.0)) / 100.0
+    combined_cap = net_liq * float(portfolio.get("max_combined_name_pct", 15.0)) / 100.0
+    wheel_stock = sum(
+        abs(p.market_value or 0.0) for p in positions if p.sec_type == "STK" and p.position
     )
 
     # --- Pass 1: per-candidate gates. No shared budget is read or written here, so these
@@ -251,6 +264,14 @@ def validate_candidates(
         # override could still put one in front of the wheel; it must never reach an order.
         if is_spreads_underlying(cand.underlying):
             reasons.append("reserved_for_spreads_book")
+        # Value book (spec §9.2): a name whose share attribution is frozen takes no new put and
+        # no new call until a human clears it; with the book on and value.db unreadable, no
+        # new put at all (the gross and combined caps cannot be measured: fail closed).
+        if vx.active and cand.strategy in (Strategy.CASH_SECURED_PUT, Strategy.COVERED_CALL):
+            if cand.underlying.upper() in vx.frozen:
+                reasons.append("book_attribution_mismatch")
+            if not vx.readable and cand.strategy == Strategy.CASH_SECURED_PUT:
+                reasons.append("value_book_unreadable")
 
         # --- Income quality gates. Scoped to the income strategies: a ROLL is a defensive
         # repair, not an income trade. A roll that pays a debit to move a challenged short
@@ -487,6 +508,16 @@ def validate_candidates(
             ticker_mult, book_mult = multipliers(sizing, cand.underlying)
             check_caps = scale_caps(caps, ticker=ticker_mult, book=book_mult)
         reasons.extend(_cumulative_reasons(cand, sector, check_caps, budgets))
+        if vx.active and is_csp:
+            # Spec §9.3 item 3: stock of both books + CSP collateral (this batch's accepted lots
+            # included) + approved value buys + this put, within the gross cap of net liq.
+            if wheel_stock + budgets.csp_collateral + vx.gross + cand.collateral > gross_cap:
+                reasons.append("gross_notional_cap")
+            # Spec §9.2: one name across both books, where the value book holds it.
+            if vx.by_name.get(cand.underlying.upper(), 0.0) > 0 and (
+                budgets.ticker_collateral.get(cand.underlying, 0.0) + cand.collateral > combined_cap
+            ):
+                reasons.append("combined_name_cap")
 
         took_floor = False
         if regime_active:
@@ -696,3 +727,30 @@ def validate_live_quote(
         verdict=Verdict.PASS if not reasons else Verdict.REJECT,
         reasons=reasons,
     )
+
+
+def validate_release(
+    c: ReleaseCandidate,
+    *,
+    right: OptionRight | None,
+    closes_today: int,
+    released_today: float,
+    net_liq: float,
+) -> list[str]:
+    """The Rules Engine's gate for a capital-release close (value book spec revision 4): a wheel
+    cash-secured put bought back at breakeven or better to fund an approved value buy.
+    Deterministic, no LLM. Run at decision time and again at send time on a fresh quote
+    (``src/execution/capital_release.py``); an empty list passes. Only a put frees cash, so a
+    call is refused; so is a spreads-book contract (the wheel never touches one)."""
+    release = get_config().value.book.release.model_dump()
+    reasons: list[str] = []
+    if right != OptionRight.PUT:
+        reasons.append("release_not_csp")
+    if is_spreads_underlying(c.underlying):
+        reasons.append("reserved_for_spreads_book")
+    if c.contracts < 1:
+        reasons.append("no_contracts")
+    reasons += release_reasons(
+        c, release, closes_today=closes_today, released_today=released_today, net_liq=net_liq
+    )
+    return reasons

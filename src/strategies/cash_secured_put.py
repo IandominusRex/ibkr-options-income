@@ -10,6 +10,7 @@ from src.analytics.liquidity import (
     score_liquidity,
     volume_gate_active,
 )
+from src.common.books import value_exposure
 from src.common.config import get_config
 from src.common.schemas import (
     AccountSnapshot,
@@ -142,11 +143,16 @@ def screen_csp_candidates(
     dte_min: int = csp_cfg["dte_min"]
     dte_max: int = csp_cfg["dte_max"]
     hard_max: int = csp_cfg.get("max_contracts", 10)
-    caps = resolve_caps(account, risk)
+    # The value book's holdings and approved buys (value book spec §9.3, revision 4), exactly as
+    # the gate counts them, so the sizer and the gate cannot disagree; off -> no change.
+    vx = value_exposure()
+    caps = resolve_caps(account, risk, value_claim=vx.claim)
     sector_of = cfg.universe.get("sectors", {}).get
     # Budgets are seeded with the UNSCALED caps (so the large-position slots never move with the
     # regime); the scaled caps below are used only for the size checks.
-    budgets: Budgets = seed_budgets(positions or [], sector_of, caps=caps)
+    budgets: Budgets = seed_budgets(
+        positions or [], sector_of, caps=caps, extra_exposure=vx.by_name
+    )
     sector = sector_of(symbol)
     regime_on = active(sizing)
     scaled_caps = caps

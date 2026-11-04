@@ -157,6 +157,16 @@ portfolio:
   max_margin_usage_pct: 50.0
   max_new_positions_per_run: 10
 
+  # 4. Both books (value book spec §9.2-§9.3, revision 4). Stock (wheel and value) + CSP collateral
+  #    + cash earmarked for an approved value buy may not exceed this share of net liq: the value
+  #    book's cash-only rule and the wheel's CSPs meet here. And one name's exposure across both
+  #    books (CSP collateral + stock of both) may not exceed max_combined_name_pct of net liq.
+  max_gross_notional_pct: 100.0
+  max_combined_name_pct: 15.0
+  # The maintenance rate m of value stock: the wheel's excess liquidity is reduced by the value
+  # book's market value x (1 - m) (a lower m subtracts more: errs safe). Only with value book.enabled.
+  value_maintenance_pct: 25.0
+
 # --- Market regime (analytics/regime.py -> engine/regime_limits.py) ---
 # A deterministic classification of SPY and QQQ (normal / cautious / stressed / crisis) that
 # shrinks NEW cash-secured puts in a falling market. Covered calls, rolls, closes, profit-takes

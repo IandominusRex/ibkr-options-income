@@ -52,6 +52,7 @@ from __future__ import annotations
 import math
 from typing import Literal
 
+from src.common.books import value_exposure
 from src.common.config import (
     ClaudeCutCfg,
     get_cc_timing_cfg,
@@ -525,14 +526,15 @@ def scaled_budget_fit(
     if ticker == 1.0 and book == 1.0 and not floor_lot:
         return None
     cfg = get_config()
-    caps = resolve_caps(account, cfg.risk)
+    vx = value_exposure()  # the value book, counted as the gate counts it (Part 5)
+    caps = resolve_caps(account, cfg.risk, value_claim=vx.claim)
     use = (
         caps
         if floor_lot and floor_left(ctx, cand.underlying, {}) > 0
         else scale_caps(caps, ticker=ticker, book=book)
     )
     sector_of = (cfg.universe.get("sectors") or {}).get
-    budgets = seed_budgets(positions, sector_of, caps=caps)
+    budgets = seed_budgets(positions, sector_of, caps=caps, extra_exposure=vx.by_name)
     fit, _ = max_contracts(
         unit_collateral=cand.strike * 100.0,
         current_iv=cand.current_iv,

@@ -24,6 +24,7 @@ gap.
 
 from __future__ import annotations
 
+import itertools
 import math
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -76,16 +77,21 @@ class Budgets:
     large_tickers: set[str] = field(default_factory=set)
 
 
-def resolve_caps(account: AccountSnapshot, risk: dict) -> Caps:
+def resolve_caps(account: AccountSnapshot, risk: dict, *, value_claim: float = 0.0) -> Caps:
     """Resolve config percentages into absolute dollar limits for this account.
 
     Order of application is fixed and deliberately not configurable: the cash reserve comes
     off first, and the CSP budget is a percentage of what remains. Expressing both against
     gross cash would let the two knobs contradict each other.
+
+    *value_claim* (value book spec §9.3 item 1, revision 4; ``books.value_exposure().claim``)
+    comes off excess liquidity before the reserve: the value book's whole contribution to it
+    (its stock at (1 - maintenance) plus approved buys not yet filled), so the wheel is never
+    handed the liquidity value stock bought with cash still appears to leave.
     """
     p = risk.get("portfolio", {})
     net_liq = max(0.0, account.net_liquidation)
-    cash = max(0.0, account.excess_liquidity)
+    cash = max(0.0, account.excess_liquidity - max(0.0, value_claim))
 
     reserve = max(
         cash * float(p.get("cash_reserve_pct", 20.0)) / 100.0,
@@ -130,8 +136,13 @@ def seed_budgets(
     iv_of: Callable[[str], float | None] | None = None,
     *,
     caps: Caps | None = None,
+    extra_exposure: dict[str, float] | None = None,
 ) -> Budgets:
     """Seed running tallies from current positions.
+
+    *extra_exposure* (value book spec §9.2, Part 5: ``books.value_exposure().by_name``) adds the
+    value book's stock in a name to that name's collateral tally, so exposure is counted once
+    across both books though the wheel's positions hold only its own shares.
 
     A short put contributes its assignment liability (strike x 100 x |contracts|), not the
     option's tiny market value — matching exactly how a *new* CSP candidate is charged, so
@@ -187,6 +198,8 @@ def seed_budgets(
         if sector:
             budgets.sector_risk[sector] = budgets.sector_risk.get(sector, 0.0) + units
 
+    for key, exposure in (extra_exposure or {}).items():
+        budgets.ticker_collateral[key] = budgets.ticker_collateral.get(key, 0.0) + exposure
     if caps is not None:
         for key, collateral in budgets.ticker_collateral.items():
             if collateral > caps.max_ticker_collateral:
@@ -321,3 +334,112 @@ def charge(
             budgets.sector_risk[sector] = budgets.sector_risk.get(sector, 0.0) + units
     if cum_before + collateral > caps.max_ticker_collateral:
         budgets.large_tickers.add(symbol)
+
+
+# --- Capital release (value book spec revision 4, operator 2026-10-30) ---------------------------
+
+
+@dataclass(frozen=True)
+class ReleaseCandidate:
+    """One wheel cash-secured put that might be closed to fund an approved value buy. Prices are
+    per share; ``entry_credit`` is the roll chain's net credit (``chain_entry_credit_per_share``)."""
+
+    key: str  # the contract, for logs and the close's idempotency
+    underlying: str
+    strike: float
+    contracts: int
+    entry_credit: float
+    bid: float
+    ask: float | None
+
+    @property
+    def mid(self) -> float | None:
+        if self.ask is None or self.ask <= 0:
+            return None
+        return (self.bid + self.ask) / 2 if self.bid > 0 else self.ask
+
+    @property
+    def profit_pct(self) -> float | None:
+        """Share of the entry credit kept by closing at mid now (the profit-take arithmetic)."""
+        mid = self.mid
+        if mid is None or self.entry_credit <= 0:
+            return None
+        return (1.0 - mid / self.entry_credit) * 100.0
+
+    @property
+    def released(self) -> float:
+        """Collateral the close frees: strike x 100 x contracts."""
+        return self.strike * 100.0 * self.contracts
+
+    @property
+    def given_up(self) -> float:
+        """The premium still to earn that closing now forgoes: mid x 100 x contracts."""
+        mid = self.mid
+        return 0.0 if mid is None else mid * 100.0 * self.contracts
+
+
+def release_reasons(
+    c: ReleaseCandidate,
+    release: dict,
+    *,
+    closes_today: int,
+    released_today: float,
+    net_liq: float,
+) -> list[str]:
+    """Why *c* may not be closed for capital, from its quote and the day's counts. Pure. Never
+    at a loss: a close below ``min_profit_pct`` of the entry credit (0: breakeven) is refused."""
+    reasons: list[str] = []
+    mid = c.mid
+    if mid is None:
+        return ["release_no_quote"]
+    ask = c.ask or 0.0
+    if c.bid > 0 and (ask - c.bid) / mid * 100.0 > float(release.get("max_spread_pct", 25.0)):
+        reasons.append("release_spread_too_wide")
+    profit = c.profit_pct
+    if profit is None or profit < float(release.get("min_profit_pct", 0.0)):
+        reasons.append("release_at_loss")
+    if closes_today >= int(release.get("max_closes_per_day", 4)):
+        reasons.append("release_daily_cap")
+    cap = net_liq * float(release.get("max_release_pct_per_day", 10.0)) / 100.0
+    if released_today + c.released > cap:
+        reasons.append("release_daily_notional")
+    return reasons
+
+
+def select_releases(
+    eligible: list[ReleaseCandidate], needed: float, release: dict
+) -> list[ReleaseCandidate]:
+    """The fewest closes whose freed collateral covers *needed*, or ``[]`` when no allowed set
+    does (never a partial release: nothing is closed for a buy that still could not be funded).
+
+    Among sets of the smallest size: fewest closes under ``preferred_profit_pct``, then the least
+    premium given up, then the most capital released per dollar given up. Candidates are the 20
+    best by released per dollar given up, so the search stays small; at most
+    ``max_closes_per_request`` closes. Deterministic: ties break on the contract key."""
+    if needed <= 0:
+        return []
+    preferred = float(release.get("preferred_profit_pct", 25.0))
+    limit = int(release.get("max_closes_per_request", 3))
+
+    def ratio(c: ReleaseCandidate) -> float:
+        return c.released / max(c.given_up, 0.01)
+
+    pool = sorted(eligible, key=lambda c: (-ratio(c), c.key))[:20]
+    for size in range(1, limit + 1):
+        sets = [
+            combo
+            for combo in itertools.combinations(pool, size)
+            if sum(c.released for c in combo) >= needed
+        ]
+        if sets:
+            best = min(
+                sets,
+                key=lambda combo: (
+                    sum(1 for c in combo if (c.profit_pct or 0.0) < preferred),
+                    round(sum(c.given_up for c in combo), 2),
+                    -sum(c.released for c in combo) / max(sum(c.given_up for c in combo), 0.01),
+                    tuple(sorted(c.key for c in combo)),
+                ),
+            )
+            return sorted(best, key=lambda c: c.key)
+    return []
