@@ -129,6 +129,7 @@ is the executing agent's own model name.
 | Task 6 - a value put above the value ceiling | done | `cbe2fa3` | tests/test_drain_promote.py + test_openapi_current 15 passed (+1); ruff check/format and `mypy src/notify/command_drain.py` clean | 2026-11-04 | No deviation: the plan's test and code diffs applied cleanly and land on exactly the plan's blob hashes (`3443925`, `0a8013b`, `081d0a3`). Red run: the command was `applied`, not `failed`. `PromotePayload` keeps pydantic's default `extra="ignore"`, so `value_put` passes the model untouched and the drain reads it from the raw payload; the OpenAPI document does not change (ruling 25) (cost if wrong: none) |
 | Section C entry | checks C1–C2 passed | 8 commits on branch | pytest 5416 passed, 1 skipped (re-verified by orchestrator); ruff clean; mypy 341 files | 2026-11-04 | C2: `revenue_cagr_5y` at 291 as quoted; `queue_read` at 157 (plan said 152; Part 4's review fixes moved it, text unchanged); `src/value/risk.py` and `book.py` absent. Orchestrator notes for Section C from Section B's report: (1) fixture clocks — any test comparing the fixtures' `NOW` with the wall clock fails now that `NOW + 30h` is past; pin the clock (`cr.read_book(NOW)` style) in tests, never change the fixtures' NOW; (2) possible double count of released collateral between the runner's `needed_usd` and `_fund`'s fresh recompute — Task 8 must recompute from a fresh account each cycle and not subtract closes already reflected in it; flagged for the whole-branch review. Section C exit target: baseline 5393 + 62 = 5455 passed, 1 skipped |
 | Section B exit | done | `f79efbd`, `2c0e6b9`, `cbe2fa3` + this docs(plan) commit (7 on the branch) | **full gate: pytest 5416 passed, 1 skipped (baseline 5393 + 23)**; `ruff check .` clean; `mypy src` 341 source files, no issues; `py_compile scripts/run_value.py` silent; protected-file diff empty; `git diff --stat main...HEAD -- web` lists only `web/lib/api-types.ts` (1 line); engine, sizer, profit-take and promote suites green | 2026-11-04 | Every edit outside `src/value`, `src/common`, `scripts`, `tests`, `config/examples`, `.env.example` and the docs is in E1-E3 and E5-E7 (`src/engine/{capital,risk_engine,regime_limits}.py`, `src/strategies/cash_secured_put.py`, `src/execution/{capital_release,position_manager}.py`, `src/notify/{approval_service,command_drain}.py`), plus Section A's `src/storage/wheel_shares.py`. The docs-trigger rows for the new module `src/execution/capital_release.py` (ARCHITECTURE.md folder guide, STATUS.md) are Task 15's, per the plan. Section C needs the operator's go-ahead |
+| Task 7 - the value gate and sizing | done | `f7d1a26` (also commits the Section C entry row) | tests/test_value_risk.py 23 passed (+23); with test_value_scorecard and test_value_fence 65 passed; ruff check/format and `mypy src/value/{risk,sizing,scorecard}.py` clean | 2026-11-04 | No deviation: the plan's code applied as written. Red run: collection `ImportError: cannot import name 'sizing' from 'src.value'`. The scorecard gains `metrics["adv_dollar_20"]` (a plain pass-through of `inputs.price.adv_dollar_20`); the scorecard, ticker-file and fence suites stay green, and `adv_dollar_20` is not in the ruleset hash input (cost if wrong: none). Nothing calls `risk.validate` or `sizing` yet except Task 8 |
 
 ## Roadmap (this plan is Part 5 of 6)
 
@@ -2797,8 +2798,8 @@ docstring), `tests/value_fixtures.py`.
 
 **Entry checks:**
 
-- [ ] **C1. Section B is in**, the gate green at baseline + 23.
-- [ ] **C2. The code Section C edits:**
+- [x] **C1. Section B is in**, the gate green at baseline + 23.
+- [x] **C2. The code Section C edits:**
 
   ```bash
   grep -nF '        "revenue_cagr_5y": cagr([y.revenue for y in years]),' src/value/scorecard.py   # 291:   (Part 4 left it unchanged)
@@ -2826,7 +2827,7 @@ The pinned numbers: a $100,000 account's ceiling is $30,000 and its name cap $2,
 margin of 50% buys 8% of the ceiling ($2,400; $1,200 under the trend brake), in thirds: $800 at $75
 is 10 shares, and with $2,000 already held only $400 more (5 shares).
 
-- [ ] **Step 1: Write the failing tests** — create `tests/test_value_risk.py`:
+- [x] **Step 1: Write the failing tests** — create `tests/test_value_risk.py`:
 
 ```python
 """The value gate and sizing (value book spec §9.4-§9.6 as amended by revision 4). Pure."""
@@ -2938,8 +2939,8 @@ def test_tiers_tranches_and_the_trend_brake() -> None:
     assert sizing.trend_brake([100.0] * 9) is None
 ```
 
-- [ ] **Step 2: Run them to see them fail** — `ModuleNotFoundError: No module named 'src.value.risk'`.
-- [ ] **Step 3: The gate** — create `src/value/risk.py`:
+- [x] **Step 2: Run them to see them fail** — `ModuleNotFoundError: No module named 'src.value.risk'`.
+- [x] **Step 3: The gate** — create `src/value/risk.py`:
 
 ```python
 """The value book's gate (spec §9.4, amended by revision 4). Pure: no I/O, no model call.
@@ -3062,7 +3063,7 @@ def fundable_only(reasons: list[str]) -> bool:
     return bool(reasons) and set(reasons) <= FUNDABLE
 ```
 
-- [ ] **Step 4: Sizing** — create `src/value/sizing.py`:
+- [x] **Step 4: Sizing** — create `src/value/sizing.py`:
 
 ```python
 """Sizing and tranches (spec §9.5, §9.6 as amended by revision 4). Pure: no I/O.
@@ -3161,7 +3162,7 @@ def month_end_closes(closes: list[tuple[date, float]]) -> list[float]:
     return out
 ```
 
-- [ ] **Step 5: The liquidity input** — apply:
+- [x] **Step 5: The liquidity input** — apply:
 
 ```diff
 diff --git a/src/value/scorecard.py b/src/value/scorecard.py
@@ -3179,8 +3180,8 @@ index 6ee8414..71306da 100644
      card = card.model_copy(
 ```
 
-- [ ] **Step 6: Run them to see them pass** — `tests/test_value_risk.py tests/test_value_scorecard.py tests/test_value_fence.py`.
-- [ ] **Step 7: Gates and commit:**
+- [x] **Step 6: Run them to see them pass** — `tests/test_value_risk.py tests/test_value_scorecard.py tests/test_value_fence.py`.
+- [x] **Step 7: Gates and commit:**
 
   ```bash
   git add src/value/risk.py src/value/sizing.py src/value/scorecard.py tests/test_value_risk.py
