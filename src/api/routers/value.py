@@ -463,11 +463,23 @@ def _plan(session: Any, symbol: str) -> ValuePlanOut | None:
     )
 
 
+def side_blocks(
+    session: Any, symbol: str
+) -> tuple[ValueClaudeOut | None, list[ValueReevaluationOut], ValuePlanOut | None]:
+    """What sits beside a ticker file whether it is stored or computed now: Claude's block (labelled
+    as Claude's), a held name's re-evaluations and its plan."""
+    return (
+        claude_out(vdb.read_claude(session, symbol)),
+        _reevaluations(vdb.read_reevaluations(session, symbol)),
+        _plan(session, symbol),
+    )
+
+
 def stored_response(session: Any, row: dict[str, Any], now: datetime) -> ValueTickerResponse:
     """The stored ticker file as the web shows it (``computed: "stored"``)."""
     symbol = str(row["symbol"]).upper()
     card = ValueScorecard.model_validate_json(row["scorecard_json"])
-    computed_at = vdb.dt(row["computed_at"])
+    claude, reevaluations, plan = side_blocks(session, symbol)
     return ValueTickerResponse(
         as_of=now,
         available=True,
@@ -477,28 +489,27 @@ def stored_response(session: Any, row: dict[str, Any], now: datetime) -> ValueTi
         file=file_out(
             card,
             vdb.read_effective(session, symbol),
-            computed_at=computed_at,
+            computed_at=vdb.dt(row["computed_at"]),
             universe=row["universe"],
         ),
-        claude=claude_out(vdb.read_claude(session, symbol)),
-        reevaluations=_reevaluations(vdb.read_reevaluations(session, symbol)),
-        plan=_plan(session, symbol),
+        claude=claude,
+        reevaluations=reevaluations,
+        plan=plan,
     )
 
 
 @router.get("/{symbol}", response_model=ValueTickerResponse)
-def value_ticker(symbol: str, user: OwnerUser) -> ValueTickerResponse:  # noqa: ARG001
-    now = _now()
-    upper = symbol.upper()
-    with vdb.value_read_session() as s:
-        if s is None:
-            return ValueTickerResponse(as_of=now, available=False, symbol=upper)
-        row = vdb.read_ticker_row(s, upper)
-        if row is None:
-            raise HTTPException(status_code=404, detail=f"No ticker file for {upper}")
-        try:
-            return stored_response(s, row, now)
-        except ValueError as exc:  # a scorecard this build cannot read (an older ruleset)
-            raise HTTPException(
-                status_code=404, detail=f"No readable ticker file for {upper}"
-            ) from exc
+def value_ticker(symbol: str, user: OwnerUser) -> ValueTickerResponse:
+    """The ticker file for a name: the stored one when it is current, else computed now from
+    research.db (src/api/value_lookup.py). 404 when neither value.db nor research.db knows it."""
+    from src.api.value_lookup import lookup
+
+    try:
+        found = lookup(symbol, user)
+    except ValueError as exc:  # a scorecard this build cannot read (an older ruleset)
+        raise HTTPException(
+            status_code=404, detail=f"No readable ticker file for {symbol.upper()}"
+        ) from exc
+    if found is None:
+        raise HTTPException(status_code=404, detail=f"No ticker file for {symbol.upper()}")
+    return found

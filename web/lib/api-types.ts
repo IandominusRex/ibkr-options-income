@@ -1266,7 +1266,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Value Ticker */
+        /**
+         * Value Ticker
+         * @description The ticker file for a name: the stored one when it is current, else computed now from
+         *     research.db (src/api/value_lookup.py). 404 when neither value.db nor research.db knows it.
+         */
         get: operations["value_ticker_value__symbol__get"];
         put?: never;
         post?: never;
@@ -2593,7 +2597,9 @@ export interface components {
          *     ``commissions`` are positive numbers; the card signs them. Unknown is None, never 0.0.
          *     ``net_pnl`` is the realised result after every commission, set only once the trade is
          *     closed. ``capital`` is the cash held aside (a put), the shares' strike value (a call) or the
-         *     most a spread can lose.
+         *     most a spread can lose. A value-book fill (``kind`` "value") is a share trade: ``strike`` is the
+         *     fill price per share, ``contracts`` the share count, ``expiry`` the fill's New York date and
+         *     ``capital`` the cash laid out by a buy.
          */
         DayTrade: {
             /** Key */
@@ -2609,12 +2615,12 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "csp" | "cc" | "spread" | "other";
+            kind: "csp" | "cc" | "spread" | "value" | "other";
             /**
              * Source
              * @enum {string}
              */
-            source: "wheel" | "spreads";
+            source: "wheel" | "spreads" | "value";
             /** Underlying */
             underlying: string;
             /** Right */
@@ -2700,11 +2706,16 @@ export interface components {
              * Strategy
              * @enum {string}
              */
-            strategy: "all" | "csp" | "cc" | "spread";
+            strategy: "all" | "csp" | "cc" | "spread" | "value";
             /** Trades */
             trades: components["schemas"]["DayTrade"][];
             /** Spreads Available */
             spreads_available: boolean;
+            /**
+             * Value Available
+             * @default true
+             */
+            value_available: boolean;
             /** Previous Day */
             previous_day?: string | null;
             /** Next Day */
@@ -3867,7 +3878,7 @@ export interface components {
              * Strategy
              * @enum {string}
              */
-            strategy: "all" | "csp" | "cc" | "spread";
+            strategy: "all" | "csp" | "cc" | "spread" | "value";
             /** Days */
             days?: components["schemas"]["DayCalendarDay"][];
             /** Total */
@@ -3905,7 +3916,7 @@ export interface components {
              * Strategy
              * @enum {string}
              */
-            strategy: "all" | "csp" | "cc" | "spread";
+            strategy: "all" | "csp" | "cc" | "spread" | "value";
             /** Premium Collected */
             premium_collected: number;
             /** Bought Back */
@@ -3940,6 +3951,20 @@ export interface components {
             progress_pct?: number | null;
             /** Days Left */
             days_left: number;
+            /** Value Realised */
+            value_realised?: number | null;
+            /** Value Commissions */
+            value_commissions?: number | null;
+            /**
+             * Value Commissions Complete
+             * @default true
+             */
+            value_commissions_complete: boolean;
+            /**
+             * Value N Closed
+             * @default 0
+             */
+            value_n_closed: number;
         };
         /** MonthPayResponse */
         MonthPayResponse: {
@@ -3956,6 +3981,11 @@ export interface components {
             pay: components["schemas"]["MonthPay"];
             /** Spreads Available */
             spreads_available: boolean;
+            /**
+             * Value Available
+             * @default true
+             */
+            value_available: boolean;
         };
         /** NavResponse */
         NavResponse: {
@@ -4668,6 +4698,11 @@ export interface components {
             calendar: components["schemas"]["MonthCalendar"];
             /** Spreads Available */
             spreads_available: boolean;
+            /**
+             * Value Available
+             * @default true
+             */
+            value_available: boolean;
         };
         /**
          * RecommendationsResponse
@@ -7386,7 +7421,7 @@ export interface operations {
         parameters: {
             query?: {
                 month?: string | null;
-                strategy?: "all" | "csp" | "cc" | "spread";
+                strategy?: "all" | "csp" | "cc" | "spread" | "value";
                 book?: ("paper" | "live") | null;
             };
             header?: never;
@@ -7419,7 +7454,7 @@ export interface operations {
         parameters: {
             query?: {
                 date?: string | null;
-                strategy?: "all" | "csp" | "cc" | "spread";
+                strategy?: "all" | "csp" | "cc" | "spread" | "value";
                 book?: ("paper" | "live") | null;
             };
             header?: never;
@@ -7452,7 +7487,7 @@ export interface operations {
         parameters: {
             query?: {
                 month?: string | null;
-                strategy?: "all" | "csp" | "cc" | "spread";
+                strategy?: "all" | "csp" | "cc" | "spread" | "value";
                 book?: ("paper" | "live") | null;
             };
             header?: never;

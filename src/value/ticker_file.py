@@ -3,11 +3,12 @@
 ``persist`` writes the latest row and, when anything that matters changed, an append-only
 history row; names in the ranked universe also get one compact row per session. Nothing is
 deleted. ``is_fresh`` compares a stored fingerprint with the current one.
+``freshness_key`` and ``is_current`` live in ``src/common/value_freshness.py`` (stdlib only, shared
+with the API) and are re-exported here.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.common.config import ValueTickerFileCfg
+from src.common.value_freshness import freshness_key, is_current
 from src.value.schemas import LISTS, Fingerprint, ValueScorecard
 from src.value.store import ValueTickerFileRow, ValueTickerHistoryRow
 
@@ -180,19 +182,6 @@ def is_fresh(stored: Fingerprint | None, current: Fingerprint) -> bool:
     return stored is not None and stored.key() == current.key()
 
 
-def freshness_key(parts: dict[str, Any], regime: str, version: str, digest: str) -> str:
-    """Part 6, ruling 16: a hash of the cheap input parts (the newest accession and the newest bar
-    in research.db), the regime and the ruleset. The scorecard's own fingerprint is not compared
-    with the cheap parts: the two latest-accession readings disagree by design."""
-    blob = json.dumps(
-        {"parts": parts, "regime": regime, "version": version, "digest": digest},
-        sort_keys=True,
-        separators=(",", ":"),
-        default=str,
-    )
-    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
-
-
 def freshness_json(parts: dict[str, Any], regime: str, version: str, digest: str) -> str:
     """What ``value_ticker_files.freshness_json`` stores: the key and the parts it came from."""
     return json.dumps(
@@ -202,20 +191,19 @@ def freshness_json(parts: dict[str, Any], regime: str, version: str, digest: str
     )
 
 
-def is_current(
-    stored_freshness_json: str | None, parts: dict[str, Any], regime: str, version: str, digest: str
-) -> bool:
-    """A file is current when the key stored beside it equals the key of the current cheap parts.
-    A file written before this column (None) or an unreadable one is stale: recomputed once."""
-    if not stored_freshness_json:
-        return False
-    try:
-        stored = json.loads(stored_freshness_json).get("key")
-    except (ValueError, AttributeError):
-        return False
-    return stored == freshness_key(parts, regime, version, digest)
-
-
 def stored_fingerprint(session: Session, symbol: str) -> Fingerprint | None:
     row = session.get(ValueTickerFileRow, symbol)
     return None if row is None else Fingerprint.model_validate_json(row.fingerprint_json)
+
+
+__all__ = [
+    "WriteResult",
+    "freshness_json",
+    "freshness_key",
+    "is_current",
+    "is_fresh",
+    "persist",
+    "stored_fingerprint",
+    "summary",
+    "what_changed",
+]

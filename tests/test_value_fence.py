@@ -549,3 +549,16 @@ def test_the_api_imports_only_scorecard_and_schemas_from_value() -> None:
             if _reaches({m}, "src.value_ai"):
                 offenders.append(f"{p.relative_to(ROOT)}: {m}")
     assert offenders == []
+
+
+def test_value_freshness_is_stdlib_only() -> None:
+    """Part 6, Task 14: the neutral freshness/ruleset-digest module is shared by the value process
+    and the API, so it imports the standard library and nothing else."""
+    mods = imported_modules(ROOT / "src" / "common" / "value_freshness.py")
+    assert {m.split(".")[0] for m in mods} <= {
+        "__future__",
+        "hashlib",
+        "json",
+        "collections",
+        "typing",
+    }

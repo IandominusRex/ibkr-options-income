@@ -25,6 +25,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from src.common.config import get_config
 from src.common.value_commands import proposal_fingerprint
+from src.reporting.day import ValueDayInput
+from src.reporting.pay import ValuePayInput
 
 log = logging.getLogger(__name__)
 
@@ -448,3 +450,82 @@ def last_nightly_rs_cutoff(session: Session) -> float | None:
     if not rows or rows[0]["rs_cutoff_6m"] is None:
         return None
     return float(rows[0]["rs_cutoff_6m"])
+
+
+# --- Home's money: the value book's fills as the reporting builders' plain inputs ----------------
+
+
+def read_fills(session: Session) -> list[dict] | None:
+    """Every filled value order, oldest first, with the proposal's reason and cause and, for a
+    sale, the realised dollars: proceeds less the shares' running average cost (the buys filled
+    up to that sale). A fill with no price is left out: unknown cannot be shown as a trade."""
+    rows = _rows(
+        session,
+        "SELECT o.id, o.symbol, o.list_name, o.side, o.filled, o.avg_price, o.reason AS order_reason, "
+        "o.proposal_id, o.created_at, o.sent_at, o.done_at, p.reason AS proposal_reason, "
+        "p.cause AS proposal_cause FROM value_orders o "
+        "LEFT JOIN value_proposals p ON p.id = o.proposal_id "
+        "WHERE o.filled > 0 AND o.avg_price IS NOT NULL ORDER BY o.created_at, o.id",
+    )
+    if rows is None:
+        return None
+    out: list[dict] = []
+    held: dict[tuple[str, str], tuple[float, float]] = {}  # (symbol, list) -> (bought, spent)
+    for r in rows:
+        key = (str(r["symbol"]), str(r["list_name"]))
+        filled, price = float(r["filled"]), float(r["avg_price"])
+        at = dt(r["done_at"]) or dt(r["sent_at"]) or dt(r["created_at"])
+        if at is None:
+            continue
+        realised: float | None = None
+        bought, spent = held.get(key, (0.0, 0.0))
+        if r["side"] == "buy":
+            held[key] = (bought + filled, spent + filled * price)
+        elif bought > 0:
+            realised = filled * (price - spent / bought)
+        out.append(
+            {
+                "at": at,
+                "symbol": str(r["symbol"]),
+                "side": "buy" if r["side"] == "buy" else "sell",
+                "shares": filled,
+                "price": price,
+                "reason": str(r["proposal_reason"] or r["order_reason"] or ""),
+                "cause": "claude" if r["proposal_cause"] == "claude" else "python",
+                "proposal_id": None if r["proposal_id"] is None else int(r["proposal_id"]),
+                "realised_usd": realised,
+            }
+        )
+    return out
+
+
+def read_value_pay_inputs() -> list[ValuePayInput] | None:
+    """Each value sale's realised P&L by the date it filled; None when value.db could not be read
+    (absent, not a database, or no orders table). value.db holds no commissions: those are None."""
+    with value_read_session() as s:
+        if s is None:
+            return None
+        fills = read_fills(s)
+    if fills is None:
+        return None
+    return [
+        ValuePayInput(
+            closed_at=f["at"],
+            symbol=f["symbol"],
+            realised_usd=f["realised_usd"],
+            commissions_usd=None,
+        )
+        for f in fills
+        if f["side"] == "sell" and f["realised_usd"] is not None
+    ]
+
+
+def read_value_day_inputs() -> list[ValueDayInput] | None:
+    """Every value fill with its reason and cause, for Home's day cards; None when unreadable."""
+    with value_read_session() as s:
+        if s is None:
+            return None
+        fills = read_fills(s)
+    if fills is None:
+        return None
+    return [ValueDayInput(**f) for f in fills]

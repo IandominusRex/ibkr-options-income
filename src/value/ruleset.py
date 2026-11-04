@@ -6,10 +6,8 @@ traced to the exact thresholds that produced it.
 
 from __future__ import annotations
 
-import hashlib
-import json
-
 from src.common.config import ValueCfg, ValueRulesCfg
+from src.common.value_freshness import rules_digest
 
 # value_rules v1, frozen 2026-10-29 by the operator after the calibration dry run (Part 1,
 # Task 16). A rule change is a new version with a written reason, at most quarterly (spec §6.8).
@@ -30,8 +28,7 @@ FROZEN: dict[str, str] = {
 
 def ruleset_hash(rules: ValueRulesCfg) -> str:
     """12 hex characters of sha256 over the canonical JSON of every rule key."""
-    canonical = json.dumps(rules.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
+    return rules_digest(rules.model_dump(mode="json"))
 
 
 def ruleset_id(cfg: ValueCfg) -> tuple[str, str]:

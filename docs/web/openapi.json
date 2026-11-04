@@ -2159,7 +2159,8 @@
                 "all",
                 "csp",
                 "cc",
-                "spread"
+                "spread",
+                "value"
               ],
               "type": "string",
               "default": "all",
@@ -2248,7 +2249,8 @@
                 "all",
                 "csp",
                 "cc",
-                "spread"
+                "spread",
+                "value"
               ],
               "type": "string",
               "default": "all",
@@ -2337,7 +2339,8 @@
                 "all",
                 "csp",
                 "cc",
-                "spread"
+                "spread",
+                "value"
               ],
               "type": "string",
               "default": "all",
@@ -3742,6 +3745,7 @@
           "value"
         ],
         "summary": "Value Ticker",
+        "description": "The ticker file for a name: the stored one when it is current, else computed now from\nresearch.db (src/api/value_lookup.py). 404 when neither value.db nor research.db knows it.",
         "operationId": "value_ticker_value__symbol__get",
         "security": [
           {
@@ -7069,6 +7073,7 @@
               "csp",
               "cc",
               "spread",
+              "value",
               "other"
             ],
             "title": "Kind"
@@ -7077,7 +7082,8 @@
             "type": "string",
             "enum": [
               "wheel",
-              "spreads"
+              "spreads",
+              "value"
             ],
             "title": "Source"
           },
@@ -7328,7 +7334,7 @@
           "at"
         ],
         "title": "DayTrade",
-        "description": "One executed trade on one New York day, as a Home card (web, 2026-10-15).\n\nMoney is USD for the whole position, never per share. ``premium``, ``bought_back`` and\n``commissions`` are positive numbers; the card signs them. Unknown is None, never 0.0.\n``net_pnl`` is the realised result after every commission, set only once the trade is\nclosed. ``capital`` is the cash held aside (a put), the shares' strike value (a call) or the\nmost a spread can lose."
+        "description": "One executed trade on one New York day, as a Home card (web, 2026-10-15).\n\nMoney is USD for the whole position, never per share. ``premium``, ``bought_back`` and\n``commissions`` are positive numbers; the card signs them. Unknown is None, never 0.0.\n``net_pnl`` is the realised result after every commission, set only once the trade is\nclosed. ``capital`` is the cash held aside (a put), the shares' strike value (a call) or the\nmost a spread can lose. A value-book fill (``kind`` \"value\") is a share trade: ``strike`` is the\nfill price per share, ``contracts`` the share count, ``expiry`` the fill's New York date and\n``capital`` the cash laid out by a buy."
       },
       "DayTradesResponse": {
         "properties": {
@@ -7356,7 +7362,8 @@
               "all",
               "csp",
               "cc",
-              "spread"
+              "spread",
+              "value"
             ],
             "title": "Strategy"
           },
@@ -7370,6 +7377,11 @@
           "spreads_available": {
             "type": "boolean",
             "title": "Spreads Available"
+          },
+          "value_available": {
+            "type": "boolean",
+            "title": "Value Available",
+            "default": true
           },
           "previous_day": {
             "anyOf": [
@@ -10444,7 +10456,8 @@
               "all",
               "csp",
               "cc",
-              "spread"
+              "spread",
+              "value"
             ],
             "title": "Strategy"
           },
@@ -10492,7 +10505,8 @@
               "all",
               "csp",
               "cc",
-              "spread"
+              "spread",
+              "value"
             ],
             "title": "Strategy"
           },
@@ -10604,6 +10618,38 @@
           "days_left": {
             "type": "integer",
             "title": "Days Left"
+          },
+          "value_realised": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Realised"
+          },
+          "value_commissions": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Commissions"
+          },
+          "value_commissions_complete": {
+            "type": "boolean",
+            "title": "Value Commissions Complete",
+            "default": true
+          },
+          "value_n_closed": {
+            "type": "integer",
+            "title": "Value N Closed",
+            "default": 0
           }
         },
         "type": "object",
@@ -10643,6 +10689,11 @@
           "spreads_available": {
             "type": "boolean",
             "title": "Spreads Available"
+          },
+          "value_available": {
+            "type": "boolean",
+            "title": "Value Available",
+            "default": true
           }
         },
         "type": "object",
@@ -12376,6 +12427,11 @@
           "spreads_available": {
             "type": "boolean",
             "title": "Spreads Available"
+          },
+          "value_available": {
+            "type": "boolean",
+            "title": "Value Available",
+            "default": true
           }
         },
         "type": "object",

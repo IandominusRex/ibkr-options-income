@@ -1345,7 +1345,7 @@ class MonthPay(BaseModel):
     """
 
     month: date  # first day of the month
-    strategy: Literal["all", "csp", "cc", "spread"]
+    strategy: Literal["all", "csp", "cc", "spread", "value"]
     premium_collected: float
     bought_back: float
     commissions: float
@@ -1364,11 +1364,21 @@ class MonthPay(BaseModel):
     target: float | None = None
     progress_pct: float | None = None
     days_left: int
+    # The value book's realised P&L in the month (Part 6): its own line, never mixed into premium,
+    # `net` or the target (the target is the wheel's wage; a share sale is a capital gain).
+    # `value_realised` is None while nothing was sold in the month (unknown, never 0.0). value.db
+    # holds no commissions, so `value_commissions` is the known part and `value_commissions_complete`
+    # is False whenever a sale had none recorded. With strategy "value" the options figures are 0
+    # and `net` is the value book's realised result less its known commissions.
+    value_realised: float | None = None
+    value_commissions: float | None = None
+    value_commissions_complete: bool = True
+    value_n_closed: int = 0
 
 
 DayTradeAction = Literal["opened", "closed", "rolled"]
 DayTradeHow = Literal["bought_back", "expired", "assigned", "called_away", "rolled"]
-DayTradeKind = Literal["csp", "cc", "spread", "other"]
+DayTradeKind = Literal["csp", "cc", "spread", "value", "other"]
 
 
 class DayReview(BaseModel):
@@ -1415,14 +1425,16 @@ class DayTrade(BaseModel):
     ``commissions`` are positive numbers; the card signs them. Unknown is None, never 0.0.
     ``net_pnl`` is the realised result after every commission, set only once the trade is
     closed. ``capital`` is the cash held aside (a put), the shares' strike value (a call) or the
-    most a spread can lose.
+    most a spread can lose. A value-book fill (``kind`` "value") is a share trade: ``strike`` is the
+    fill price per share, ``contracts`` the share count, ``expiry`` the fill's New York date and
+    ``capital`` the cash laid out by a buy.
     """
 
     key: str
     action: DayTradeAction
     how: DayTradeHow | None = None  # closed / rolled: how it ended
     kind: DayTradeKind
-    source: Literal["wheel", "spreads"]
+    source: Literal["wheel", "spreads", "value"]
     underlying: str
     right: Literal["C", "P"] | None = None
     strike: float
@@ -1467,7 +1479,7 @@ class MonthCalendar(BaseModel):
     missing day is a day with no close, not a day known to be flat."""
 
     month: date  # first day of the month
-    strategy: Literal["all", "csp", "cc", "spread"]
+    strategy: Literal["all", "csp", "cc", "spread", "value"]
     days: list[DayCalendarDay] = Field(default_factory=list)
     total: float
     n_closed: int

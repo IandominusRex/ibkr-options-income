@@ -3,7 +3,8 @@
 
 Both come from the same `PnlLeg` list every P&L surface reads, plus the book's spread rows the
 API hands in as plain `SpreadDayInput` values (this module never touches the spreads package or
-its file), so a card, the calendar and the month's pay stub cannot disagree.
+its file), so a card, the calendar and the month's pay stub cannot disagree. The value book's
+fills arrive the same way, as plain `ValueDayInput` values built from data/value.db.
 
 What it adds to those legs is the *why*, and every word of it is worked out from stored facts:
 the close reason stamped on the buy-back fill, the roll policy's own decision log, and the share
@@ -37,7 +38,7 @@ from src.common.schemas import (
     PnlLeg,
     VerdictOutcome,
 )
-from src.reporting.pay import PayStrategy, close_day, et_date, leg_kind
+from src.reporting.pay import PayStrategy, ValuePayInput, close_day, et_date, leg_kind
 from src.storage.models import ApprovalRow, ClaudeReviewRow, FillRow, RollAlertRow
 
 _ET = ZoneInfo("America/New_York")
@@ -69,6 +70,21 @@ class SpreadDayInput:
     status: str
     realized_pnl_usd: float | None
     is_live: bool = False
+
+
+@dataclass(frozen=True)
+class ValueDayInput:
+    """One filled value-book order (Part 6, ruling 25), as the API reads it from data/value.db."""
+
+    at: datetime  # naive UTC, as value.db stores it
+    symbol: str
+    side: Literal["buy", "sell"]
+    shares: float
+    price: float  # the fill's average price per share
+    reason: str  # the proposal's reason code (tranche N, stop, claude_no, ...)
+    cause: str  # python | claude
+    proposal_id: int | None
+    realised_usd: float | None = None  # a sale: proceeds less the average cost; None if unknown
 
 
 # --------------------------------------------------------------------------- #
@@ -726,6 +742,65 @@ def _spread_opened(s: SpreadDayInput) -> DayTrade:
 
 
 # --------------------------------------------------------------------------- #
+# The value book
+# --------------------------------------------------------------------------- #
+
+_VALUE_WORDS = {
+    "arm": "the trailing stop armed",
+    "half": "the price reached fair value: sold half, tightened the stop on the rest",
+    "stop": "the stop was hit",
+    "trail": "the trailing stop was hit",
+    "peak": "the peak signal fired",
+    "thesis": "a thesis exit fired",
+    "remark": "fair value was re-marked",
+    "remark_below": "fair value fell below the price",
+    "catastrophe": "the catastrophe stop was hit",
+    "time": "the holding period ended",
+    "shock": "a shock stop fired",
+    "drawdown_trim": "the book fell 25% from its high: trimmed to half",
+    "claude_broken": "Claude's review of the held name returned BROKEN",
+    "claude_no": "Claude's verdict on the name turned NO",
+}
+
+
+def _value_words(code: str, side: str) -> str:
+    if code.startswith("tranche "):
+        return f"scaling in, {code}"
+    return _VALUE_WORDS.get(code, code.replace("_", " ") or ("bought" if side == "buy" else "sold"))
+
+
+def _value_trade(v: ValueDayInput) -> DayTrade:
+    words = _value_words(v.reason, v.side)
+    shares = int(round(v.shares))
+    facts = [DayFact(label="Rule", text=f"{words[:1].upper()}{words[1:]}.")]
+    if v.cause == "claude":
+        facts.append(
+            DayFact(
+                label="Claude's call",
+                text=f"Claude's value work called for this {v.side}; it waited for your tap.",
+                source="claude",
+            )
+        )
+    day = et_date(v.at) or _utc(v.at).date()
+    verb = "Bought" if v.side == "buy" else "Sold"
+    return DayTrade(
+        key=f"value:{v.proposal_id or 0}:{v.side}:{_utc(v.at):%Y%m%dT%H%M%S}",
+        action="opened" if v.side == "buy" else "closed",
+        kind="value",
+        source="value",
+        underlying=v.symbol,
+        strike=v.price,
+        expiry=day,
+        contracts=shares,
+        at=_utc(v.at),
+        capital=v.shares * v.price if v.side == "buy" else None,
+        net_pnl=v.realised_usd if v.side == "sell" else None,
+        reason=f"{verb} {shares} {v.symbol} at {_money(v.price)}: {words}.",
+        facts=facts,
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Builders
 # --------------------------------------------------------------------------- #
 
@@ -734,6 +809,7 @@ def build_day_trades(
     session: _SessionFactory,
     legs: Iterable[PnlLeg],
     spreads: Iterable[SpreadDayInput],
+    values: Iterable[ValueDayInput] = (),
     *,
     day: date,
     strategy: PayStrategy,
@@ -781,6 +857,8 @@ def build_day_trades(
                 closed_spread = _spread_closed(s)
                 if closed_spread is not None:
                     out.append(closed_spread)
+    if strategy in ("all", "value"):
+        out.extend(_value_trade(v) for v in values if et_date(v.at) == day)
     out.sort(key=lambda t: t.at, reverse=True)
     return out
 
@@ -788,6 +866,7 @@ def build_day_trades(
 def build_month_calendar(
     legs: Iterable[PnlLeg],
     spreads: Iterable[SpreadDayInput],
+    values: Iterable[ValuePayInput] = (),
     *,
     month: date,
     strategy: PayStrategy,
@@ -819,6 +898,15 @@ def build_month_calendar(
                 continue
             totals[d] += net
             counts[d] += 1
+    if strategy in ("all", "value"):
+        for v in values:
+            d = et_date(v.closed_at)
+            if d is None or not first <= d < nxt:
+                continue
+            totals[d] += v.realised_usd - (v.commissions_usd or 0.0)
+            counts[d] += 1
+            if v.commissions_usd is None:
+                incomplete.add(d)
 
     days = [
         DayCalendarDay(date=d, realized=totals[d], n_closed=counts[d], complete=d not in incomplete)

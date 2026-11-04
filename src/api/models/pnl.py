@@ -115,6 +115,9 @@ class MonthPayResponse(Envelope):
     # could not be read (absent, not a database, locked, no table): the spread part of `pay`
     # is then unknown, not $0, and an "all" total is the wheel alone.
     spreads_available: bool
+    # False only when the value book is in scope (strategy all or value) and data/value.db could
+    # not be read: the value line is then unknown, not $0 (Part 6, ruling 25).
+    value_available: bool = True
 
 
 class IncomeTargetResponse(Envelope):
@@ -130,11 +133,12 @@ class DayTradesResponse(Envelope):
 
     date: date
     book: Literal["paper", "live"]
-    strategy: Literal["all", "csp", "cc", "spread"]
+    strategy: Literal["all", "csp", "cc", "spread", "value"]
     trades: list[DayTrade]
     # False only when a spreads book is in scope and data/spreads.db could not be read: the
     # spreads cards are then missing, not absent, and the card says so.
     spreads_available: bool
+    value_available: bool = True  # as on MonthPayResponse
     # Web overhaul Part 2: the nearest New York days with wheel activity (a trade or a proposal)
     # in this scope, for History's day navigation; None at either end. (`dt.date`: the `date`
     # field above shadows the type inside this class body.)
@@ -148,3 +152,4 @@ class RealisedCalendarResponse(Envelope):
     book: Literal["paper", "live"]
     calendar: MonthCalendar
     spreads_available: bool
+    value_available: bool = True  # as on MonthPayResponse

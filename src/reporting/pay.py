@@ -2,7 +2,9 @@
 
 Imports nothing from the enrichment layer or the API package (tests/test_web_fence.py greps
 for the names). Spread positions arrive as plain `SpreadPayInput` values the API builds from
-data/spreads.db, so this module never touches the spreads package either.
+data/spreads.db, so this module never touches the spreads package either; the value book's
+realised sales arrive the same way, as plain `ValuePayInput` values the API builds from
+data/value.db (this module imports nothing from `src.value`).
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from src.common.schemas import IncomeTarget, MonthPay, PnlLeg, VerdictOutcome
 _ET = ZoneInfo("America/New_York")
 OPTION_MULTIPLIER = 100
 
-PayStrategy = Literal["all", "csp", "cc", "spread"]
+PayStrategy = Literal["all", "csp", "cc", "spread", "value"]
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,16 @@ class SpreadPayInput:
     contracts_open: int
     entry_commission: float
     exit_commission: float
+
+
+@dataclass(frozen=True)
+class ValuePayInput:
+    """One value-book sale's realised P&L (Part 6, ruling 25), by the date it closed."""
+
+    closed_at: datetime  # naive UTC, as value.db stores it
+    symbol: str
+    realised_usd: float  # proceeds less the shares' average cost, before commissions
+    commissions_usd: float | None  # None: value.db holds none (unknown, never 0.0)
 
 
 def leg_kind(leg: PnlLeg) -> Literal["csp", "cc"] | None:
@@ -63,6 +75,7 @@ def close_day(leg: PnlLeg) -> date | None:
 def build_month_pay(
     legs: Iterable[PnlLeg],
     spreads: Iterable[SpreadPayInput],
+    values: Iterable[ValuePayInput] = (),
     *,
     month: date,
     strategy: PayStrategy,
@@ -83,7 +96,7 @@ def build_month_pay(
     complete = True
     n_opened = n_closed = 0
 
-    if strategy != "spread":
+    if strategy not in ("spread", "value"):
         for leg in legs:
             kind = leg_kind(leg)
             if kind is None or (strategy != "all" and kind != strategy):
@@ -117,7 +130,26 @@ def build_month_pay(
                 commissions += s.exit_commission
                 n_closed += 1
 
+    value_realised: float | None = None
+    value_commissions: float | None = None
+    value_complete = True
+    n_value = 0
+    if strategy in ("all", "value"):
+        for v in values:
+            if not in_month(v.closed_at):
+                continue
+            value_realised = (value_realised or 0.0) + v.realised_usd
+            n_value += 1
+            if v.commissions_usd is None:
+                value_complete = False
+            else:
+                value_commissions = (value_commissions or 0.0) + v.commissions_usd
+
     net = premium - bought - commissions
+    if strategy == "value":
+        # Only value lines: its realised result less the commissions known for it. The options
+        # figures above are zero because no options line was counted.
+        net = (value_realised or 0.0) - (value_commissions or 0.0)
     target_dollars = target_value(target, month_start_value)
     return MonthPay(
         month=first,
@@ -135,6 +167,14 @@ def build_month_pay(
         target_amount=target.amount,
         target_base=target.base,
         target=target_dollars,
-        progress_pct=(net / target_dollars * 100) if target_dollars else None,
+        # The target is the wheel's options-income wage (ruling 26): a value-only month has no
+        # progress against it, and "all" counts options and spreads only.
+        progress_pct=(net / target_dollars * 100)
+        if target_dollars and strategy != "value"
+        else None,
         days_left=(last - today).days if first <= today <= last else 0,
+        value_realised=value_realised,
+        value_commissions=value_commissions,
+        value_commissions_complete=value_complete,
+        value_n_closed=n_value,
     )

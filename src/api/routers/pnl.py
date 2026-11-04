@@ -65,6 +65,7 @@ from src.api.models.pnl import (
 )
 from src.api.portfolio_source import read_portfolio
 from src.api.spread_inputs import spread_day_inputs, spread_pay_inputs
+from src.api.value_db import read_value_day_inputs, read_value_pay_inputs
 from src.claude.eval.ledger import load_records
 from src.claude.eval.score_metrics import score_outcome_report
 from src.claude.eval.sizing_counterfactual import summarize as summarize_sizing
@@ -81,7 +82,7 @@ from src.common.schemas import (
 )
 from src.reporting.account_value import month_start_value
 from src.reporting.day import activity_days, build_day_trades, build_month_calendar
-from src.reporting.pay import build_month_pay
+from src.reporting.pay import build_month_pay, et_date
 from src.reporting.pnl import build_campaigns, build_legs, build_summary, equity_curve
 from src.storage.models import SystemSettingRow
 
@@ -531,7 +532,7 @@ def pnl_month(
     user: OwnerUser,  # noqa: ARG001
     db: TradingDb,
     month: str | None = Query(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
-    strategy: Literal["all", "csp", "cc", "spread"] = "all",
+    strategy: Literal["all", "csp", "cc", "spread", "value"] = "all",
     book: Literal["paper", "live"] | None = None,
 ) -> MonthPayResponse:
     """The month's pay stub. `book` defaults to the running mode: a pay figure across paper
@@ -544,16 +545,24 @@ def pnl_month(
     filters = _filter_params(None, None, None, None, None, chosen)
     legs = _filtered_legs(db, filters)
     spreads = spread_pay_inputs(chosen) if strategy in ("all", "spread") else []
+    values = read_value_pay_inputs() if strategy in ("all", "value") else []
     pay = build_month_pay(
         legs,
         spreads or [],
+        values or [],
         month=first,
         strategy=strategy,
         month_start_value=month_start_value(_session_factory(db), first),
         target=_resolved_target(db)[0],
         today=today,
     )
-    return MonthPayResponse(as_of=now, book=chosen, pay=pay, spreads_available=spreads is not None)
+    return MonthPayResponse(
+        as_of=now,
+        book=chosen,
+        pay=pay,
+        spreads_available=spreads is not None,
+        value_available=values is not None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -566,7 +575,7 @@ def pnl_day(
     user: OwnerUser,  # noqa: ARG001
     db: TradingDb,
     day: Annotated[date | None, Query(alias="date")] = None,
-    strategy: Literal["all", "csp", "cc", "spread"] = "all",
+    strategy: Literal["all", "csp", "cc", "spread", "value"] = "all",
     book: Literal["paper", "live"] | None = None,
 ) -> DayTradesResponse:
     """What was opened, closed or rolled on one New York day, as the cards Home shows.
@@ -581,10 +590,13 @@ def pnl_day(
     the_day = day or now.astimezone(_ET).date()
     legs = _filtered_legs(db, _filter_params(None, None, None, None, None, chosen))
     spreads = spread_day_inputs(chosen) if strategy in ("all", "spread") else []
+    values = read_value_day_inputs() if strategy in ("all", "value") else []
     trades = build_day_trades(
-        _session_factory(db), legs, spreads or [], day=the_day, strategy=strategy
+        _session_factory(db), legs, spreads or [], values or [], day=the_day, strategy=strategy
     )
     days = activity_days(_session_factory(db), legs, strategy=strategy)
+    if strategy in ("all", "value"):
+        days |= {d for v in values or [] if (d := et_date(v.at)) is not None}
     return DayTradesResponse(
         as_of=now,
         date=the_day,
@@ -592,6 +604,7 @@ def pnl_day(
         strategy=strategy,
         trades=trades,
         spreads_available=spreads is not None,
+        value_available=values is not None,
         previous_day=max((d for d in days if d < the_day), default=None),
         next_day=min((d for d in days if d > the_day), default=None),
     )
@@ -602,7 +615,7 @@ def pnl_calendar(
     user: OwnerUser,  # noqa: ARG001
     db: TradingDb,
     month: str | None = Query(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
-    strategy: Literal["all", "csp", "cc", "spread"] = "all",
+    strategy: Literal["all", "csp", "cc", "spread", "value"] = "all",
     book: Literal["paper", "live"] | None = None,
 ) -> RealisedCalendarResponse:
     """A month of daily realised P&L: each day's net result, after commissions, of what closed
@@ -613,7 +626,14 @@ def pnl_calendar(
     chosen: Literal["paper", "live"] = book or ("live" if get_config().is_live else "paper")
     legs = _filtered_legs(db, _filter_params(None, None, None, None, None, chosen))
     spreads = spread_day_inputs(chosen) if strategy in ("all", "spread") else []
-    calendar = build_month_calendar(legs, spreads or [], month=first, strategy=strategy)
+    values = read_value_pay_inputs() if strategy in ("all", "value") else []
+    calendar = build_month_calendar(
+        legs, spreads or [], values or [], month=first, strategy=strategy
+    )
     return RealisedCalendarResponse(
-        as_of=now, book=chosen, calendar=calendar, spreads_available=spreads is not None
+        as_of=now,
+        book=chosen,
+        calendar=calendar,
+        spreads_available=spreads is not None,
+        value_available=values is not None,
     )

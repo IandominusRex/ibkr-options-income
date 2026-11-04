@@ -86,6 +86,28 @@ def _value_view_in_tmp(monkeypatch, tmp_path_factory):
     )
 
 
+@pytest.fixture(autouse=True)
+def _value_api_in_tmp(monkeypatch, tmp_path_factory):
+    """The web API reads the value book through src/api/value_db.py (Part 6). No test may read the
+    operator's data/value.db: by default it points at a file that does not exist; a test that
+    needs one patches ``_resolve_path`` itself."""
+    monkeypatch.setattr(
+        "src.api.value_db._resolve_path",
+        lambda: str(tmp_path_factory.getbasetemp() / "no_value_book" / "value.db"),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _value_inputs_in_tmp(monkeypatch, tmp_path_factory):
+    """The value inputs loader (and the API's on-open lookup through it) opens research.db
+    read-only. No test may read the operator's data/research.db: by default it points at a file
+    that does not exist; a test that needs one patches ``_resolve_path`` itself."""
+    monkeypatch.setattr(
+        "src.common.value_inputs._resolve_path",
+        lambda: str(tmp_path_factory.getbasetemp() / "no_research" / "research.db"),
+    )
+
+
 @pytest.fixture()
 def value_book_db(tmp_path, monkeypatch):
     """value.db in tmp with src/common/value_view.py pointed at the same file (Part 5)."""
