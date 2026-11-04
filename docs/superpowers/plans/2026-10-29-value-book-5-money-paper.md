@@ -135,6 +135,7 @@ is the executing agent's own model name.
 | Task 9 - clientId 31's cycle and the book's messages | done | `39ea69d` | tests/test_value_stage3.py 2 passed (+2); with test_value_fence 19 passed (Part 2's `sys.modules` probe still loads no `ib_async`); ruff check/format and `mypy src/value/{stage3,notify}.py` clean | 2026-11-04 | Red run: collection `ImportError: cannot import name 'notify' from 'src.value'`. **One deviation:** `stage3.run_cycle` calls `get_positions(ib, include_value=True)`, a keyword Task 11 (E4) adds, so `mypy` failed with `call-arg` at this task; the call carries `# type: ignore[call-arg]` and a comment. `warn_unused_ignores = true` makes Task 11's mypy gate fail until the marker is removed, so **Section D must delete the ignore in Task 11**. Nothing calls `run_cycle` before Task 14 wires it, so the missing keyword is never reached at runtime (cost if wrong: none today; if Task 11 forgot, mypy says so) |
 | Section C exit | done | `b4f424c`, `6895151`, `39ea69d` + this docs(plan) commit (11 on the branch) | **full gate: pytest 5455 passed, 1 skipped (baseline 5393 + 62)**; `ruff check .` clean; `mypy src` 348 source files, no issues; `py_compile scripts/run_value.py` silent; protected-file diff (`src/orchestrator src/monitor src/spreads src/api src/news src/claude src/reporting src/research src/value_ai`) empty; `git diff --stat main...HEAD -- web` lists only `web/lib/api-types.ts` (1 line) | 2026-11-04 | Section C touches only `src/value/` (new `risk`, `sizing`, `book`, `executor`, `live`, `stage3`, `notify`; `scorecard.py` one metric) and tests. The docs-trigger rows for the new `src/value/` modules (ARCHITECTURE.md `src/value/` section, CLAUDE.md value-fence text) are Task 15's. Section D needs the operator's go-ahead |
 | Task 10 - `orderRef` through the ledger; value fills tagged | done | `6f610b7` (also commits the Section D entry row) | tests/test_value_attribution.py 7 passed (+2); with test_ledger_ingest, test_ledger_live, test_ledger_flex, test_ledger_models, test_web_fence, test_openapi_current 91 passed; ruff check/format and `mypy` on the 6 touched src files clean | 2026-11-04 | No deviation: the plan's diffs applied at the D2 line numbers. **Red run:** both new tests failed with `AttributeError: 'ParsedExecution' object has no attribute 'order_ref'`, not the plan's `ValidationError`: `ParsedExecution` keeps pydantic's default `extra="ignore"`, so the unknown keyword was dropped and the first read raised (cost if wrong: none, the same missing field). `_tag_value_book` runs after `_tag_spreads`, so a `value:` orderRef on a spreads underlying would be retagged `value`; that cannot happen, since the value gate refuses `reserved_for_spreads_book` (cost if wrong: one condition). A row the order-id pass tagged `system` before its orderRef arrived is retagged `value` on the backfill (the backfill marks it a tag candidate, and `_tag_books` now skips value rows). **For Part 6 (not changed here):** `src/reporting/trade_ledger.py` and the Sheets mirror treat a `book="value"` row like any non-spreads stock trade, so value shares show in the whole-account ledger as account truth, not split out (display only) |
+| Task 11 - the wheel sees only its own shares | done | `6794798` (also commits Task 10's row) | tests/test_value_attribution.py 9 passed (+2); with test_ibkr_portfolio, test_engine, test_value_stage3 114 passed; value/spreads/web/regime fences, test_eval_skills, test_wheel_spreads_isolation 75 passed; `py_compile scripts/healthcheck.py` silent; ruff check/format and `mypy src/ibkr/portfolio.py src/value/stage3.py` clean | 2026-11-04 | Red run: `ImportError: cannot import name 'wheel_view'`, as the plan says. **Carry-over from Task 9 done:** `src/value/stage3.py`'s `# type: ignore[call-arg]` on `get_positions(ib, include_value=True)` and its three-line comment are deleted (mypy has `warn_unused_ignores`); the file rides in this commit though Task 11's Files list does not name it (cost if wrong: none). **Ruling, for the whole-branch review:** `wheel_view` reads value.db whatever `value.book.enabled` says, as the plan's code and both unreadable-db tests (neither turns the book on) require. With the book off and value.db absent, from before Part 5, or readable with no value order, nothing is shared and every position passes through unchanged, so the wheel is unchanged. The one edge: book off and value.db present but unreadable (corrupt, or locked past the 5 s timeout) makes the wheel fail closed on every stock name, so stock the ledger cannot explain (held from before its first import) drops out of the wheel's view and gets no covered call until value.db reads again. Kept because spec §9.2 and ruling 17 say fail closed, and gating on `enabled` would let the wheel write calls against value shares still held after the book was turned off (cost if wrong: one condition in `wheel_view`). Every wheel `get_positions` caller (scan, approval, monitor, profit-take, rolls, capital release, command drain, EOD and capacity reports) now gets the wheel view; only the healthcheck and the value process pass `include_value=True`. Each call adds one read-only open of value.db, plus a ledger read only for a shared name (cost: small) |
 
 ## Roadmap (this plan is Part 5 of 6)
 
@@ -5592,7 +5593,7 @@ index e744461..d4088f1 100644
 **Interfaces:** `portfolio.wheel_view(positions)`; `get_positions(ib, *, include_spreads=False,
 include_value=False)`.
 
-- [ ] **Step 1: Write the failing tests** — apply:
+- [x] **Step 1: Write the failing tests** — apply:
 
 ```diff
 diff --git a/tests/test_value_attribution.py b/tests/test_value_attribution.py
@@ -5654,8 +5655,8 @@ index bb04cf2..4e7ef03 100644
  
 ```
 
-- [ ] **Step 2: Run them to see them fail** — `ImportError: cannot import name 'wheel_view'`.
-- [ ] **Step 3: The view** — apply:
+- [x] **Step 2: Run them to see them fail** — `ImportError: cannot import name 'wheel_view'`.
+- [x] **Step 3: The view** — apply:
 
 ```diff
 diff --git a/scripts/healthcheck.py b/scripts/healthcheck.py
@@ -5778,8 +5779,8 @@ index 65c211f..3763cd3 100644
  # The account stream's USD exchange rate (base-currency units per USD). A plain account-update
 ```
 
-- [ ] **Step 4: Run them to see them pass** — `tests/test_value_attribution.py tests/test_ibkr_portfolio.py tests/test_engine.py`, and `py_compile scripts/healthcheck.py`.
-- [ ] **Step 5: Gates and commit:**
+- [x] **Step 4: Run them to see them pass** — `tests/test_value_attribution.py tests/test_ibkr_portfolio.py tests/test_engine.py`, and `py_compile scripts/healthcheck.py`.
+- [x] **Step 5: Gates and commit:**
 
   ```bash
   git add src/ibkr/portfolio.py scripts/healthcheck.py tests/test_value_attribution.py
