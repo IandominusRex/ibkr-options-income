@@ -129,6 +129,9 @@ _ENRICHMENT_ONLY = (
     "src.spreads_ai",
     # Claude as the value book's analyst (2026-10-28 value book spec §8)
     "src.value_ai",
+    # The VALUE NOTE in the wheel's review prompts (Part 6 ruling 9): prompt text only
+    "src.claude.value_context",
+    "src.common.value_text",
 )
 
 

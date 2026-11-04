@@ -22,6 +22,7 @@ from src.claude.picture_context import load_picture_block
 from src.claude.prompts.eod import build_eod_prompt
 from src.claude.prompts.roll import build_roll_prompt
 from src.claude.prompts.strategist import build_prompt
+from src.claude.value_context import load_value_block
 from src.common.config import get_config
 from src.common.schemas import (
     AccountSnapshot,
@@ -192,6 +193,7 @@ def review_candidates(
     picture_block: str | None = None,
     book_block: str | None = None,
     dossier_block: str | None = None,
+    value_block: str | None = None,
 ) -> list[ClaudeReview]:
     """Review candidates via the configured `claude.backend`. Returns [] on any failure.
 
@@ -205,6 +207,9 @@ def review_candidates(
     picture_block / book_block / dossier_block: the shared market picture, the book around the
     reviewed names and the reviewed names' dossier notes, pre-rendered by the scan
     (``picture_context`` / ``book_context`` / ``dossier_context``); all prompt text only.
+    value_block: the VALUE NOTE on the reviewed names (``value_context``); when not given it is
+    read here (value.db, read-only; behind ``value.prompt_note.enabled``; never raises) and shown
+    to either backend. Prompt text only: it moves no gate.
 
     Every review comes back stamped with the backend that produced it (``"cli"`` or ``"ollama"``):
     the stamp is the runner's, never the model's, and it is what keeps a local model's size
@@ -212,6 +217,8 @@ def review_candidates(
     """
     cfg = get_config().claude
     note_researched([c.underlying for c in candidates])
+    if value_block is None:
+        value_block = load_value_block([c.underlying for c in candidates], datetime.now(UTC))
     kwargs = dict(
         candidates=candidates,
         account=account,
@@ -223,6 +230,7 @@ def review_candidates(
         picture_block=picture_block,
         book_block=book_block,
         dossier_block=dossier_block,
+        value_block=value_block,
     )
 
     if cfg.backend == "ollama":
@@ -256,6 +264,7 @@ def _review_candidates_cli_outcome(
     picture_block: str | None = None,
     book_block: str | None = None,
     dossier_block: str | None = None,
+    value_block: str | None = None,
 ) -> tuple[list[ClaudeReview], str | None]:
     """Shell out to `claude -p`, parse output → (list[ClaudeReview], error). [] on any failure.
 
@@ -287,6 +296,7 @@ def _review_candidates_cli_outcome(
         picture_block=picture_block,
         book_block=book_block,
         dossier_block=dossier_block,
+        value_block=value_block,
     )
 
     # Pass prompt via stdin rather than -p to avoid ARG_MAX (~128 KB) limits
@@ -357,6 +367,7 @@ def review_roll(
     proposal: str | None = None,
     picture_block: str | None = None,
     dossier_block: str | None = None,
+    value_block: str | None = None,
 ) -> RollReview | None:
     """Roll/hold/close recommendation via the configured `claude.backend`.
 
@@ -365,7 +376,9 @@ def review_roll(
     *picture_block* is the pre-rendered market picture; when not given the stored picture is
     read (news.db, read-only; one small read, never raises) and shown either backend.
     *dossier_block* is the rolled name's dossier note; when not given, the full note of the
-    underlying is read the same way (an explicit empty string means none).
+    underlying is read the same way (an explicit empty string means none). *value_block* is the
+    value book's note on the rolled underlying (``value_context``), read the same way and shown to
+    either backend; context only.
     """
     cfg = get_config().claude
     now = datetime.now(UTC)
@@ -376,6 +389,8 @@ def review_roll(
         dossier_block = load_dossier_block(
             [alert.underlying or pos.underlying or pos.symbol], now, compact=False
         )
+    if value_block is None:
+        value_block = load_value_block([alert.underlying or pos.underlying or pos.symbol], now)
 
     if cfg.backend == "ollama":
         return ollama_runner.review_roll(
@@ -385,6 +400,7 @@ def review_roll(
             proposal=proposal,
             picture_block=picture_block,
             dossier_block=dossier_block,
+            value_block=value_block,
         )
 
     review, error = _review_roll_cli(
@@ -394,6 +410,7 @@ def review_roll(
         proposal=proposal,
         picture_block=picture_block,
         dossier_block=dossier_block,
+        value_block=value_block,
     )
     if review is None and cfg.backend == "cli_then_ollama" and should_fall_back(error):
         log.warning("claude unavailable (%s) — using ollama for the roll review", error)
@@ -404,6 +421,7 @@ def review_roll(
             proposal=proposal,
             picture_block=picture_block,
             dossier_block=dossier_block,
+            value_block=value_block,
         )
     return review
 
@@ -416,6 +434,7 @@ def _review_roll_cli(
     proposal: str | None = None,
     picture_block: str | None = None,
     dossier_block: str | None = None,
+    value_block: str | None = None,
 ) -> tuple[RollReview | None, str | None]:
     """Shell out to `claude -p` for a focused roll/hold/close recommendation.
 
@@ -433,6 +452,7 @@ def _review_roll_cli(
             proposal=proposal,
             picture_block=picture_block,
             dossier_block=dossier_block,
+            value_block=value_block,
         ),
         "claude roll",
         parse_roll_output,

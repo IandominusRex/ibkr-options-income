@@ -460,13 +460,17 @@ def test_the_wheel_reads_the_value_book_only_through_the_read_only_view() -> Non
         "sqlite3",
         "dataclasses",
         "datetime",
+        "json",
         "pathlib",
         "src",
     }
-    # Part 6 (Task 5): the one widening of this fence, src.common.value_commands (standard library
-    # only; the proposal fingerprint a /value card's buttons must carry)
+    # Part 6: the widenings of this fence are src.common.value_commands (standard library only; the
+    # proposal fingerprint a /value card's buttons must carry, Task 5) and src.common.value_text
+    # (pure dataclasses; the shapes of the VALUE NOTE, Task 10)
     assert all(
-        _reaches({m}, "src.common.config") or _reaches({m}, "src.common.value_commands")
+        _reaches({m}, "src.common.config")
+        or _reaches({m}, "src.common.value_commands")
+        or _reaches({m}, "src.common.value_text")
         for m in mods
         if m.startswith("src.")
     )
@@ -504,3 +508,20 @@ def test_approval_service_reaches_the_value_book_only_through_the_view() -> None
     assert _reaches(mods, "src.common.value_view") and _reaches(mods, "src.common.value_commands")
     assert not _reaches(mods, "src.value")
     assert not _reaches(mods, "src.value_ai")
+
+
+def test_claude_reaches_value_db_only_through_the_view() -> None:
+    """Part 6 ruling 9: the VALUE NOTE is prompt text. Nothing under src/claude/ imports src.value,
+    and the read-only view and the neutral renderer are reached from value_context.py alone."""
+    offenders: list[str] = []
+    for p in sorted((ROOT / "src" / "claude").rglob("*.py")):
+        mods = imported_modules(p)
+        rel = str(p.relative_to(ROOT))
+        if _reaches(mods, "src.value"):
+            offenders.append(f"{rel}: src.value")
+        for allowed_only_here in ("src.common.value_view", "src.common.value_text"):
+            if _reaches(mods, allowed_only_here) and rel != "src/claude/value_context.py":
+                offenders.append(f"{rel}: {allowed_only_here}")
+    assert offenders == []
+    ctx = imported_modules(ROOT / "src" / "claude" / "value_context.py")
+    assert _reaches(ctx, "src.common.value_view") and _reaches(ctx, "src.common.value_text")

@@ -4,8 +4,9 @@ Read-only: ``data/value.db`` opened ``mode=ro`` with plain SQL. Imports nothing 
 and no enrichment, so the engine, the strategies and execution may import it (with
 ``src.common.books``) and nothing else of the value book (tests/test_value_fence.py).
 
-Part 6 adds the read-only surface of the Telegram ``/value`` command and the watchdog
-(``read_ticker_file``, ``top_names``, ``open_proposals``, ``last_nightly_run``): each returns
+Part 6 adds the read-only surface of the Telegram ``/value`` command, the watchdog and the VALUE
+NOTE (``read_ticker_file``, ``top_names``, ``open_proposals``, ``last_nightly_run``,
+``read_notes``): each returns
 ``None`` when value.db is missing or unreadable and never raises.
 
 ``read_book`` returns ``None`` when value.db exists but cannot be read: callers then **fail
@@ -16,6 +17,7 @@ value order has ever been placed, so that is the truth.
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from dataclasses import dataclass, field
@@ -24,6 +26,7 @@ from pathlib import Path
 
 from src.common.config import get_config
 from src.common.value_commands import proposal_fingerprint
+from src.common.value_text import ListNote, ValueNoteView
 
 log = logging.getLogger(__name__)
 
@@ -434,3 +437,112 @@ def last_nightly_run() -> datetime | None:
         log.warning("value_view: last_nightly_run failed (%s)", exc)
         return None
     return None if row is None else _naive(row[0])
+
+
+def _next_exit(plan_json: str | None) -> tuple[str, float | None] | None:
+    """A held position's next exit from its stored plan: the half-sale at the effective fair value
+    until it is made, then the stop. ``None`` when the plan holds neither."""
+    try:
+        plan = json.loads(plan_json or "{}")
+    except ValueError:
+        return None
+    if not isinstance(plan, dict):
+        return None
+    target = plan.get("effective_fair_value") or plan.get("fair_value")
+    if not plan.get("half_sold") and isinstance(target, int | float):
+        return ("sell half at", float(target))
+    stop = plan.get("stop")
+    if isinstance(stop, int | float):
+        return ("stop at", float(stop))
+    return None
+
+
+def read_notes(symbols: list[str]) -> dict[str, ValueNoteView] | None:
+    """What the value book knows of each of *symbols*, for the VALUE NOTE in the wheel's review
+    prompts: the effective verdict per list and who decided it, Python's and the effective fair
+    value, the margin, the entry ceiling, the shares held, the next exit and an open held
+    re-evaluation. A name the book does not know is left out. ``None`` when value.db is missing
+    or cannot be read; never raises."""
+    names = list(dict.fromkeys(s.upper() for s in symbols))
+    con = _open_ro()
+    if con is None:
+        return None
+    if not names:
+        con.close()
+        return {}
+    marks = ",".join("?" for _ in names)
+    since = (datetime.now(UTC).date() - timedelta(days=_REEVAL_OPEN_DAYS)).isoformat()
+    try:
+        with con:
+            eff = con.execute(
+                "SELECT symbol, list_name, verdict, decided_by, fair_value, entry_ceiling, "
+                f"margin_of_safety FROM value_effective WHERE symbol IN ({marks})",
+                names,
+            ).fetchall()
+            py_fv = {
+                str(sym): {"deep_value": d, "quality_growth": g}
+                for sym, d, g in con.execute(
+                    "SELECT symbol, fair_value_deep, fair_value_growth FROM value_ticker_files "
+                    f"WHERE symbol IN ({marks})",
+                    names,
+                )
+            }
+            held = {
+                str(sym): float(sh or 0.0)
+                for sym, sh in con.execute(
+                    "SELECT symbol, SUM(CASE WHEN side = 'buy' THEN filled ELSE -filled END) "
+                    f"FROM value_orders WHERE symbol IN ({marks}) GROUP BY symbol",
+                    names,
+                )
+            }
+            plans = {
+                str(sym): plan
+                for sym, plan in con.execute(
+                    "SELECT symbol, plan_json FROM value_positions "
+                    f"WHERE status = 'open' AND symbol IN ({marks}) ORDER BY id DESC",
+                    names,
+                )
+            }
+            reevals = {
+                str(sym): (str(sev), str(day))
+                for sym, sev, day in con.execute(
+                    "SELECT r.symbol, r.severity, r.last_session FROM value_reevaluations r "
+                    "JOIN value_positions p ON p.id = r.position_id "
+                    f"WHERE p.status = 'open' AND r.symbol IN ({marks}) AND "
+                    "(r.last_session >= ? OR r.review_state IN ('WEAKENED', 'BROKEN')) "
+                    "ORDER BY r.id",
+                    [*names, since],
+                )
+            }
+    except Exception as exc:  # noqa: BLE001 - a read surface never raises
+        log.warning("value_view: read_notes failed (%s)", exc)
+        return None
+    by_symbol: dict[str, list[ListNote]] = {}
+    for sym, ln, verdict, by, fair, ceiling, mos in eff:
+        symbol = str(sym).upper()
+        python_fair = py_fv.get(symbol, {}).get(str(ln))
+        by_symbol.setdefault(symbol, []).append(
+            ListNote(
+                list_name=str(ln),
+                verdict=str(verdict),
+                decided_by=str(by),
+                python_fair_value=python_fair,
+                effective_fair_value=fair,
+                margin=mos,
+                put_ceiling=ceiling,
+            )
+        )
+    out: dict[str, ValueNoteView] = {}
+    for symbol in names:
+        shares = max(0.0, held.get(symbol, 0.0))
+        lists = tuple(by_symbol.get(symbol, ()))
+        if not lists and shares <= 0:
+            continue
+        out[symbol] = ValueNoteView(
+            symbol=symbol,
+            lists=lists,
+            held_shares=shares,
+            next_exit=_next_exit(plans.get(symbol)) if shares > 0 else None,
+            reevaluation=reevals.get(symbol) if shares > 0 else None,
+        )
+    return out

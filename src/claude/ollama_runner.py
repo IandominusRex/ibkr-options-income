@@ -294,6 +294,7 @@ def review_candidates(
     picture_block: str | None = None,
     book_block: str | None = None,
     dossier_block: str | None = None,
+    value_block: str | None = None,
 ) -> list[ClaudeReview]:
     """Local-model equivalent of `runner.review_candidates`. Returns [] on any failure.
 
@@ -363,6 +364,7 @@ def review_candidates(
         picture_block=picture_block,
         book_block=book_block,
         dossier_block=dossier_block,
+        value_block=value_block,
     )
 
     reviews: list[ClaudeReview] = []
@@ -421,6 +423,7 @@ def review_roll(
     proposal: str | None = None,
     picture_block: str | None = None,
     dossier_block: str | None = None,
+    value_block: str | None = None,
 ) -> RollReview | None:
     """Local-model equivalent of `runner.review_roll`. Returns None on any failure."""
     cfg = get_config().claude
@@ -440,6 +443,7 @@ def review_roll(
         proposal=proposal,
         picture_block=picture_block,
         dossier_block=dossier_block,
+        value_block=value_block,
     )
 
     raw = _generate(prompt, cfg, schema="json")

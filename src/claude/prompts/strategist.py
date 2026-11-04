@@ -454,6 +454,7 @@ def build_prompt(
     picture_block: str | None = None,
     book_block: str | None = None,
     dossier_block: str | None = None,
+    value_block: str | None = None,
 ) -> str:
     """Build the full prompt string sent to the reasoning backend.
 
@@ -489,6 +490,9 @@ def build_prompt(
         (:func:`src.claude.dossier_context.dossier_block`): each reviewed name's situation (kind,
         health, current story, dated events, key numbers; the full note adds a profile of
         general knowledge). Enrichment only.
+    value_block: optional pre-rendered ``=== VALUE NOTE ===`` block
+        (:func:`src.claude.value_context.load_value_block`): what the value book thinks of each
+        reviewed name it knows. Context only; it ends with its own rule line and moves no gate.
     """
     if not candidates:
         return ""
@@ -575,6 +579,10 @@ def build_prompt(
     # picture and the book, before the candidates it is about.
     if dossier_block:
         lines += [dossier_block, _NAME_NOTES_RULE, ""]
+
+    # What the value book thinks of the reviewed names it knows (context only, after the notes).
+    if value_block:
+        lines += [value_block, ""]
 
     lines.append("=== TRADE CANDIDATES ===")
 

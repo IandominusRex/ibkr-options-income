@@ -13,6 +13,7 @@ def build_roll_prompt(
     proposal: str | None = None,
     picture_block: str | None = None,
     dossier_block: str | None = None,
+    value_block: str | None = None,
 ) -> str:
     """Return the prompt string for a single-position roll/hold/close decision.
 
@@ -22,6 +23,7 @@ def build_roll_prompt(
     *picture_block* is the shared market picture, pre-rendered (``picture_context``): context for
     judging the proposal in today's market, never a way to change it. *dossier_block* is the
     rolled name's full dossier note (``dossier_context``): its situation, the same way.
+    *value_block* is the value book's note on the rolled name (``value_context``), context only.
     """
     right_label = pos.right.value if pos.right else "?"
     strategy = "Covered Call" if right_label == "C" else "Cash-Secured Put"
@@ -70,6 +72,9 @@ def build_roll_prompt(
 
     if dossier_block:
         lines += ["", dossier_block]
+
+    if value_block:
+        lines += ["", value_block]
 
     if proposal:
         lines += [
