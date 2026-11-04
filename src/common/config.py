@@ -1665,6 +1665,53 @@ class ValueReevaluationCfg(_ValueModel):
         return self
 
 
+_KILL_BOUNDS: dict[str, tuple[float, float]] = {
+    # spec §8.4: the menu's numeric predicates and the range Claude's threshold is held to
+    "revenue_growth_below": (-30.0, 10.0),  # latest fiscal year's revenue growth, percent
+    "net_debt_to_ebitda_above": (1.0, 6.0),
+    "dilution_above": (1.0, 10.0),  # diluted share count growth, percent a year
+    "gross_margin_below": (0.0, 90.0),  # latest fiscal year's gross margin, percent
+}
+
+
+class ValueClaudeRulesCfg(_ValueModel):
+    """Spec §8.2 and §8.4: the bounds Claude's valuation drivers are held to, the clamp on
+    Claude's fair value, the kill-trigger menu's threshold ranges and trigger 6's nearness.
+    Under ``rules:``, so every key is in the ruleset fingerprint (v4). Growth and margins are
+    fractions, like ``rules.valuation``; ``*_pts`` and ``*_pct`` are percent."""
+
+    clamp_multiple: float = 1.5  # Claude's fair value is capped at 1.5 x Python's
+    growth_floor: float = -0.10  # FCF/share growth, years 1-5: never below -10% ...
+    growth_cap: float = 0.30  # ... never above 30% ...
+    growth_over_realised: float = 0.05  # ... nor the realised 5-year CAGR + 5 points
+    terminal_min: float = 0.0
+    terminal_max: float = 0.025
+    discount_max: float = 0.12  # the floor is the list's Python rate (rules.valuation)
+    margin_band_pts: float = 5.0  # normalised FCF margin: +-5 points of the 5-year median
+    rote_band_pts: float = 4.0  # banks and insurers: sustainable ROTE +-4 points of the median
+    max_kill_triggers: int = 5
+    kill_bounds: dict[str, tuple[float, float]] = Field(default_factory=lambda: dict(_KILL_BOUNDS))
+    kill_near_pct: float = 10.0  # trigger 6: a predicate within 10% of its threshold
+
+    @model_validator(mode="after")
+    def _sane(self) -> ValueClaudeRulesCfg:
+        if self.clamp_multiple < 1.0:
+            raise ValueError("value rules.claude.clamp_multiple must be >= 1")
+        if not self.growth_floor < 0 < self.growth_cap or self.growth_over_realised < 0:
+            raise ValueError("value rules.claude: growth_floor < 0 < growth_cap")
+        if not 0 <= self.terminal_min <= self.terminal_max < self.discount_max:
+            raise ValueError("value rules.claude: 0 <= terminal_min <= terminal_max < discount_max")
+        if self.margin_band_pts <= 0 or self.rote_band_pts <= 0:
+            raise ValueError("value rules.claude: the margin and ROTE bands must be positive")
+        if not 1 <= self.max_kill_triggers <= 8 or not 0 < self.kill_near_pct < 100:
+            raise ValueError("value rules.claude: 1-8 kill triggers, kill_near_pct in (0, 100)")
+        if set(self.kill_bounds) != set(_KILL_BOUNDS):
+            raise ValueError(f"value rules.claude.kill_bounds keys are {sorted(_KILL_BOUNDS)}")
+        if any(lo >= hi for lo, hi in self.kill_bounds.values()):
+            raise ValueError("value rules.claude.kill_bounds: each low must be below its high")
+        return self
+
+
 class ValueRulesCfg(_ValueModel):
     """Every key that can change a verdict. Hashed into the ruleset fingerprint (spec §6.8)."""
 
@@ -1678,6 +1725,7 @@ class ValueRulesCfg(_ValueModel):
     timing: ValueTimingCfg = Field(default_factory=ValueTimingCfg)
     exits: ValueExitsCfg = Field(default_factory=ValueExitsCfg)
     reevaluation: ValueReevaluationCfg = Field(default_factory=ValueReevaluationCfg)
+    claude: ValueClaudeRulesCfg = Field(default_factory=ValueClaudeRulesCfg)
 
 
 class ValueUniverseCfg(_ValueModel):
@@ -1725,17 +1773,85 @@ class ValueServiceCfg(_ValueModel):
         return self
 
 
-class ValueCfg(_ValueModel):
-    """The value book (config/value.yaml). Parts 1-3: the scorecard, the shadow record and its
-    re-evaluations, nothing that trades."""
+class ValueClaudeModelsCfg(_ValueModel):
+    """Spec §8.5: a model per call kind; "" = ``claude.model``. A cheaper model takes a kind only
+    after it passes the blinded claim-level audit, recorded in STATUS.md."""
 
-    ruleset_version: str = "v3"
+    verdict: str = ""
+    filing: str = ""
+    review: str = ""
+
+
+class ValueClaudeBreakerCfg(_ValueModel):
+    """Spec §8.2's breaker: over the last ``sessions`` nightly runs, Claude's READY count above
+    ``ready_multiple`` x the baseline's (and at least ``min_ready``), or the 1.5x clamp binding on
+    more than ``clamp_rate_pct`` of Claude's fair values, stops Claude's verdict applying until
+    the operator resets it (``python -m scripts.value_claude --reset-breaker``)."""
+
+    sessions: int = 20
+    ready_multiple: float = 3.0
+    min_ready: int = 5  # a handful of READYs never trips it while the baseline has none
+    clamp_rate_pct: float = 25.0
+    min_values: int = 8  # the clamp rate is read over at least this many fair values
+
+
+def _outside_repo(v: str, key: str) -> str:
+    p = Path(v).expanduser()
+    if not p.is_absolute():
+        raise ValueError(f"{key} must be absolute or start with ~")
+    if p.resolve() == ROOT or ROOT in p.resolve().parents:
+        raise ValueError(f"{key} must be outside the repo: claude would load the repo's CLAUDE.md")
+    return v
+
+
+class ValueClaudeCfg(_ValueModel):
+    """Spec §8: Claude as the analyst (``src/value_ai/``). Operational keys, not rules: they
+    decide when Claude reads and whether its verdict applies, never how a number is computed."""
+
+    enabled: bool = False  # Claude reads spend the subscription's tokens: on by the operator
+    apply_live: bool = False  # live: Claude's verdict and fair value are recorded, not applied
+    ollama_fallback: bool = False  # an Ollama reply is stored labelled, never effective
+    workdir: str = "~/.cache/ibkr-value-ai"  # outside the repo (cli.build_cmd's rule)
+    models: ValueClaudeModelsCfg = Field(default_factory=ValueClaudeModelsCfg)
+    effort: Literal["", "low", "medium", "high", "xhigh", "max"] = ""
+    timeout_seconds: float = 240.0
+    filing_timeout_seconds: float = 420.0
+    standard_reads_per_day: int = 15
+    deep_reads_per_day: int = 3
+    top_per_list: int = 15  # the automatic set: the top healthy names per list (trading)
+    stale_fv_pct: float = 5.0  # Python's fair value moved more than this: re-read the name
+    max_age_days: int = 30  # a verdict older than this is re-read when the budget allows
+    max_headlines: int = 12
+    breaker: ValueClaudeBreakerCfg = Field(default_factory=ValueClaudeBreakerCfg)
+
+    @field_validator("workdir")
+    @classmethod
+    def _workdir_outside_repo(cls, v: str) -> str:
+        return _outside_repo(v, "value claude.workdir")
+
+    @model_validator(mode="after")
+    def _sane(self) -> ValueClaudeCfg:
+        if self.timeout_seconds <= 0 or self.filing_timeout_seconds <= 0:
+            raise ValueError("value claude: timeouts must be positive")
+        if min(self.standard_reads_per_day, self.deep_reads_per_day, self.top_per_list) < 0:
+            raise ValueError("value claude: budgets must be >= 0")
+        if self.stale_fv_pct <= 0 or self.max_age_days < 1 or self.max_headlines < 0:
+            raise ValueError("value claude: stale_fv_pct > 0, max_age_days >= 1")
+        return self
+
+
+class ValueCfg(_ValueModel):
+    """The value book (config/value.yaml). Parts 1-4: the scorecard, the shadow record, its
+    re-evaluations and Claude as the analyst; nothing that trades."""
+
+    ruleset_version: str = "v4"
     db_url: str = "sqlite:///data/value.db"
     universe: ValueUniverseCfg = Field(default_factory=ValueUniverseCfg)
     ticker_file: ValueTickerFileCfg = Field(default_factory=ValueTickerFileCfg)
     research_sweep: ValueResearchSweepCfg = Field(default_factory=ValueResearchSweepCfg)
     service: ValueServiceCfg = Field(default_factory=ValueServiceCfg)
     rules: ValueRulesCfg = Field(default_factory=ValueRulesCfg)
+    claude: ValueClaudeCfg = Field(default_factory=ValueClaudeCfg)
 
 
 class _KeyedCfg(BaseModel):

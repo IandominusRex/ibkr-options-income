@@ -1,4 +1,4 @@
-"""config/value.yaml: the typed model, its committed example and the ruleset hash (Parts 1-3)."""
+"""config/value.yaml: the typed model, its committed example and the ruleset hash (Parts 1-4)."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def test_the_example_spells_out_exactly_the_model_defaults() -> None:
 
 def test_get_config_loads_the_value_block() -> None:
     cfg = get_config().value
-    assert cfg.ruleset_version == "v3"
+    assert cfg.ruleset_version == "v4"
     assert cfg.rules.margin_of_safety.deep_value[MarketRegime.NORMAL] == 25.0
     assert cfg.rules.margin_of_safety.quality_growth[MarketRegime.CRISIS] == 25.0
     assert cfg.rules.valuation.discount_rate_growth == 0.08
@@ -65,7 +65,7 @@ def test_a_frozen_version_refuses_rules_that_no_longer_match(monkeypatch) -> Non
     monkeypatch.setitem(FROZEN, "v9", "000000000000")
     with pytest.raises(ValueError, match="frozen"):
         ruleset_id(ValueCfg(ruleset_version="v9"))
-    assert ruleset_id(ValueCfg()) == ("v3", ruleset_hash(ValueCfg().rules))
+    assert ruleset_id(ValueCfg()) == ("v4", ruleset_hash(ValueCfg().rules))
 
 
 def _hash_without(*blocks: str) -> str:
@@ -76,20 +76,49 @@ def _hash_without(*blocks: str) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
 
 
-def test_v1_and_v2_stay_pinned_and_v3_is_frozen() -> None:
-    """Part 1 froze v1 (the entry rules); Part 2 froze v2 = v1 + the exit rules; Part 3 froze
-    v3 = v2 + the re-evaluation rules, before the first re-evaluation (spec §7.1)."""
+def test_v1_to_v3_stay_pinned_and_v4_is_frozen() -> None:
+    """Part 1 froze v1 (the entry rules), Part 2 v2 (+ exits), Part 3 v3 (+ re-evaluation);
+    Part 4 froze v4 = v3 + Claude's bounds, before Claude's first read (spec §8.2)."""
     assert FROZEN["v1"] == "e1a1b3b096b1" and FROZEN["v2"] == "d07717fe5348"
-    assert FROZEN["v3"] == ruleset_hash(ValueCfg().rules)
-    assert ruleset_id(get_config().value) == ("v3", FROZEN["v3"])
+    assert FROZEN["v3"] == "ad8841127029"
+    assert FROZEN["v4"] == ruleset_hash(ValueCfg().rules)
+    assert ruleset_id(get_config().value) == ("v4", FROZEN["v4"])
 
 
-def test_v3_changes_no_entry_rule_and_no_exit_threshold() -> None:
-    """Without the reevaluation block the rules hash exactly as v2's; without exits too, as
-    v1's: no verdict and no exit threshold moves. Part 3's exit-engine changes are code, carried
-    by the version bump (an exit-logic change after the first live row needs one)."""
-    assert _hash_without("reevaluation") == FROZEN["v2"]
-    assert _hash_without("reevaluation", "exits") == FROZEN["v1"]
+def test_v4_changes_no_python_rule() -> None:
+    """Without the claude block the rules hash exactly as v3's, and so on down: no Python
+    verdict, exit threshold or re-evaluation threshold moves."""
+    assert _hash_without("claude") == FROZEN["v3"]
+    assert _hash_without("claude", "reevaluation") == FROZEN["v2"]
+    assert _hash_without("claude", "reevaluation", "exits") == FROZEN["v1"]
+
+
+def test_claudes_bounds_are_in_the_ruleset_and_its_switches_are_not() -> None:
+    """Spec §8.2: the bounds and the clamp are rules (a change is a version bump); whether
+    Claude reads, and whether its verdict applies in live, are not."""
+    cfg = ValueCfg()
+    assert cfg.rules.claude.clamp_multiple == 1.5
+    assert cfg.rules.claude.kill_bounds["dilution_above"] == (1.0, 10.0)
+    for change in ({"clamp_multiple": 1.4}, {"terminal_max": 0.03}, {"kill_near_pct": 5.0}):
+        moved = ValueCfg(**{"rules": {"claude": change}})
+        assert ruleset_hash(moved.rules) != ruleset_hash(cfg.rules)
+    switches = ValueCfg(**{"claude": {"enabled": True, "apply_live": True}})
+    assert ruleset_hash(switches.rules) == ruleset_hash(cfg.rules)
+    assert cfg.claude.enabled is False and cfg.claude.apply_live is False
+
+
+def test_nonsense_claude_keys_are_refused() -> None:
+    for bad in (
+        {"rules": {"claude": {"clamp_multiple": 0.9}}},
+        {"rules": {"claude": {"terminal_max": 0.13}}},
+        {"rules": {"claude": {"kill_bounds": {"revenue_growth_below": [5.0, 1.0]}}}},
+        {"rules": {"claude": {"kill_bounds": {"insider_selling": [1.0, 2.0]}}}},
+        {"claude": {"workdir": "data/value-ai"}},
+        {"claude": {"standard_reads_per_day": -1}},
+        {"claude": {"model": "opus"}},
+    ):
+        with pytest.raises(ValidationError):
+            ValueCfg(**bad)
 
 
 def test_the_reevaluation_rules_are_in_the_ruleset() -> None:

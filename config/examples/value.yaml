@@ -1,16 +1,18 @@
 # The value book (docs/superpowers/specs/2026-10-28-value-swing-book-design.md).
 #
-# Copy to config/value.yaml (git-ignored) to tune it. Parts 1-3 build the scorecard, the shadow
-# record and its re-evaluations only: nothing here can place, size or gate an order.
+# Copy to config/value.yaml (git-ignored) to tune it. Parts 1-4 build the scorecard, the shadow
+# record, its re-evaluations and Claude as the analyst: nothing here can place, size or gate an
+# order.
 #
 # Everything under `rules:` can change a verdict, so it is hashed into the ruleset fingerprint
 # (src/value/ruleset.py). Once `ruleset_version` is frozen, changing any rule is a version bump
 # with a written reason, at most quarterly. v1 (2026-10-29) froze the entry rules after the
 # calibration dry run; v2 (Part 2) adds `rules.exits` before the shadow ledger's first row and
 # changes no entry rule; v3 (Part 3) adds `rules.reevaluation` (spec §7.1) and the exit engine's
-# Part 3 rules (shock stops, the 8-K and going-concern thesis exits), and changes no entry rule.
+# Part 3 rules (shock stops, the 8-K and going-concern thesis exits), and changes no entry rule;
+# v4 (Part 4) adds `rules.claude` (spec §8.2, §8.4) and changes nothing else.
 
-ruleset_version: v3
+ruleset_version: v4
 db_url: sqlite:///data/value.db
 
 universe:
@@ -209,3 +211,48 @@ rules:
     quiet_days: 90           # 8: this many days with no re-evaluation (Minor)
     debounce_sessions: 3     # a trigger this close to an open re-evaluation joins it, unless Major
     down_shock_atr: 0.5      # full only: the stop rises to the shock low - 0.5 x ATR(14) before it
+
+  claude:                    # spec §8.2, §8.4: what Claude's analysis is held to (fractions)
+    clamp_multiple: 1.5      # Claude's fair value is capped at 1.5 x Python's
+    growth_floor: -0.10      # FCF/share growth, years 1-5 (fading to terminal over 6-10) ...
+    growth_cap: 0.30         # ... at most 30% ...
+    growth_over_realised: 0.05   # ... and at most the realised 5-year CAGR + 5 points
+    terminal_min: 0.0
+    terminal_max: 0.025
+    discount_max: 0.12       # the floor is the list's Python rate (9% deep, 8% growth)
+    margin_band_pts: 5.0     # normalised FCF margin: within 5 points of the 5-year median,
+                             # never above the 5-year best
+    rote_band_pts: 4.0       # banks and insurers: sustainable ROTE within 4 points of the median
+    max_kill_triggers: 5
+    kill_bounds:             # the menu's thresholds Claude picks within (percent; a multiple)
+      revenue_growth_below: [-30.0, 10.0]
+      net_debt_to_ebitda_above: [1.0, 6.0]
+      dilution_above: [1.0, 10.0]
+      gross_margin_below: [0.0, 90.0]
+    kill_near_pct: 10.0      # trigger 6: a chosen predicate within 10% of firing (Minor)
+
+claude:                      # spec §8: Claude as the analyst (src/value_ai/). Not rules: when
+                             # Claude reads and whether its verdict applies, never a number
+  enabled: false             # reads spend the subscription's tokens: the operator turns this on
+  apply_live: false          # live: recorded, not applied, until the go-live review (§8.2, §12)
+  ollama_fallback: false     # an Ollama reply is stored labelled and never decides anything
+  workdir: ~/.cache/ibkr-value-ai   # outside the repo: claude walks up from its cwd
+  models:                    # per call kind; "" = claude.model in settings.yaml (Sonnet)
+    verdict: ""
+    filing: ""
+    review: ""
+  effort: ""
+  timeout_seconds: 240.0
+  filing_timeout_seconds: 420.0
+  standard_reads_per_day: 15
+  deep_reads_per_day: 3
+  top_per_list: 15           # the automatic set: the top healthy names per list (trading)
+  stale_fv_pct: 5.0          # Python's fair value moved more than 5%: the name is re-read
+  max_age_days: 30           # a verdict older than this is re-read when the budget allows
+  max_headlines: 12
+  breaker:                   # §8.2: Claude's verdict stops applying until the operator resets it
+    sessions: 20
+    ready_multiple: 3.0      # Claude's READYs above 3 x the baseline's ...
+    min_ready: 5             # ... and at least 5
+    clamp_rate_pct: 25.0     # or the 1.5x clamp binding on more than 25% of Claude's values ...
+    min_values: 8            # ... read over at least 8 of them

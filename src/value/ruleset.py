@@ -18,7 +18,14 @@ from src.common.config import ValueCfg, ValueRulesCfg
 # v3 (Part 3): v2 unchanged, plus `rules.reevaluation` (spec §7.1), frozen before the first
 # re-evaluation; it also versions Part 3's exit-engine code (shock stops, the 8-K and
 # going-concern thesis exits, review minors M1 M5 M6 M14), which the hash cannot see.
-FROZEN: dict[str, str] = {"v1": "e1a1b3b096b1", "v2": "d07717fe5348", "v3": "ad8841127029"}
+# v4 (Part 4): v3 unchanged, plus `rules.claude` (spec §8.2 driver bounds and the 1.5x clamp,
+# §8.4 kill-trigger ranges, trigger 6's nearness), frozen before Claude's first read.
+FROZEN: dict[str, str] = {
+    "v1": "e1a1b3b096b1",
+    "v2": "d07717fe5348",
+    "v3": "ad8841127029",
+    "v4": "be30d1eaa915",
+}
 
 
 def ruleset_hash(rules: ValueRulesCfg) -> str:
