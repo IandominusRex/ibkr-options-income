@@ -132,17 +132,18 @@ class LedgerAnnotation:
 
 
 def _merge_book(books: Iterable[str]) -> str:
-    """One order's book from its executions: spreads, then system, else manual."""
+    """One order's book from its executions: spreads, then value, then system, else manual."""
     seen = set(books)
-    if "spreads" in seen:
-        return "spreads"
-    return "system" if "system" in seen else "manual"
+    for name in ("spreads", "value", "system"):
+        if name in seen:
+            return name
+    return "manual"
 
 
 def _book_name(value: str) -> LedgerBookName:
-    if value == "spreads":
-        return "spreads"
-    return "system" if value == "system" else "manual"
+    if value in ("spreads", "value", "system"):
+        return value  # type: ignore[return-value]
+    return "manual"
 
 
 def group_orders(execs: list[LedgerExec]) -> list[LedgerOrder]:
@@ -516,10 +517,13 @@ def build_stock_lots(
     lots: list[LedgerStockLot] = []
     disposals: list[LedgerStockDisposal] = []
     orphans: list[LedgerOrphan] = []
-    by_contract: dict[str, list[LedgerOrder]] = defaultdict(list)
+    # The value book's shares are matched among themselves: a value sale must never consume a
+    # wheel (assigned) lot, nor the reverse, so the two books' FIFO queues are kept apart. The
+    # disposals of both still feed the account's totals.
+    by_contract: dict[tuple[str, bool], list[LedgerOrder]] = defaultdict(list)
     for o in orders:
         if o.contract.sec_type == "STK":
-            by_contract[o.contract.ident].append(o)
+            by_contract[(o.contract.ident, o.book == "value")].append(o)
     for group in by_contract.values():
         queue: deque[LedgerStockLot] = deque()
         for o in sorted(group, key=lambda x: x.trade_time):
@@ -560,6 +564,7 @@ def build_stock_lots(
                 quantity=q,
                 remaining=q,
                 cost_per_share=basis,
+                book=_book_name(o.book),
             )
             lots.append(lot)
             queue.append(lot)
@@ -638,7 +643,8 @@ def _wheel_basis(
 
 
 def basis_walk(trades: list[LedgerTrade], lots: list[LedgerStockLot]) -> list[LedgerBasisPoint]:
-    open_lots = [lot for lot in lots if lot.remaining > _EPS]
+    # The wheel's cost basis: the value book's shares are not part of it (Part 6 ruling 22).
+    open_lots = [lot for lot in lots if lot.remaining > _EPS and lot.book != "value"]
     shares = sum(lot.remaining for lot in open_lots)
     if shares <= _EPS:
         return []
@@ -705,14 +711,18 @@ def build_tickers(
         units = [legs for legs, counts in _stat_units(ts, pairs) if counts]
         unit_net = [sum(x.net_pnl or 0.0 for x in legs) for legs in units]
         unit_premium = [sum(x.premium for x in legs) for legs in units]
-        sym_lots = [lot for lot in lots if lot.underlying == sym]
+        every_lot = [lot for lot in lots if lot.underlying == sym]
+        # The wheel's own shares and cost basis: the value book's lots are not part of them
+        # (Part 6 ruling 22; matches src/storage/wheel_shares). The disposals of both books still
+        # count in ``stock_realized`` and in the account summary, which is the account's truth.
+        sym_lots = [lot for lot in every_lot if lot.book != "value"]
         open_lots = [lot for lot in sym_lots if abs(lot.remaining) > _EPS]
         shares = sum(lot.remaining for lot in open_lots)
         currency = (
             ts[0].currency
             if ts
-            else sym_lots[0].currency
-            if sym_lots
+            else every_lot[0].currency
+            if every_lot
             else next(c.currency for c in income if c.underlying == sym)
         )
         option_net = sum(t.net_pnl for t in closed if t.net_pnl is not None)

@@ -2280,7 +2280,7 @@ export interface components {
          * @description Every intent the web layer can enqueue. Later milestones register handlers.
          * @enum {string}
          */
-        CommandKind: "approve" | "reject" | "promote" | "roll_request" | "halt" | "resume" | "set_autonomy" | "set_roll_mode" | "set_income_target" | "universe_add" | "universe_remove" | "refresh" | "ledger_import" | "ledger_annotate" | "ledger_ca_reviewed" | "news_brief";
+        CommandKind: "approve" | "reject" | "promote" | "roll_request" | "halt" | "resume" | "set_autonomy" | "set_roll_mode" | "set_income_target" | "universe_add" | "universe_remove" | "refresh" | "ledger_import" | "ledger_annotate" | "ledger_ca_reviewed" | "news_brief" | "value_approve" | "value_reject" | "value_trim" | "value_snapshot" | "value_analyse" | "value_refresh";
         /** CommandRequest */
         CommandRequest: {
             kind: components["schemas"]["CommandKind"];
@@ -3399,6 +3399,12 @@ export interface components {
             remaining: number;
             /** Cost Per Share */
             cost_per_share: number;
+            /**
+             * Book
+             * @default manual
+             * @enum {string}
+             */
+            book: "system" | "manual" | "spreads" | "value";
         };
         /** LedgerSummary */
         LedgerSummary: {
@@ -3618,7 +3624,7 @@ export interface components {
              * Book
              * @enum {string}
              */
-            book: "system" | "manual" | "spreads";
+            book: "system" | "manual" | "spreads" | "value";
             /** Rolled From */
             rolled_from?: string | null;
             /** Rolled To */
@@ -3660,7 +3666,7 @@ export interface components {
             /** Outcome */
             outcome?: ("Open" | "Pending" | "Expired" | "Assigned" | "Called away" | "Exercised" | "Bought back" | "Sold" | "Rolled") | null;
             /** Book */
-            book?: ("system" | "manual" | "spreads") | null;
+            book?: ("system" | "manual" | "spreads" | "value") | null;
             /** Tag */
             tag?: string | null;
             /** Since */
@@ -6972,7 +6978,7 @@ export interface operations {
                 symbol?: string | null;
                 right?: ("C" | "P") | null;
                 outcome?: ("Open" | "Pending" | "Expired" | "Assigned" | "Called away" | "Exercised" | "Bought back" | "Sold" | "Rolled") | null;
-                book?: ("system" | "manual" | "spreads") | null;
+                book?: ("system" | "manual" | "spreads" | "value") | null;
                 tag?: string | null;
                 since?: string | null;
                 until?: string | null;
@@ -7010,7 +7016,7 @@ export interface operations {
                 symbol?: string | null;
                 right?: ("C" | "P") | null;
                 outcome?: ("Open" | "Pending" | "Expired" | "Assigned" | "Called away" | "Exercised" | "Bought back" | "Sold" | "Rolled") | null;
-                book?: ("system" | "manual" | "spreads") | null;
+                book?: ("system" | "manual" | "spreads" | "value") | null;
                 tag?: string | null;
                 since?: string | null;
                 until?: string | null;
@@ -7077,7 +7083,7 @@ export interface operations {
         parameters: {
             query?: {
                 days?: number;
-                book?: ("system" | "manual" | "spreads") | null;
+                book?: ("system" | "manual" | "spreads" | "value") | null;
                 symbol?: string | null;
                 limit?: number;
             };

@@ -1612,7 +1612,7 @@ class LedgerClose(BaseModel):
     codes: str
 
 
-LedgerBookName = Literal["system", "manual", "spreads"]
+LedgerBookName = Literal["system", "manual", "spreads", "value"]
 
 
 class LedgerTrade(BaseModel):
@@ -1681,6 +1681,7 @@ class LedgerStockLot(BaseModel):
     quantity: float  # signed quantity originally opened
     remaining: float
     cost_per_share: float  # commission-inclusive
+    book: LedgerBookName = "manual"  # "value" for shares the value book bought (Part 6)
 
 
 class LedgerStockDisposal(BaseModel):

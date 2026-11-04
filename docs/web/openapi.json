@@ -2574,7 +2574,8 @@
                   "enum": [
                     "system",
                     "manual",
-                    "spreads"
+                    "spreads",
+                    "value"
                   ],
                   "type": "string"
                 },
@@ -2768,7 +2769,8 @@
                   "enum": [
                     "system",
                     "manual",
-                    "spreads"
+                    "spreads",
+                    "value"
                   ],
                   "type": "string"
                 },
@@ -2957,7 +2959,8 @@
                   "enum": [
                     "system",
                     "manual",
-                    "spreads"
+                    "spreads",
+                    "value"
                   ],
                   "type": "string"
                 },
@@ -9097,6 +9100,17 @@
           "cost_per_share": {
             "type": "number",
             "title": "Cost Per Share"
+          },
+          "book": {
+            "type": "string",
+            "enum": [
+              "system",
+              "manual",
+              "spreads",
+              "value"
+            ],
+            "title": "Book",
+            "default": "manual"
           }
         },
         "type": "object",
@@ -9757,7 +9771,8 @@
             "enum": [
               "system",
               "manual",
-              "spreads"
+              "spreads",
+              "value"
             ],
             "title": "Book"
           },
@@ -9932,7 +9947,8 @@
                 "enum": [
                   "system",
                   "manual",
-                  "spreads"
+                  "spreads",
+                  "value"
                 ]
               },
               {
