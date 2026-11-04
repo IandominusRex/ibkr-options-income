@@ -762,6 +762,10 @@ class WatchdogCfg(BaseModel):
     # The news service (scripts/run_news.py) beats data/news.db's heartbeat every loop
     # iteration; checked only while news.enabled.
     news_max_age_minutes: int = 30
+    # The value service's nightly run (scripts/run_value.py): one must have finished within this
+    # many hours of the newest session close (it runs the next morning). Checked only while the
+    # private config/value.yaml exists (Part 6, ruling 15).
+    value_grace_hours: int = 26
     realert_minutes: int = 60
     # Optional external dead-man switch (e.g. a healthchecks.io ping URL), GETed on every run
     # where every check passes — the only thing that can notice the Mac itself being off or

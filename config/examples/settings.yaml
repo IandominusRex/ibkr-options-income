@@ -439,6 +439,7 @@ watchdog:
   iv_max_stale_trading_days: 3
   eod_grace_minutes: 90          # scheduler.eod_report + this many minutes before eod_completed is checked
   news_max_age_minutes: 30       # news service heartbeat in data/news.db (checked only while news.enabled)
+  value_grace_hours: 26          # the value service's nightly run must finish within this many hours of the session close (checked only while config/value.yaml exists)
   realert_minutes: 60
   deadman_url: ""                # optional: e.g. a healthchecks.io ping URL — catches the Mac being off
 

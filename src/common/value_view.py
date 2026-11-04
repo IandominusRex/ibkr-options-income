@@ -413,6 +413,11 @@ def open_proposals() -> list[ProposalView] | None:
     return out
 
 
+def db_exists() -> bool:
+    """Whether value.db exists at all (the watchdog tells "never ran" from "has not finished")."""
+    return _path().exists()
+
+
 def last_nightly_run() -> datetime | None:
     """When the newest finished nightly run ended (naive UTC), or None: never ran, no value.db,
     or unreadable."""

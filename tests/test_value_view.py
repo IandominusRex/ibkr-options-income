@@ -180,3 +180,35 @@ def test_open_proposals_carry_the_fingerprint_a_tap_needs(value_book_db) -> None
     first = views[0]
     assert first.id == pending and first.needs_tap is True
     assert first.fingerprint == proposal_fingerprint(pending, "buy", "GOOGL", 10.0, NOW)
+
+
+def test_last_nightly_run_reads_only_finished_nightly_rows(
+    value_book_db, tmp_path, monkeypatch
+) -> None:
+    from datetime import datetime
+
+    from src.value.store import ValueRunRow
+
+    def run(kind: str, finished: datetime | None) -> None:
+        with value_session() as s:
+            s.add(
+                ValueRunRow(
+                    kind=kind,
+                    started_at=datetime(2026, 11, 1, 6, 0),
+                    finished_at=finished,
+                    as_of=date(2026, 10, 30),
+                    ruleset_version="v4",
+                    ruleset_hash="be30d1eaa915",
+                )
+            )
+
+    assert vv.last_nightly_run() is None  # no run at all
+    run("dry_run", datetime(2026, 11, 3, 9, 0))  # not a nightly
+    run("nightly", None)  # started, never finished
+    assert vv.last_nightly_run() is None
+    run("nightly", datetime(2026, 11, 2, 9, 5))
+    run("nightly", datetime(2026, 11, 3, 9, 7))
+    run("lookup", datetime(2026, 11, 4, 9, 0))
+    assert vv.last_nightly_run() == datetime(2026, 11, 3, 9, 7)
+    monkeypatch.setattr(vv, "_path", lambda: tmp_path / "absent.db")
+    assert vv.last_nightly_run() is None

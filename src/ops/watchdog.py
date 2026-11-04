@@ -108,6 +108,67 @@ def news_check(now: datetime, *, max_age_min: int) -> Check:
     return heartbeat_check("news", hb, now, max_age_min=max_age_min)
 
 
+def value_expected() -> bool:
+    """Whether the value service is expected to run: the operator's private ``config/value.yaml``
+    exists (a fork without the value book is never alerted). ``IBKR_CONFIG_USE_EXAMPLES=1`` (the
+    test suite) forces the shipped examples, so no private file is in play."""
+    import os
+
+    from src.common.config import CONFIG_DIR, USE_EXAMPLES_ENV
+
+    return os.environ.get(USE_EXAMPLES_ENV) != "1" and (CONFIG_DIR / "value.yaml").exists()
+
+
+def _words(delta: timedelta) -> str:
+    hours = int(delta.total_seconds() // 3600)
+    days, hours = divmod(hours, 24)
+    return f"{days}d {hours}h" if days else f"{hours}h"
+
+
+def value_check(now: datetime, *, grace_hours: int, expected: bool) -> Check | None:
+    """The value service's nightly run (Part 6, ruling 15). None when it is not expected to run.
+
+    A night must have finished after the newest trading session's close (16:00 ET) that is at
+    least *grace_hours* old: the night for session S runs the next morning, so with the default
+    26 hours the check allows for that run and a retry. Reads value.db through
+    ``src.common.value_view`` (``mode=ro``); a missing database is "never ran", not an exception.
+    """
+    if not expected:
+        return None
+    from src.common import value_view
+    from src.common.market_hours import is_trading_day
+
+    now_utc = (now if now.tzinfo else now.replace(tzinfo=UTC)).astimezone(UTC)
+    if not value_view.db_exists():
+        return Check("value", False, "value: data/value.db missing - the value service never ran")
+    close = None
+    day = now_utc.astimezone(_ET).date()
+    for _ in range(14):
+        if is_trading_day(day):
+            at = datetime(day.year, day.month, day.day, 16, 0, tzinfo=_ET)
+            if at + timedelta(hours=grace_hours) <= now_utc:
+                close = at
+                break
+        day -= timedelta(days=1)
+    last = value_view.last_nightly_run()
+    if last is None:
+        return Check(
+            "value",
+            False,
+            "value: data/value.db has no finished nightly run - the value service has not "
+            "completed a night",
+        )
+    finished = last.replace(tzinfo=UTC)
+    if close is not None and finished < close:
+        return Check(
+            "value",
+            False,
+            f"value: the last nightly run finished {_words(now_utc - finished)} ago, before the "
+            f"{close.date()} session's close + {grace_hours}h - the value service has missed a night",
+        )
+    return Check("value", True, "")
+
+
 def halt_check(*, halted: bool, source: str, reason: str, in_rth: bool) -> Check:
     """Fails during RTH while the kill switch is held by anything but the operator.
 
@@ -397,6 +458,10 @@ def run_checks(now: datetime, cfg: WatchdogCfg) -> list[Check]:
 
     if full_cfg.news.enabled:
         checks.append(news_check(now, max_age_min=cfg.news_max_age_minutes))
+
+    value = value_check(now, grace_hours=cfg.value_grace_hours, expected=value_expected())
+    if value is not None:
+        checks.append(value)
 
     if in_rth:
         checks.append(
