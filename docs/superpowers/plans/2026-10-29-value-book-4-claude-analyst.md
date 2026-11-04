@@ -110,6 +110,7 @@ is the executing agent's own model name.
 |---|---|---|---|---|---|
 | Section A entry | checks A0–A4 passed | 0 (branch `feat/value-book-4` at `da5d3c3`) | **baseline: pytest 5305 passed, 1 skipped**; ruff clean; mypy 325 source files; df 30 GiB free | 2026-11-04 | A3 line numbers matched exactly; v3 hash `ad8841127029` confirmed; no Part 4 code present. Section A exit target: baseline + 23 = 5328 passed, 1 skipped |
 | A1 (Task 1) ruleset v4 | done | `4757ffd` | task gate: 72 passed (config, dry-run, service, scorecard, private-config, config-keys); ruff check + format clean; mypy clean on `config.py`, `ruleset.py`; v4 hash printed `be30d1eaa915` | 2026-11-04 | No deviation from the task text; the diffs were applied with Edit (same content). `claude` workdir default `~/.cache/ibkr-value-ai` passes the outside-repo validator. Cost-if-wrong: none beyond ruling 1 (before the first v4 night, re-pin; after it, a v5). |
+| A2 (Task 2) shapes, scorecard inputs, Claude's fair value | done | `dc19945` | task gate: 65 passed (valuation, scorecard, shadow, service); ruff check + format clean on the 5 touched files; mypy clean on the 3 src files; the 8 + 1 new tests all pinned numbers matched first time | 2026-11-04 | No deviation. The scorecard's new `metrics` keys moved no verdict (shadow and service tests green). Cost-if-wrong: none. |
 
 ## Roadmap (this plan is Part 4 of 6)
 
@@ -978,7 +979,7 @@ the growth list give 69.06, below Python's 86.87, so nothing is capped. The bank
 5-year median ROTE of 14.03% and tangible book of $21.50 a share; ROTE 12%, terminal 2%, discount
 10% give (0.12 − 0.02) / (0.10 − 0.02) x 21.5 = 26.875.
 
-- [ ] **Step 1: Write the failing tests** — create `tests/test_value_claude_valuation.py`:
+- [x] **Step 1: Write the failing tests** — create `tests/test_value_claude_valuation.py`:
 
 ```python
 """Claude's fair value, computed and clamped by Python (value book spec §8.2)."""
@@ -1139,13 +1140,13 @@ index 06a7083..0d62ffa 100644
 +    assert m["gross_margin_latest"] == pytest.approx(0.6)
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_claude_valuation.py tests/test_value_scorecard.py`
   Expected: FAIL — `ModuleNotFoundError: No module named 'src.common.value_ai_types'` (collection
   error) and `KeyError: 'fcf_margin_median_5y'`.
 
-- [ ] **Step 3: The shapes** — create `src/common/value_ai_types.py`:
+- [x] **Step 3: The shapes** — create `src/common/value_ai_types.py`:
 
 ```python
 """Plain shapes between the value book and Claude (value book spec §8).
@@ -1323,7 +1324,7 @@ class AnalystResult(BaseModel):
     call: AnalystCall = Field(default_factory=AnalystCall)
 ```
 
-- [ ] **Step 4: The scorecard's inputs for Claude** — apply:
+- [x] **Step 4: The scorecard's inputs for Claude** — apply:
 
 ```diff
 diff --git a/src/value/scorecard.py b/src/value/scorecard.py
@@ -1387,7 +1388,7 @@ index 852a3d9..6ee8414 100644
              "metrics": metrics,
 ```
 
-- [ ] **Step 5: Claude's fair value** — create `src/value/claude_valuation.py`:
+- [x] **Step 5: Claude's fair value** — create `src/value/claude_valuation.py`:
 
 ```python
 """Claude's fair value, computed by Python (spec §8.2). Pure: no I/O.
@@ -1589,13 +1590,13 @@ def claude_fair_value(
     )
 ```
 
-- [ ] **Step 6: Run them to see them pass**
+- [x] **Step 6: Run them to see them pass**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_claude_valuation.py tests/test_value_scorecard.py tests/test_value_shadow.py tests/test_value_service.py`
   Expected: PASS (the scorecard's new metrics change no verdict: the shadow and service tests
   confirm).
 
-- [ ] **Step 7: Gates and commit**
+- [x] **Step 7: Gates and commit**
 
   Run: `.venv/bin/ruff check` and `.venv/bin/ruff format --check` on the five touched files;
   `.venv/bin/mypy src/common/value_ai_types.py src/value/scorecard.py src/value/claude_valuation.py`.
@@ -1628,7 +1629,7 @@ The nine pinned cases of `test_the_effective_verdict` are rulings 4 and 7 writte
 40 is Python WAIT (Python's ceiling 35.14); with Claude READY and a fair value of 60 the ceiling is
 45, so 40 is READY; with 50 the ceiling is 37.50 and 40 is WAIT; and so on.
 
-- [ ] **Step 1: Write the failing tests** — create `tests/test_value_effective.py`:
+- [x] **Step 1: Write the failing tests** — create `tests/test_value_effective.py`:
 
 ```python
 """The effective verdict: Python's baseline, then Claude's call (value book spec §6.7)."""
@@ -1722,13 +1723,13 @@ index cfce7ad..6ec2a64 100644
 +    } <= names
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_effective.py tests/test_value_store.py`
   Expected: FAIL — `ModuleNotFoundError: No module named 'src.value.effective'` and the missing
   tables.
 
-- [ ] **Step 3: The effective verdict** — create `src/value/effective.py`:
+- [x] **Step 3: The effective verdict** — create `src/value/effective.py`:
 
 ```python
 """The effective verdict (spec §6.7): Python's baseline, then Claude's call. Pure: no I/O.
@@ -1837,7 +1838,7 @@ def effective(
     )
 ```
 
-- [ ] **Step 4: Claude's tables** — apply:
+- [x] **Step 4: Claude's tables** — apply:
 
 ```diff
 diff --git a/src/value/store.py b/src/value/store.py
@@ -2023,12 +2024,12 @@ index 3edfe46..542a38d 100644
  
 ```
 
-- [ ] **Step 5: Run them to see them pass**
+- [x] **Step 5: Run them to see them pass**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_effective.py tests/test_value_store.py tests/test_value_fence.py`
   Expected: PASS.
 
-- [ ] **Step 6: Gates and commit**
+- [x] **Step 6: Gates and commit**
 
   Run: `.venv/bin/ruff check` and `.venv/bin/ruff format --check` on the four touched files;
   `.venv/bin/mypy src/value/effective.py src/value/store.py`.

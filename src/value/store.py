@@ -25,6 +25,21 @@ Part 3 (spec §7.1):
 - ``value_shadow_legs.plan`` / ``value_shadow_events.plan`` - ``main`` (the re-evaluated plan) or
   ``original`` (the twin carried untouched from the first trigger on); added to an existing
   value.db by ``init_value_db``.
+
+Part 4 (spec §8, Claude as the analyst). Claude's half of the ticker file, every table labelled
+``source = claude`` in spirit: read only by display code and Claude's prompts, except
+``value_claude_verdicts``, the one the gate (Part 5) reads:
+- ``value_claude_reads`` - every read: queued, then done / failed / skipped, with the model,
+  the backend, the cost, the prompt and the raw reply;
+- ``value_claude_verdicts`` - per read and list: Claude's verdict, its drivers after Python
+  clamped them, and the fair value Python computed and capped at 1.5x its own;
+- ``value_claude_notes`` - profile, why cheap, thesis, bear case, review state;
+- ``value_kill_triggers`` - the predicates Claude picked from the menu, and Python's last
+  evaluation of each;
+- ``value_claude_facts`` - facts Claude proposed from a filing, each with whether
+  ``grounding.py`` accepted it;
+- ``value_effective`` - the effective verdict per name and list, rewritten every night;
+- ``value_claude_state`` - small key/value state (the breaker).
 """
 
 from __future__ import annotations
@@ -246,6 +261,154 @@ class ValueReevaluationRow(ValueBase):
     ruleset_version: Mapped[str] = mapped_column(String(32))
     ruleset_hash: Mapped[str] = mapped_column(String(12))
     created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class ValueClaudeReadRow(ValueBase):
+    """One Claude read of one name (spec §8.3, §8.5). ``kind``: standard | filing | review;
+    ``reason``: request | review | filing | top | stale; ``status``: queued | done | failed |
+    skipped. ``backend`` ``ollama`` is stored labelled and never decides anything."""
+
+    __tablename__ = "value_claude_reads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    reason: Mapped[str] = mapped_column(String(16))
+    priority: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(16), default="queued")
+    detail: Mapped[str] = mapped_column(Text, default="")
+    requested_at: Mapped[datetime] = mapped_column(DateTime)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    fingerprint_key: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    accn: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    reevaluation_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    model: Mapped[str] = mapped_column(String(64), default="")
+    backend: Mapped[str] = mapped_column(String(8), default="cli")
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    error: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    prompt_version: Mapped[str] = mapped_column(String(32), default="")
+    prompt: Mapped[str] = mapped_column(Text, default="")
+    raw: Mapped[str] = mapped_column(Text, default="")
+
+    __table_args__ = (Index("ix_value_claude_reads_status", "status", "priority"),)
+
+
+class ValueClaudeVerdictRow(ValueBase):
+    """Claude's validated verdict on one list (spec §8.2, §8.3): a verdict from a fixed set,
+    the drivers after Python clamped them, and the fair value Python computed and capped. The
+    one Claude table the gate reads (spec §9.4, §16)."""
+
+    __tablename__ = "value_claude_verdicts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    read_id: Mapped[int] = mapped_column(Integer, index=True)
+    symbol: Mapped[str] = mapped_column(String(16))
+    list_name: Mapped[str] = mapped_column(String(16))
+    verdict: Mapped[str] = mapped_column(String(8))
+    why: Mapped[str] = mapped_column(Text, default="")
+    drivers_json: Mapped[str] = mapped_column(Text)
+    clamps_json: Mapped[str] = mapped_column(Text, default="[]")
+    fair_value: Mapped[float | None] = mapped_column(Float, nullable=True)  # capped: the one used
+    uncapped: Mapped[float | None] = mapped_column(Float, nullable=True)
+    python_fair_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    clamp_bound: Mapped[bool] = mapped_column(Boolean, default=False)
+    unreliable: Mapped[str | None] = mapped_column(Text, nullable=True)
+    accn: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    fingerprint_key: Mapped[str] = mapped_column(String(16))
+    backend: Mapped[str] = mapped_column(String(8))
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    superseded: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    __table_args__ = (Index("ix_value_claude_verdicts_key", "symbol", "list_name", "superseded"),)
+
+
+class ValueClaudeNoteRow(ValueBase):
+    """Claude's prose for one read (spec §8.1): display and Claude's own prompts only."""
+
+    __tablename__ = "value_claude_notes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    read_id: Mapped[int] = mapped_column(Integer, index=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    profile: Mapped[str] = mapped_column(Text, default="")
+    why_cheap: Mapped[str] = mapped_column(Text, default="")
+    thesis: Mapped[str] = mapped_column(Text, default="")
+    bear_case: Mapped[str] = mapped_column(Text, default="")
+    review_state: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    review_why: Mapped[str] = mapped_column(Text, default="")
+    backend: Mapped[str] = mapped_column(String(8))
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class ValueKillTriggerRow(ValueBase):
+    """A predicate Claude picked from the menu (spec §8.4); Python bounds its threshold and
+    evaluates it every night (``last_state``: fired | near | far | unknown)."""
+
+    __tablename__ = "value_kill_triggers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    read_id: Mapped[int] = mapped_column(Integer, index=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    kind: Mapped[str] = mapped_column(String(32))
+    threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
+    chosen_at: Mapped[datetime] = mapped_column(DateTime)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_state: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    last_actual: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_checked: Mapped[date | None] = mapped_column(Date, nullable=True)
+    fired_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+
+class ValueClaudeFactRow(ValueBase):
+    """A fact Claude proposed from a filing (spec §8.2 "Grounded facts") and whether
+    ``src/value/grounding.py`` accepted it. Only a grounded fact is ever read again."""
+
+    __tablename__ = "value_claude_facts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    read_id: Mapped[int] = mapped_column(Integer, index=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    accn: Mapped[str] = mapped_column(String(32))
+    kind: Mapped[str] = mapped_column(String(32))
+    value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    unit: Mapped[str] = mapped_column(String(16), default="")
+    quote: Mapped[str] = mapped_column(Text)
+    item: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    grounded: Mapped[bool] = mapped_column(Boolean)
+    why: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class ValueEffectiveRow(ValueBase):
+    """The effective verdict per name and list (spec §6.7), rewritten every night: what the
+    strip shows and Stage 3 acts on. ``decided_by`` is ``claude`` or ``python``."""
+
+    __tablename__ = "value_effective"
+
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
+    list_name: Mapped[str] = mapped_column(String(16), primary_key=True)
+    as_of: Mapped[date] = mapped_column(Date)
+    verdict: Mapped[str] = mapped_column(String(16))
+    decided_by: Mapped[str] = mapped_column(String(8))
+    python_verdict: Mapped[str] = mapped_column(String(16))
+    claude_verdict: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    verdict_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    fair_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_ceiling: Mapped[float | None] = mapped_column(Float, nullable=True)
+    margin_of_safety: Mapped[float | None] = mapped_column(Float, nullable=True)
+    mos_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class ValueClaudeStateRow(ValueBase):
+    """Small key/value state of Claude's side: the breaker (spec §8.2)."""
+
+    __tablename__ = "value_claude_state"
+
+    key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
 
 
 _engine: Engine | None = None

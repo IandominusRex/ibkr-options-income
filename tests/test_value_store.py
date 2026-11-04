@@ -169,3 +169,19 @@ def test_init_adds_the_plan_columns_to_a_part_2_database(tmp_path, monkeypatch) 
         assert s.scalars(select(ValueReevaluationRow)).first() is None
         assert s.scalars(select(ValueShadowEventRow)).first() is None
     store.reset_engine()
+
+
+def test_init_creates_claudes_tables(value_db) -> None:
+    """Part 4 (spec §8.3): Claude's half of the ticker file lives in its own tables."""
+    from sqlalchemy import inspect
+
+    names = set(inspect(store.get_value_engine()).get_table_names())
+    assert {
+        "value_claude_reads",
+        "value_claude_verdicts",
+        "value_claude_notes",
+        "value_kill_triggers",
+        "value_claude_facts",
+        "value_effective",
+        "value_claude_state",
+    } <= names
