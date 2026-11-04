@@ -130,6 +130,7 @@ is the executing agent's own model name.
 | Section C entry | checks C1–C2 passed | 8 commits on branch | pytest 5416 passed, 1 skipped (re-verified by orchestrator); ruff clean; mypy 341 files | 2026-11-04 | C2: `revenue_cagr_5y` at 291 as quoted; `queue_read` at 157 (plan said 152; Part 4's review fixes moved it, text unchanged); `src/value/risk.py` and `book.py` absent. Orchestrator notes for Section C from Section B's report: (1) fixture clocks — any test comparing the fixtures' `NOW` with the wall clock fails now that `NOW + 30h` is past; pin the clock (`cr.read_book(NOW)` style) in tests, never change the fixtures' NOW; (2) possible double count of released collateral between the runner's `needed_usd` and `_fund`'s fresh recompute — Task 8 must recompute from a fresh account each cycle and not subtract closes already reflected in it; flagged for the whole-branch review. Section C exit target: baseline 5393 + 62 = 5455 passed, 1 skipped |
 | Section D entry | checks D1–D2 passed | 12 commits on branch | pytest 5455 passed, 1 skipped (re-verified by orchestrator); ruff clean; mypy 348 files | 2026-11-04 | D2: all eight greps matched (`ParsedExecution` at 1521, plan said 1518; text unchanged). **Carry-over from Section C:** `src/value/stage3.py:71` has `# type: ignore[call-arg]` on `get_positions(ib, include_value=True)`; Task 11 adds that keyword and MUST delete the ignore (`warn_unused_ignores`). Section D exit target: baseline 5393 + 73 = 5466 passed, 1 skipped |
 | Section E entry | checks E1–E2 passed | 16 commits on branch | pytest 5466 passed, 1 skipped (re-verified by orchestrator); ruff clean; mypy 348 files | 2026-11-04 | E2: all nine greps matched (`CLAUDE.md` Part 1–4 line at 441, plan said 440; text unchanged). **Flagged for the whole-branch review:** (a) Section D ruling 4 — `wheel_view` reads value.db even with `value.book.enabled` false, so a present-but-unreadable value.db fails the wheel closed on every stock name (spec §9.2 fail-closed; reverse = one condition); (b) Section B/C — `capital_release._service` subtracts today's filled release closes from the stored `needed_usd` that `_fund` already rewrites net of them (under-serves a request, errs toward closing less); (c) Section B added an untested guard in `_service` limiting a set to the closes left today. Section E exit target: baseline 5393 + 77 = 5470 passed, 1 skipped |
+| Task 13 - the night's book step | done | `228dac2` (also commits the Section E entry row) | tests/test_value_stage3.py + test_value_service + test_value_shadow + test_value_claude + test_value_fence 75 passed (+1); ruff check/format and `mypy src/value/service.py` clean | 2026-11-04 | No deviation: the plan's test and code diffs applied cleanly at the E2 line numbers. Red run: collection `ImportError: cannot import name 'held_names'`. No circular import from `service` importing `live`/`sizing`/`book` (the fence suite, whose `sys.modules` probe loads no `ib_async`, stays green). `_book_night` runs only when `value.book.enabled` and hooks are passed, so with the book off the night is byte-for-byte the old one except that `held_names(vs)` (empty on a fresh db) joins the tags and the keep-fresh set (cost if wrong: none today) |
 | Section B exit | done | `f79efbd`, `2c0e6b9`, `cbe2fa3` + this docs(plan) commit (7 on the branch) | **full gate: pytest 5416 passed, 1 skipped (baseline 5393 + 23)**; `ruff check .` clean; `mypy src` 341 source files, no issues; `py_compile scripts/run_value.py` silent; protected-file diff empty; `git diff --stat main...HEAD -- web` lists only `web/lib/api-types.ts` (1 line); engine, sizer, profit-take and promote suites green | 2026-11-04 | Every edit outside `src/value`, `src/common`, `scripts`, `tests`, `config/examples`, `.env.example` and the docs is in E1-E3 and E5-E7 (`src/engine/{capital,risk_engine,regime_limits}.py`, `src/strategies/cash_secured_put.py`, `src/execution/{capital_release,position_manager}.py`, `src/notify/{approval_service,command_drain}.py`), plus Section A's `src/storage/wheel_shares.py`. The docs-trigger rows for the new module `src/execution/capital_release.py` (ARCHITECTURE.md folder guide, STATUS.md) are Task 15's, per the plan. Section C needs the operator's go-ahead |
 | Task 7 - the value gate and sizing | done | `b4f424c` (also commits the Section C entry row) | tests/test_value_risk.py 23 passed (+23); with test_value_scorecard and test_value_fence 65 passed; ruff check/format and `mypy src/value/{risk,sizing,scorecard}.py` clean | 2026-11-04 | No deviation: the plan's code applied as written. Red run: collection `ImportError: cannot import name 'sizing' from 'src.value'`. The scorecard gains `metrics["adv_dollar_20"]` (a plain pass-through of `inputs.price.adv_dollar_20`); the scorecard, ticker-file and fence suites stay green, and `adv_dollar_20` is not in the ruleset hash input (cost if wrong: none). Nothing calls `risk.validate` or `sizing` yet except Task 8 |
 | Task 8 - the book's rows, the executor, the night and the cycle | done | `6895151` | tests/test_value_live.py 14 passed (+14); with test_value_fence 31 passed; ruff check/format and `mypy src/value/{book,executor,live}.py` clean | 2026-11-04 | Red run: collection `ImportError: cannot import name 'book' from 'src.value'`; all 14 green on the first run of the code. **Two deviations, both harmless:** (1) `executor.send_order`'s closing `log.info` read `r.status` after its `with session()` block had closed; the status is now captured inside the block and logged from the local (cost if wrong: none, a log line). (2) **Double-count note (orchestrator note 2):** no code change in `_fund`/`buy_context`, both already do what the note asks: `ctx.gross_used` is built from this cycle's fresh broker snapshot (stock of both books + the CSP collateral still held + the other approved buys), and `_fund` recomputes `needed = cost - (room - gross_used)` from it every cycle and **overwrites** the stored `needed_usd`; it never subtracts a close made since, because a closed put is already out of the snapshot's collateral (docstrings say so). The double count the note flags lives on the other side, in Section B's `capital_release._service`, which subtracts today's filled release closes from the stored `needed_usd`: after a partial release, `_fund` has already rewritten `needed_usd` net of those closes and the runner subtracts them again, so it asks for too little; I left that file alone (Section B's, outside Section C). Cost if wrong: a request is under-served until the next cycle rewrites it, and the buy simply waits for room or lapses (errs toward closing less; no order is ever sent without the send-time room). Left for the whole-branch review. **Clock:** every time-sensitive call takes `NOW` as a parameter (`cycle(now=)`, `plan_night(now=)`, `decide(now=)`, `propose(now=)`); the wall clock appears only in `executor._now()` row timestamps, so no test needed pinning and the fixtures' `NOW` is untouched. Observation for the review (not changed): `_buy` gates at the ask and sends a mid `LimitOrder`, so the gate is the conservative side |
@@ -5979,8 +5980,8 @@ sections, `SETUP.md` §19, `STATUS.md`'s Part 4 entry, the spec's §9.3 and §14
 
 **Entry checks:**
 
-- [ ] **E1. Section D is in**, the gate green at baseline + 73.
-- [ ] **E2. The code Section E edits** (every line below is Part 4's text: re-grep the merged tree):
+- [x] **E1. Section D is in**, the gate green at baseline + 73.
+- [x] **E2. The code Section E edits** (every line below is Part 4's text: re-grep the merged tree):
 
   ```bash
   grep -nF '        for symbol in followed_names(vs, now, vcfg.ticker_file.follow_days):' src/value/service.py   # 180:   (Part 4)
@@ -6008,7 +6009,7 @@ sections, `SETUP.md` §19, `STATUS.md`'s Part 4 entry, the spec's §9.3 and §14
 `service.held_names(vs)`, `run_nightly(..., book=None)`; held names are scored (`held:trading`),
 kept fresh and read for filings; the summary gains `"book"`.
 
-- [ ] **Step 1: The failing test** — apply:
+- [x] **Step 1: The failing test** — apply:
 
 ```diff
 diff --git a/tests/test_value_stage3.py b/tests/test_value_stage3.py
@@ -6087,8 +6088,8 @@ index a7e7989..c870335 100644
      assert asyncio.run(notify.send(["Value book: test"])) == 0
 ```
 
-- [ ] **Step 2: Run it to see it fail** — `ImportError: cannot import name 'held_names'`.
-- [ ] **Step 3: The night** — apply:
+- [x] **Step 2: Run it to see it fail** — `ImportError: cannot import name 'held_names'`.
+- [x] **Step 3: The night** — apply:
 
 ```diff
 diff --git a/src/value/service.py b/src/value/service.py
@@ -6246,8 +6247,8 @@ index c384006..e45fb3a 100644
 +    return {**asdict(night), "trend_brake": brake, "mirrored": mirrored}
 ```
 
-- [ ] **Step 4: Run them to see them pass** — `tests/test_value_stage3.py tests/test_value_service.py tests/test_value_shadow.py tests/test_value_claude.py`.
-- [ ] **Step 5: Gates and commit:**
+- [x] **Step 4: Run them to see them pass** — `tests/test_value_stage3.py tests/test_value_service.py tests/test_value_shadow.py tests/test_value_claude.py`.
+- [x] **Step 5: Gates and commit:**
 
   ```bash
   git add src/value/service.py tests/test_value_stage3.py
@@ -6261,7 +6262,7 @@ index c384006..e45fb3a 100644
 **Files:** Modify `scripts/run_value.py`, `tests/test_value_fence.py`, `tests/test_value_stage3.py`;
 create `scripts/value_book.py`.
 
-- [ ] **Step 1: The failing tests** — apply:
+- [x] **Step 1: The failing tests** — apply:
 
 ```diff
 diff --git a/tests/test_value_fence.py b/tests/test_value_fence.py
@@ -6405,10 +6406,10 @@ index c870335..aee3ef1 100644
 +        assert s.scalars(select(ValueOrderRow)).one().avg_price == 15.0
 ```
 
-- [ ] **Step 2: Run them to see them fail** — `ModuleNotFoundError: No module named 'scripts.value_book'`
+- [x] **Step 2: Run them to see them fail** — `ModuleNotFoundError: No module named 'scripts.value_book'`
   and the entrypoint allowlist (it does not import the new modules yet: the test passes; the CLI
   test fails).
-- [ ] **Step 3: The entrypoint** — apply (never import it; `py_compile` it):
+- [x] **Step 3: The entrypoint** — apply (never import it; `py_compile` it):
 
 ```diff
 diff --git a/scripts/run_value.py b/scripts/run_value.py
@@ -6541,7 +6542,7 @@ index 79bd152..385afa3 100644
  
 ```
 
-- [ ] **Step 4: The CLI** — create `scripts/value_book.py`:
+- [x] **Step 4: The CLI** — create `scripts/value_book.py`:
 
 ```python
 """The operator's handle on the value book's money (spec §9; Part 5, paper only).
@@ -6635,8 +6636,8 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 5: Run them to see them pass** — `tests/test_value_stage3.py tests/test_value_fence.py tests/test_eval_skills.py tests/test_web_fence.py tests/test_spreads_fence.py`, and `py_compile` of the two scripts.
-- [ ] **Step 6: Gates and commit:**
+- [x] **Step 5: Run them to see them pass** — `tests/test_value_stage3.py tests/test_value_fence.py tests/test_eval_skills.py tests/test_web_fence.py tests/test_spreads_fence.py`, and `py_compile` of the two scripts.
+- [x] **Step 6: Gates and commit:**
 
   ```bash
   git add scripts/run_value.py scripts/value_book.py tests/test_value_fence.py tests/test_value_stage3.py

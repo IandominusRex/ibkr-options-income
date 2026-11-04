@@ -38,6 +38,8 @@ PURE = (
     "effective",
     "kill_triggers",
     "grounding",
+    "risk",
+    "sizing",
 )
 
 FORBIDDEN_FOR_VALUE = (
@@ -210,6 +212,12 @@ def test_only_src_value_constructs_value_rows() -> None:
         "ValueClaudeFactRow(",
         "ValueEffectiveRow(",
         "ValueClaudeStateRow(",
+        "ValueOrderRow(",
+        "ValuePositionRow(",
+        "ValueProposalRow(",
+        "ValueFundingRow(",
+        "ValueAttributionRow(",
+        "ValueBookStateRow(",
     )
     offenders = []
     for p in [*(ROOT / "src").rglob("*.py"), *(ROOT / "scripts").rglob("*.py")]:
@@ -281,6 +289,12 @@ def test_the_value_entrypoint_imports_only_its_feed_and_the_service() -> None:
         "src.value.claude_reads",
         "src.value.service",
         "src.value_ai.analyst",
+        # Part 5 (Stage 3): the trading side's switches, read for the night; the RTH cycle
+        "zoneinfo",
+        "src.common.market_hours",
+        "src.storage.system_settings",
+        "src.value.notify",
+        "src.value.stage3",
     )
     mods = imported_modules(ROOT / "scripts" / "run_value.py")
     extra = sorted(m for m in mods if not any(m == a or m.startswith(a + ".") for a in allowed))
@@ -388,3 +402,45 @@ def test_the_analyst_loads_no_wheel_layer_and_no_value_code() -> None:
     bad = [m for m in FORBIDDEN_FOR_VALUE_AI if _reaches(loaded, m)]
     assert bad == [] and not _reaches(loaded, "ib_async")
     assert not _reaches(loaded, "src.news.store.session")
+
+
+def test_the_wheel_reads_the_value_book_only_through_the_read_only_view() -> None:
+    """Spec §9.1-§9.2, §16 (Part 5): src/common/value_view.py opens value.db read-only with plain
+    SQL and imports nothing of the value book, and it (with src.common.books) is the only way the
+    engine, execution, strategies and the IBKR readers learn of the book."""
+    mods = imported_modules(ROOT / "src" / "common" / "value_view.py")
+    assert {m.split(".")[0] for m in mods} <= {
+        "__future__",
+        "logging",
+        "sqlite3",
+        "dataclasses",
+        "datetime",
+        "pathlib",
+        "src",
+    }
+    assert all(_reaches({m}, "src.common.config") for m in mods if m.startswith("src."))
+    text = (ROOT / "src" / "common" / "value_view.py").read_text(encoding="utf-8")
+    assert "mode=ro" in text and "INSERT" not in text.upper().replace("INSERTED", "")
+    offenders = [
+        str(p.relative_to(ROOT))
+        for pkg in ("engine", "execution", "strategies", "ibkr", "notify", "orchestrator")
+        for p in sorted((ROOT / "src" / pkg).rglob("*.py"))
+        if "value_db_url" in p.read_text(encoding="utf-8")
+        or _reaches(imported_modules(p), "src.value")
+    ]
+    assert offenders == []  # no other way to the value database's path or code
+
+
+def test_the_money_modules_read_no_claude_prose_or_facts() -> None:
+    """Spec §9.4, §16: the gate and the book read what an LLM produced only as the effective
+    verdict and fair value Python computed and clamped; never notes, kill triggers or facts."""
+    prose = ("ValueClaudeNoteRow", "ValueKillTriggerRow", "ValueClaudeFactRow", "src.value_ai")
+    offenders = [
+        f"{name}: {word}"
+        for name in ("risk", "sizing", "book", "live", "executor", "stage3")
+        for word in prose
+        if word in (ROOT / "src" / "value" / f"{name}.py").read_text(encoding="utf-8")
+    ]
+    assert offenders == []
+    risk_mods = imported_modules(ROOT / "src" / "value" / "risk.py")
+    assert not _reaches(risk_mods, "src.value.store")  # the gate reads nothing itself

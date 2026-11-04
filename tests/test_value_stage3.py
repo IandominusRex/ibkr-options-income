@@ -10,10 +10,12 @@ from sqlalchemy import select
 
 from src.common.schemas import OptionRight, PositionSnapshot
 from src.value import live, notify
+from src.value.book import totals
 from src.value.service import held_names
 from src.value.stage3 import build_snapshot
 from src.value.store import (
     ValueClaudeReadRow,
+    ValueOrderRow,
     ValuePositionRow,
     ValueReevaluationRow,
     value_session,
@@ -89,3 +91,36 @@ def test_a_shadow_reevaluation_tonight_is_mirrored_onto_the_held_position(value_
 
 def test_the_notifier_logs_and_sends_nothing_without_a_token() -> None:
     assert asyncio.run(notify.send(["Value book: test"])) == 0
+
+
+def test_the_operator_cli_taps_clears_and_restates(value_book_db, capsys) -> None:
+    from scripts.value_book import main
+    from src.value.book import propose
+    from src.value.store import ValueAttributionRow
+
+    order("STDY", shares=20, filled=20, avg=30.0)
+    with value_session() as s:
+        pid = propose(
+            s,
+            kind="buy",
+            symbol="STDY",
+            list_name="deep_value",
+            shares=10,
+            price=30.0,
+            reason="tranche 2",
+            cause="python",
+            auto=False,
+            now=NOW,
+            ttl_hours=1e6,
+        ).id
+        s.add(
+            ValueAttributionRow(
+                symbol="STDY", broker=40, wheel=0, value_filled=20, state="frozen", updated_at=NOW
+            )
+        )
+    assert main(["--approve", str(pid), "--split", "STDY", "2:1", "--clear", "STDY"]) == 0
+    out = capsys.readouterr().out
+    assert f"proposal {pid}: approved" in out and "STDY: cleared" in out
+    with value_session() as s:
+        assert totals(s).names["STDY"].filled == 40.0
+        assert s.scalars(select(ValueOrderRow)).one().avg_price == 15.0
