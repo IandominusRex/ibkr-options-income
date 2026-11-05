@@ -1,7 +1,7 @@
 "use client";
 
 import { AssessedBrowser } from "@/components/options/AssessedBrowser";
-import { DrainWarning } from "@/components/options/ControlsStrip";
+import { DrainWarning } from "@/components/shell/DrainWarning";
 import { useControls } from "@/components/shell/BotCard";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { RefreshButton } from "@/components/shell/RefreshButton";

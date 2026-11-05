@@ -1,7 +1,7 @@
 "use client";
 
 import { AutonomyControl } from "@/components/options/AutonomyControl";
-import { DrainWarning } from "@/components/options/ControlsStrip";
+import { DrainWarning } from "@/components/shell/DrainWarning";
 import { HaltControl } from "@/components/options/HaltControl";
 import { RollModeControl } from "@/components/options/RollModeControl";
 import type { ControlsResponse } from "@/components/options/types";

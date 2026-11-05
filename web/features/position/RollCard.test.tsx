@@ -1,6 +1,11 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it } from "vitest";
+// test-query first: it registers the "@/lib/api" mock, which must be in place before anything that
+// imports apiFetch (lib/commands, RollCard) resolves.
 import { apiFetchMock, renderWithQuery } from "@/lib/test-query";
+import { ApiError } from "@/lib/api";
+import { savePersistedCommand } from "@/lib/commands";
 import { RollCard } from "./RollCard";
 
 const SYMBOL = "AAPL  261121P00180000";
@@ -104,5 +109,165 @@ describe("RollCard", () => {
     renderWithQuery(card, { "/options/controls": controls });
     expect(await screen.findByText("Roll alerts could not be loaded right now.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Propose a roll" })).toBeEnabled();
+  });
+});
+
+/**
+ * The roll flow's own cases, ported from the deleted Shorts table's suite (web overhaul Part 4,
+ * Task 6): RollCard is the live mount of useRollProposal, so these pin the confirm step, the
+ * receipt links, the in-flight lock, the 403 words, the live second confirmation and the reload
+ * persistence. They answer the /commands POSTs through apiFetchMock, as the cases above do.
+ */
+function mountRoll(
+  {
+    post = async () => command(),
+    polled = command(),
+  }: { post?: () => Promise<unknown>; polled?: unknown } = {},
+) {
+  apiFetchMock.mockImplementation(async (path: string, init?: RequestInit) => {
+    if (init?.method === "POST") {
+      if (path === "/commands") return post();
+      if (path.endsWith("/confirm")) return undefined;
+      throw new Error(`unexpected POST ${path}`);
+    }
+    if (path.startsWith("/options/shorts")) return shorts([]);
+    if (path.startsWith("/options/controls")) return controls;
+    if (path.startsWith("/commands/")) return polled;
+    throw new Error(`unexpected fetch ${path}`);
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={qc}>{card}</QueryClientProvider>);
+}
+
+const proposeButton = () => screen.findByRole("button", { name: "Propose a roll" });
+const proposeAndConfirm = async () => {
+  fireEvent.click(await proposeButton());
+  confirmDialog();
+};
+
+describe("RollCard - the roll flow (ported from the Shorts table)", () => {
+  it("renders one Propose a roll control", async () => {
+    mountRoll();
+    expect(await screen.findAllByRole("button", { name: "Propose a roll" })).toHaveLength(1);
+  });
+
+  it("the control's label says what it does (Propose a roll, not Roll)", async () => {
+    mountRoll();
+    expect(await proposeButton()).toBeInTheDocument();
+    // No bare "Roll" button: the copy must not imply the button rolls the position.
+    expect(screen.queryByRole("button", { name: "Roll" })).toBeNull();
+  });
+
+  it("the dialog states plainly: price a roll, raise for approval, nothing executes until approved", async () => {
+    mountRoll();
+    fireEvent.click(await proposeButton());
+    const summary = screen.getByTestId("confirm-summary").textContent ?? "";
+    expect(summary).toMatch(/price a roll/i);
+    expect(summary).toMatch(/approval/i);
+    expect(summary).toMatch(/nothing executes until/i);
+    // House style: no em dashes, no banned words.
+    expect(summary).not.toContain("\u2014");
+    for (const banned of ["seamless", "robust", "unlock", "elevate"]) {
+      expect(summary.toLowerCase()).not.toContain(banned);
+    }
+  });
+
+  it("roll_already_working links to the existing approval", async () => {
+    mountRoll({
+      post: async () =>
+        command({ status: "failed", result: { reason: "roll_already_working", detail: { approval_id: 77 } } }),
+    });
+    await proposeAndConfirm();
+    const link = (await screen.findByRole("link", { name: /roll already in flight/i })) as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/trades/77");
+  });
+
+  it("on success the receipt links to the new approval", async () => {
+    mountRoll({
+      post: async () => command({ status: "applied", result: { approval_id: 99, candidate_id: "abc" } }),
+    });
+    await proposeAndConfirm();
+    const link = (await screen.findByRole("link", { name: /view approval/i })) as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/trades/99");
+  });
+
+  it("the control is disabled while a roll command for that position is in flight", async () => {
+    let resolve: (v: unknown) => void = () => {};
+    mountRoll({ post: () => new Promise((r) => (resolve = r)) });
+    const button = await proposeButton();
+    fireEvent.click(button);
+    confirmDialog();
+    await waitFor(() => expect(button).toBeDisabled());
+    resolve(command());
+  });
+
+  it("renders a permission message on a 403, not a generic failure", async () => {
+    mountRoll({
+      post: async () => {
+        throw new ApiError(403, "forbidden");
+      },
+    });
+    await proposeAndConfirm();
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.getByRole("alert").textContent).toContain("permission");
+    expect(screen.getByRole("alert").textContent).not.toContain("could not be created");
+  });
+
+  describe("live-mode second confirmation", () => {
+    const live = () => command({ needs_confirmation: true, confirm_token: "tok-abc" });
+
+    it("renders the live step as a distinct, clearly labelled step, not a repeat", async () => {
+      mountRoll({ post: async () => live() });
+      fireEvent.click(await proposeButton());
+      const firstCopy = screen.getByRole("dialog").textContent ?? "";
+      confirmDialog();
+
+      const liveDialog = await screen.findByRole("dialog");
+      expect(liveDialog.textContent).toContain("LIVE");
+      expect(liveDialog.textContent).not.toBe(firstCopy);
+
+      confirmDialog();
+      await waitFor(() =>
+        expect(writes()).toContainEqual(["/commands/51/confirm", { confirm_token: "tok-abc" }]),
+      );
+    });
+
+    it("disables Propose a roll while the live confirmation dialog is open, before it is released", async () => {
+      // Regression: `inFlight` used to ignore `liveStep`, so the control stayed clickable during
+      // the window between the first confirm and the live release (no command id to poll yet).
+      mountRoll({ post: async () => live() });
+      await proposeAndConfirm();
+      await screen.findAllByText(/LIVE/);
+      expect(screen.getByRole("button", { name: "Propose a roll" })).toBeDisabled();
+    });
+
+    it("keeps the command pending (needs_confirmation) if the live step is cancelled", async () => {
+      mountRoll({ post: async () => live() });
+      await proposeAndConfirm();
+      await screen.findAllByText(/LIVE/);
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(writes().some(([path]) => String(path).endsWith("/confirm"))).toBe(false);
+      const receipt = await screen.findByTestId("command-receipt");
+      expect(receipt.getAttribute("data-state")).toBe("queued");
+    });
+  });
+
+  describe("reload persistence (localStorage)", () => {
+    it("restores an in-flight receipt from localStorage on a fresh mount", async () => {
+      savePersistedCommand(`short:${SYMBOL}`, command({ created: undefined }) as never);
+      mountRoll();
+      expect(await screen.findByTestId("command-receipt")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Propose a roll" })).toBeDisabled();
+    });
+
+    it("restores the live second-confirmation dialog from localStorage on a fresh mount", async () => {
+      savePersistedCommand(
+        `short:${SYMBOL}`,
+        command({ needs_confirmation: true, confirm_token: "tok-abc", created: undefined }) as never,
+      );
+      mountRoll();
+      const dialog = await screen.findByRole("dialog");
+      expect(dialog.textContent).toContain("LIVE");
+    });
   });
 });
