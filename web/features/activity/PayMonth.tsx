@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/Card";
 import { Meter } from "@/components/ui/Meter";
 import { StatusWord } from "@/components/ui/StatusWord";
 import { Stub, formatStubValue } from "@/components/ui/Stub";
-import { payStubLines } from "@/features/home/PayCard";
+import { payStubLines, valueBesideLines } from "@/features/home/PayCard";
 import type { MonthPay, MonthPayResponse } from "@/features/home/types";
 import { apiFetch } from "@/lib/api";
 import { UNKNOWN } from "@/lib/format";
@@ -68,6 +68,8 @@ export function PayMonth({
     ? payStubLines(pay).map((l) => (l.total && !isCurrent ? { ...l, label: "Net for the month" } : l))
     : [];
 
+  const beside = pay ? valueBesideLines(pay) : null;
+
   return (
     <Card aria-labelledby="pay-title">
       <MonthStepper month={month} current={current} floor={floor} onChange={onMonth} />
@@ -103,8 +105,15 @@ export function PayMonth({
             <Pace pay={pay} current={isCurrent} />
           </p>
           <Stub label={`${label} pay stub`} lines={lines} />
+          {beside && <Stub label={`${label} value book, realised`} lines={beside} />}
           {pay.n_opened === 0 && pay.n_closed === 0 && (
             <p className="mt-2 text-[0.8125rem] text-muted">Nothing was opened or closed in {label}.</p>
+          )}
+          {data!.value_available === false && (
+            <p className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.8125rem] text-muted">
+              <StatusWord tone="flag">Value book unavailable</StatusWord>
+              <span>The value book could not be read, so its sales are not counted here.</span>
+            </p>
           )}
           {data!.spreads_available === false && (
             <p className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.8125rem] text-muted">

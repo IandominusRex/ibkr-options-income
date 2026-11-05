@@ -11,14 +11,19 @@ import { formatStubValue } from "@/components/ui/Stub";
 import { apiFetch } from "@/lib/api";
 import { cellFigure, currentMonth, dayLabel, monthTitle, monthWeeks, shiftMonth } from "./calendar";
 import { tradeTitle } from "./trades";
-import type { DayTradesResponse, MonthCalendar, RealisedCalendarResponse } from "./types";
+import type { CalendarDay, DayTradesResponse, MonthCalendar, RealisedCalendarResponse } from "./types";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const EARLIEST_BACK = 24; // months of history the arrows walk through
 
 const tone = (v: number) => (v > 0 ? "text-gain" : v < 0 ? "text-loss" : "text-muted");
 
-function DayCloses({ date, onLeave }: { date: string; onLeave: () => void }) {
+/**
+ * What closed on one day. `valueDay` is the value book's part of that day's total, when it had a
+ * sale: the calendar's whole-account figure includes it, so it is named apart here, never left
+ * silently inside the options total.
+ */
+function DayCloses({ date, valueDay, onLeave }: { date: string; valueDay?: CalendarDay; onLeave: () => void }) {
   const { data, isError } = useQuery({
     queryKey: ["pnl", "day", "all", date],
     queryFn: () => apiFetch<DayTradesResponse>(`/pnl/day?date=${date}&strategy=all`),
@@ -27,6 +32,14 @@ function DayCloses({ date, onLeave }: { date: string; onLeave: () => void }) {
   return (
     <section aria-label={`What closed on ${dayLabel(date)}`} className="mt-4 border-t-2 border-dashed border-perforation pt-3">
       <h3 className="text-[0.8125rem] font-semibold text-muted">{dayLabel(date)}</h3>
+      {valueDay && (
+        <p className="mt-2 flex items-baseline justify-between gap-3 text-sm">
+          <span>Of this day&apos;s total, the value book</span>
+          <span className={clsx("tabular font-semibold", tone(valueDay.realized))}>
+            {formatStubValue(valueDay.realized, "signed-money")}
+          </span>
+        </p>
+      )}
       {isError && !data ? (
         <p className="mt-2 text-sm text-muted">That day's closes could not be loaded.</p>
       ) : !data ? (
@@ -38,6 +51,7 @@ function DayCloses({ date, onLeave }: { date: string; onLeave: () => void }) {
           {closes.map((t) => (
             <li key={t.key} className="grid grid-cols-[1fr_auto] gap-x-3 border-t border-border py-2.5 text-sm first:border-t-0">
               <div className="min-w-0">
+                {t.kind === "value" && <div className="text-xs font-bold uppercase tracking-[0.04em] text-muted">Value book</div>}
                 <span className="font-bold">{tradeTitle(t)}</span>
                 {t.reason && <div className="text-[0.8125rem] text-muted">{t.reason}</div>}
               </div>
@@ -63,12 +77,15 @@ function Grid({
   cal,
   month,
   today,
+  valueByDate,
   selected,
   onSelect,
 }: {
   cal: MonthCalendar;
   month: string;
   today: string;
+  /** The value book's part of each day that had a sale (from the value-only calendar). */
+  valueByDate: Map<string, CalendarDay>;
   selected: string | null;
   onSelect: (d: string | null) => void;
 }) {
@@ -105,12 +122,13 @@ function Grid({
                 );
               }
               const on = selected === cell.date;
+              const book = valueByDate.get(cell.date);
               return (
                 <td key={j} className="h-[52px] align-top">
                   <button
                     type="button"
                     aria-pressed={on}
-                    aria-label={`${dayLabel(cell.date)}: ${formatStubValue(day.realized, "signed-money")} realised from ${day.n_closed} close${day.n_closed === 1 ? "" : "s"}`}
+                    aria-label={`${dayLabel(cell.date)}: ${formatStubValue(day.realized, "signed-money")} realised from ${day.n_closed} close${day.n_closed === 1 ? "" : "s"}${book ? `, of which the value book ${formatStubValue(book.realized, "signed-money")}` : ""}`}
                     onClick={() => onSelect(on ? null : cell.date)}
                     className={clsx(
                       "flex h-[52px] w-full flex-col items-start rounded-xl px-1 pt-1 text-left",
@@ -145,6 +163,16 @@ function CalendarBody({ now, onLeave }: { now?: Date; onLeave: () => void }) {
     queryKey: ["pnl", "calendar", month],
     queryFn: () => apiFetch<RealisedCalendarResponse>(`/pnl/calendar?month=${month}`),
   });
+  // The value book's part of the month, from the value-only calendar: the whole calendar above
+  // includes its sales, and nothing in it tells them apart. A response that is not the value-only
+  // one is not taken for it.
+  const valueQ = useQuery({
+    queryKey: ["pnl", "calendar", month, "value"],
+    queryFn: () => apiFetch<RealisedCalendarResponse>(`/pnl/calendar?month=${month}&strategy=value`),
+  });
+  const valueCal = valueQ.data?.calendar.strategy === "value" ? valueQ.data.calendar : null;
+  const valueByDate = new Map((valueCal?.days ?? []).map((d) => [d.date, d]));
+  const valueOut = data?.value_available === false;
   const go = (by: number) => {
     setSelected(null);
     setMonth((m) => shiftMonth(m, by));
@@ -199,14 +227,26 @@ function CalendarBody({ now, onLeave }: { now?: Date; onLeave: () => void }) {
                 </p>
               </>
             )}
+            {valueCal && valueCal.n_closed > 0 && (
+              <p className="tabular mt-0.5 text-[0.8125rem] text-muted">
+                Includes the value book: {formatStubValue(valueCal.total, "signed-money")} from {valueCal.n_closed} sale
+                {valueCal.n_closed === 1 ? "" : "s"}
+              </p>
+            )}
           </div>
-          <Grid cal={cal} month={month} today={today} selected={selected} onSelect={setSelected} />
-          {selected && <DayCloses date={selected} onLeave={onLeave} />}
+          <Grid cal={cal} month={month} today={today} valueByDate={valueByDate} selected={selected} onSelect={setSelected} />
+          {selected && <DayCloses date={selected} valueDay={valueByDate.get(selected)} onLeave={onLeave} />}
           <div className="mt-4 grid gap-2 text-[0.8125rem] text-muted">
             {!cal.complete && (
               <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <StatusWord tone="flag">Commissions incomplete</StatusWord>
                 <span>Some closes have no commission recorded yet, so those days are a little too high.</span>
+              </p>
+            )}
+            {valueOut && (
+              <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <StatusWord tone="flag">Value book unavailable</StatusWord>
+                <span>The value book could not be read, so its sales are not counted.</span>
               </p>
             )}
             {data?.spreads_available === false && (
@@ -217,6 +257,7 @@ function CalendarBody({ now, onLeave }: { now?: Date; onLeave: () => void }) {
             )}
             <p>
               Each day is what closed that day, after commissions: options and credit spreads. Share sales are not included, and a day nothing closed is blank.
+              The one exception is the value book: its sales count on the day they fill, and a tapped day names them apart.
             </p>
           </div>
         </>

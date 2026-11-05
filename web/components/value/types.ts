@@ -5,6 +5,7 @@ type Schemas = components["schemas"];
 
 export type ValueBook = Schemas["ValueBookResponse"];
 export type ValuePosition = Schemas["ValuePositionOut"];
+export type ValuePositionsResponse = Schemas["ValuePositionsResponse"];
 export type ValueProposal = Schemas["ValueProposalOut"];
 export type ValueFunding = Schemas["ValueFundingOut"];
 export type ValueBreakers = Schemas["ValueBreakersOut"];

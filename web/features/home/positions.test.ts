@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPositionRows, matchesQuery, optionSlug } from "./positions";
+import { buildPositionRows, buildValueRows, matchesQuery, optionSlug } from "./positions";
 
 const TODAY = "2026-10-13";
 
@@ -152,5 +152,40 @@ describe("matchesQuery", () => {
   it("an empty search matches everything", () => {
     expect(names("")).toHaveLength(3);
     expect(names("  ,  ")).toHaveLength(3);
+  });
+});
+
+describe("buildValueRows", () => {
+  const vp = (over: Record<string, unknown> = {}) => ({
+    id: 1, symbol: "AAPL", list_name: "deep_value", status: "open" as const, shares: 10, avg_cost: 170, mark: 180,
+    next_exit: { kind: "stop" as const, level: 150 }, ...over,
+  });
+  it("builds one value row a position with the open P&L worked from the mark and the average cost", () => {
+    const [row] = buildValueRows([vp()]);
+    expect(row).toMatchObject({ kind: "value", underlying: "AAPL", title: "AAPL · 10 shares", value: 100, valueLabel: "open P&L", href: null });
+    expect(row.sub).toBe("Deep value · average cost $170.00 · next exit: stop at $150.00");
+    expect(row.status).toBeNull();
+  });
+  it("leaves out a closed position and leaves the P&L unknown when the cost or the mark is", () => {
+    const rows = buildValueRows([vp({ id: 1, status: "closed" }), vp({ id: 2, mark: null })]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].value).toBeNull();
+  });
+  it("keeps the wheel's share row on the same name as a separate row", () => {
+    const wheel = buildPositionRows(
+      [
+        group("AAPL", [], {
+          as_of: "", shares: 100, avg_cost: 150, adjusted_cost_basis: null, market_price: null, market_value: null,
+          unrealized_pnl: 10, unrealized_pnl_adjusted: null,
+        }),
+      ] as never,
+      [],
+      TODAY,
+    );
+    const book = buildValueRows([vp()]);
+    expect(wheel.map((r) => r.key)).toEqual(["AAPL:stock"]);
+    expect(book.map((r) => r.key)).toEqual(["value:1"]);
+    expect(wheel[0].title).toBe("AAPL · 100 shares");
+    expect(book[0].title).toBe("AAPL · 10 shares");
   });
 });

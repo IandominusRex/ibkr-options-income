@@ -1,5 +1,8 @@
 import type { StatusTone } from "@/components/ui/StatusWord";
 import type { PositionGroupData } from "@/components/portfolio/types";
+import { formatMoneyCell } from "@/lib/money";
+import { listWords, nextExitWords, sharesWord } from "@/components/value/format";
+import type { ValuePosition } from "@/components/value/types";
 import type { SpreadPosition } from "./types";
 
 /**
@@ -9,7 +12,7 @@ import type { SpreadPosition } from "./types";
  */
 export const FRESH_FOR_MINUTES = 30;
 
-export type PositionKind = "csp" | "cc" | "spread" | "shares" | "other";
+export type PositionKind = "csp" | "cc" | "spread" | "shares" | "value" | "other";
 
 export type PositionRow = {
   key: string;
@@ -150,4 +153,40 @@ export function buildPositionRows(
     });
   }
   return rows.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : a.title.localeCompare(b.title)));
+}
+
+/**
+ * The value book's open shares as rows of their own (`GET /value/positions`). They are never merged
+ * into the wheel's share row on the same name: the wheel's count comes from the ledger and the
+ * book's from its own positions, and the two stay apart (spec 9.2). No page opens behind a value
+ * row (the stock page is the wheel's), so `href` is null. An average cost, a mark or an exit level
+ * the book does not have reads in words or n/a, never $0.
+ */
+export function buildValueRows(positions: ValuePosition[]): PositionRow[] {
+  return positions
+    .filter((p) => p.status === "open")
+    .map((p) => {
+      const open = p.avg_cost != null && p.mark != null ? (p.mark - p.avg_cost) * p.shares : null;
+      const exit = nextExitWords(p.next_exit);
+      const parts = [
+        listWords(p.list_name),
+        p.avg_cost != null ? `average cost ${formatMoneyCell(p.avg_cost)}` : "average cost not recorded",
+        exit !== null ? `next exit: ${exit}` : "next exit not set",
+      ];
+      return {
+        key: `value:${p.id}`,
+        kind: "value" as const,
+        underlying: p.symbol,
+        href: null,
+        title: `${p.symbol} · ${sharesWord(p.shares)}`,
+        // The group heading says "Value book"; a word on every row would say it twice.
+        status: null,
+        alert: false,
+        sub: parts.join(" · "),
+        value: open,
+        valueLabel: "open P&L",
+        sortKey: "~",
+      };
+    })
+    .sort((a, b) => a.title.localeCompare(b.title));
 }

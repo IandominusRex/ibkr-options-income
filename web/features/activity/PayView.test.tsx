@@ -276,4 +276,33 @@ describe("PayView", () => {
     await setSince("2026-09-01");
     expect(screen.getByRole("button", { name: "Previous month" })).toBeDisabled();
   });
+  describe("the value book", () => {
+    it("lists the value book's realised result as its own line, beneath the net and apart from it", async () => {
+      serve(
+        monthBody(
+          { target_mode: "fixed", target_amount: 2000, target: 2000, progress_pct: 78.7, value_realised: 640, value_n_closed: 2 },
+          { value_available: true },
+        ),
+      );
+      const stub = await screen.findByRole("group", { name: /pay stub$/ });
+      expect(within(stub).getByText("Net so far").nextSibling).toHaveTextContent("+$1,574.00");
+      expect(within(stub).queryByText("Value book, realised")).toBeNull();
+      const beside = screen.getByRole("group", { name: /value book, realised$/ });
+      expect(within(beside).getByText("Value book, realised").nextSibling).toHaveTextContent("+$640.00");
+      // Options income only: the headline, the target and the progress do not take the sale.
+      expect(screen.getByText("of $2,000.00")).toBeInTheDocument();
+      expect(screen.getByText(/^79% of target/)).toBeInTheDocument();
+    });
+    it("adds no value line for a month with no sale", async () => {
+      serve(monthBody({ value_realised: null }, { value_available: true }));
+      await screen.findByRole("group", { name: /pay stub$/ });
+      expect(screen.queryByText("Value book, realised")).toBeNull();
+    });
+    it("flags an unread value book without hiding the options income", async () => {
+      serve(monthBody({}, { value_available: false }));
+      expect(await screen.findByText("Value book unavailable")).toBeInTheDocument();
+      expect(screen.getByText(/so its sales are not counted/)).toBeInTheDocument();
+      expect(screen.getByText("+$1,574.00", { selector: "span.whitespace-nowrap" })).toBeInTheDocument();
+    });
+  });
 });

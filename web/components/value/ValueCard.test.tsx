@@ -128,4 +128,9 @@ describe("ValueCard", () => {
     renderWithQuery(<ValueCard strategy="all" />, {});
     expect(await screen.findByText(/The value book could not be loaded/)).toBeInTheDocument();
   });
+  it("shows the card under the Value filter too, with the same book", async () => {
+    renderWithQuery(<ValueCard strategy="value" />, { "/value/book": book() });
+    expect(await screen.findByRole("heading", { name: "Value book" })).toBeInTheDocument();
+    expect(screen.getByText("Buy 20 AAPL")).toBeInTheDocument();
+  });
 });

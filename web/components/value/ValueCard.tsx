@@ -1,21 +1,20 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { Card } from "@/components/ui/Card";
 import { StatusWord } from "@/components/ui/StatusWord";
 import { Stub } from "@/components/ui/Stub";
-import { apiFetch } from "@/lib/api";
 import { UNKNOWN } from "@/lib/format";
 import { formatMoneyCell } from "@/lib/money";
 import type { StrategyFilter } from "@/lib/strategy";
+import { useValueBook } from "./useValueBook";
 import { ceilingSum, listWords, nextExitWords, sharesWord } from "./format";
 import type { ValueBook, ValueBreakers, ValuePosition } from "./types";
 import { ValueProposalRow } from "./ValueProposalRow";
 
-/** The strategy filters the card shows under. Section I adds "value". */
+/** The strategy filters the card shows under: the whole account, and the value book on its own. */
 function shownUnder(strategy: StrategyFilter): boolean {
-  return strategy === "all";
+  return strategy === "all" || strategy === "value";
 }
 
 function Hatched({ children }: { children: ReactNode }) {
@@ -163,11 +162,7 @@ function Body({ book }: { book: ValueBook }) {
 }
 
 function Loaded() {
-  const { data, isError } = useQuery({
-    queryKey: ["value", "book"],
-    queryFn: () => apiFetch<ValueBook>("/value/book"),
-    refetchInterval: 60_000,
-  });
+  const { data, isError } = useValueBook();
   if (!data) {
     return isError ? (
       <Card as="div">

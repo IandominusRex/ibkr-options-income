@@ -26,12 +26,22 @@ function spreadName(t: DayTrade): string {
   return `${t.strike}/${t.long_strike} ${t.right === "C" ? "call" : "put"} spread`;
 }
 
+/**
+ * A value-book fill is a share trade in the option card's shape (src/reporting/day.py): `strike` is
+ * the fill price, `contracts` the share count, `expiry` the fill's date, a buy is "opened" and a
+ * sale "closed". Nothing about an option applies to it.
+ */
+const isValue = (t: DayTrade) => t.kind === "value";
+const valueVerb = (t: DayTrade) => (t.action === "opened" ? "Bought" : "Sold");
+
 export function tradeEyebrow(t: DayTrade): string {
+  if (isValue(t)) return `${valueVerb(t)} · ${STRATEGY_EYEBROW.value}`;
   const kind = t.kind === "other" ? "Option" : STRATEGY_EYEBROW[t.kind];
   return `${ACTION_LABEL[t.action]} · ${kind}`;
 }
 
 export function tradeTitle(t: DayTrade): string {
+  if (isValue(t)) return `${valueVerb(t)} ${t.contracts} ${t.underlying}`;
   const isSpread = t.kind === "spread" && t.long_strike !== null;
   const contract = isSpread ? spreadName(t) : `$${t.strike} ${wordOf(t)}`;
   if (t.action === "opened") return `${t.underlying} · Sold ${contract}`;
@@ -52,6 +62,7 @@ export function tradeTitle(t: DayTrade): string {
 }
 
 export function tradeSentence(t: DayTrade): string {
+  if (isValue(t)) return t.reason ?? `${valueVerb(t)} ${t.contracts} ${t.underlying} at ${formatMoneyCell(t.strike)}.`;
   if (t.action !== "opened") return t.reason ?? "Closed.";
   const collect = t.premium === null ? "Premium not recorded." : `You collected ${formatMoneyCell(t.premium)}.`;
   if (t.kind === "spread") {
@@ -70,6 +81,32 @@ function perShare(total: number | null, contracts: number): string | null {
 }
 
 export function tradeStub(t: DayTrade): StubLineData[] {
+  if (isValue(t)) {
+    // No commission line: value.db records none, and a made-up $0 would be a lie.
+    const price: StubLineData = { label: "Price a share", value: t.strike, format: "money" };
+    return t.action === "opened"
+      ? [
+          price,
+          {
+            label: "Cost",
+            value: t.capital,
+            format: "money",
+            total: true,
+            explain: "The shares times the fill price. Commissions are not recorded for the value book.",
+          },
+        ]
+      : [
+          price,
+          {
+            label: "Realised P&L",
+            value: t.net_pnl,
+            format: "signed-money",
+            total: true,
+            explain:
+              "The proceeds less the average cost of what was held. Commissions are not recorded for the value book.",
+          },
+        ];
+  }
   const n = t.contracts;
   const contractsWord = `${n} contract${n === 1 ? "" : "s"}`;
   const feeLabel = (word: string) => (t.commissions_complete ? word : `${word} (incomplete)`);

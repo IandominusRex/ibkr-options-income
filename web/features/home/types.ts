@@ -23,7 +23,7 @@ export type AccountValueResponse = { as_of: string; series: AccountValueSeries }
 
 export type MonthPay = {
   month: string;
-  strategy: "all" | "csp" | "cc" | "spread";
+  strategy: "all" | "csp" | "cc" | "spread" | "value";
   premium_collected: number;
   bought_back: number;
   commissions: number;
@@ -40,6 +40,13 @@ export type MonthPay = {
   target: number | null;
   progress_pct: number | null;
   days_left: number;
+  /** The value book's realised result on sales this month; null when nothing was sold. Never part of `net`
+   *  under All (the income target counts options income only). */
+  value_realised?: number | null;
+  /** Null: value.db holds no commissions, so none are known. */
+  value_commissions?: number | null;
+  value_commissions_complete?: boolean;
+  value_n_closed?: number;
 };
 
 export type MonthPayResponse = {
@@ -48,6 +55,8 @@ export type MonthPayResponse = {
   pay: MonthPay;
   /** False when a spreads book is in scope but data/spreads.db could not be read. */
   spreads_available: boolean;
+  /** False when the value book is in scope but data/value.db could not be read. */
+  value_available?: boolean;
 };
 
 export type SpreadPosition = {
@@ -100,8 +109,8 @@ export type DayTrade = {
   key: string;
   action: DayTradeAction;
   how: DayTradeHow | null;
-  kind: "csp" | "cc" | "spread" | "other";
-  source: "wheel" | "spreads";
+  kind: "csp" | "cc" | "spread" | "value" | "other";
+  source: "wheel" | "spreads" | "value";
   underlying: string;
   right: "C" | "P" | null;
   strike: number;
@@ -133,9 +142,10 @@ export type DayTradesResponse = {
   as_of: string;
   date: string;
   book: "paper" | "live";
-  strategy: "all" | "csp" | "cc" | "spread";
+  strategy: "all" | "csp" | "cc" | "spread" | "value";
   trades: DayTrade[];
   spreads_available: boolean;
+  value_available?: boolean;
   previous_day?: string | null;
   next_day?: string | null;
 };
@@ -144,7 +154,7 @@ export type CalendarDay = { date: string; realized: number; n_closed: number; co
 
 export type MonthCalendar = {
   month: string;
-  strategy: "all" | "csp" | "cc" | "spread";
+  strategy: "all" | "csp" | "cc" | "spread" | "value";
   days: CalendarDay[];
   total: number;
   n_closed: number;
@@ -156,4 +166,5 @@ export type RealisedCalendarResponse = {
   book: "paper" | "live";
   calendar: MonthCalendar;
   spreads_available: boolean;
+  value_available?: boolean;
 };

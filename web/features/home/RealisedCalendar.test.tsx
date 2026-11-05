@@ -152,4 +152,79 @@ describe("RealisedCalendar", () => {
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
   });
+  describe("the value book", () => {
+    // The value-only calendar for the month: the same days, with only the book's sales in them.
+    const valueCal = (days: Array<[string, number, number]> = [["2026-10-14", 400, 1]]) =>
+      cal("2026-10", days, { strategy: "value" });
+    const withValue = (extra: Record<string, unknown> = {}) =>
+      serve({ "/pnl/calendar?month=2026-10&strategy=value": { ...valueCal(), value_available: true }, ...extra });
+    const sale = {
+      key: "value:8:sell:20261014T150000", action: "closed", how: null, kind: "value", source: "value", underlying: "GOOGL",
+      right: null, strike: 190, long_strike: null, expiry: "2026-10-14", contracts: 5, at: "2026-10-14T15:00:00Z", is_live: false,
+      premium: null, bought_back: null, commissions: null, commissions_complete: true, net_pnl: 400, capital: null, roc_pct: null,
+      annualized_pct: null, pct_kept: null, dte_at_open: null, days_held: null, reason: "Sold 5 GOOGL at $190.00: the stop was hit.",
+      facts: [], approval_id: null, review: null, rolled_to: null,
+    };
+
+    it("asks for the value-only calendar beside the whole one", async () => {
+      await openIt(withValue());
+      await screen.findByText("Realised in October");
+      expect(apiFetchMock.mock.calls.some((c) => c[0] === "/pnl/calendar?month=2026-10&strategy=value")).toBe(true);
+    });
+    it("says the month includes the value book, with its own figure and count, apart from the total", async () => {
+      const dialog = await openIt(withValue());
+      expect(await within(dialog).findByText("Includes the value book: +$400.00 from 1 sale")).toBeInTheDocument();
+      // The whole-account total is unchanged.
+      expect(within(dialog).getByText("+$12,514.18")).toBeInTheDocument();
+    });
+    it("names the value amount in the accessible name of a day that has a sale", async () => {
+      const dialog = await openIt(withValue());
+      expect(
+        await within(dialog).findByRole("button", { name: /Wed, Oct 14: \+\$12,400\.00 realised from 2 closes, of which the value book \+\$400\.00/ }),
+      ).toBeInTheDocument();
+      // A day with no sale keeps its plain name.
+      expect(within(dialog).getByRole("button", { name: /Fri, Oct 9: \+\$1,717\.88 realised from 3 closes$/ })).toBeInTheDocument();
+    });
+    it("shows the day's value-book part as its own labelled figure when the day is tapped", async () => {
+      const dialog = await openIt(
+        withValue({ "/pnl/day?date=2026-10-14": { ...dayDetail, date: "2026-10-14", trades: [sale] } }),
+      );
+      fireEvent.click(await within(dialog).findByRole("button", { name: /Wed, Oct 14/ }));
+      const section = await within(dialog).findByRole("region", { name: "What closed on Wed, Oct 14" });
+      expect(within(section).getByText("Of this day's total, the value book")).toBeInTheDocument();
+      expect(await within(section).findByText("Sold 5 GOOGL")).toBeInTheDocument();
+      expect(within(section).getAllByText("+$400.00").length).toBeGreaterThanOrEqual(2);
+      expect(within(section).getByText("Value book")).toBeInTheDocument();
+    });
+    it("adds nothing for a day that had no sale", async () => {
+      const dialog = await openIt(withValue());
+      fireEvent.click(await within(dialog).findByRole("button", { name: /Fri, Oct 9/ }));
+      const section = await within(dialog).findByRole("region", { name: "What closed on Fri, Oct 9" });
+      expect(within(section).queryByText("Of this day's total, the value book")).toBeNull();
+    });
+    it("adds no value sentence when the book sold nothing in the month", async () => {
+      const dialog = await openIt(
+        serve({ "/pnl/calendar?month=2026-10&strategy=value": { ...cal("2026-10", [], { strategy: "value" }), value_available: true } }),
+      );
+      await within(dialog).findByText("Realised in October");
+      expect(within(dialog).queryByText(/Includes the value book/)).toBeNull();
+    });
+    it("does not take a response that is not the value-only calendar for the book's share", async () => {
+      // The default fixture answers every path with the whole calendar, strategy "all".
+      const dialog = await openIt();
+      await within(dialog).findByText("Realised in October");
+      expect(within(dialog).queryByText(/Includes the value book/)).toBeNull();
+    });
+    it("flags an unread value book in words, rather than leaving the sales out unsaid", async () => {
+      const dialog = await openIt(
+        serve({ "/pnl/calendar?month=2026-10": { ...cal("2026-10", octDays), value_available: false } }),
+      );
+      expect(await within(dialog).findByText("Value book unavailable")).toBeInTheDocument();
+      expect(within(dialog).getByText(/The value book could not be read, so its sales are not counted/)).toBeInTheDocument();
+    });
+    it("states that the value book's sales count on the day they fill", async () => {
+      const dialog = await openIt(withValue());
+      expect(await within(dialog).findByText(/its sales count on the day they fill/)).toBeInTheDocument();
+    });
+  });
 });

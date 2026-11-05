@@ -12,19 +12,21 @@ import type { PositionsResponse } from "@/components/portfolio/types";
 import { apiFetch } from "@/lib/api";
 import { isStale } from "@/lib/money";
 import { STRATEGY_LABEL, type StrategyFilter } from "@/lib/strategy";
+import type { ValuePositionsResponse } from "@/components/value/types";
 import { PositionRowItem } from "./PositionRowItem";
-import { FRESH_FOR_MINUTES, buildPositionRows, matchesQuery, type PositionRow } from "./positions";
+import { FRESH_FOR_MINUTES, buildPositionRows, buildValueRows, matchesQuery, type PositionRow } from "./positions";
 import type { SpreadPositionsResponse } from "./types";
 
 type PositionsFilter = StrategyFilter | "shares";
 
-const FILTERS: PositionsFilter[] = ["all", "csp", "cc", "spread", "shares"];
+const FILTERS: PositionsFilter[] = ["all", "csp", "cc", "spread", "value", "shares"];
 const LABEL: Record<PositionsFilter, string> = { ...STRATEGY_LABEL, shares: "Shares" };
 const EMPTY: Record<PositionsFilter, string> = {
   all: "No open positions.",
   csp: "No cash-secured puts open.",
   cc: "No covered calls open.",
   spread: "No credit spreads open.",
+  value: "The value book holds no shares.",
   shares: "No shares held.",
 };
 
@@ -58,6 +60,13 @@ export function PositionsCard({ strategy }: { strategy: StrategyFilter }) {
     queryFn: () => apiFetch<SpreadPositionsResponse>("/spreads/positions?status=open"),
     refetchInterval: 60_000,
   });
+  // The value book's shares, a book of their own (GET /value/positions). Shown as a "Value book"
+  // group, never merged into the wheel's share row on the same name.
+  const value = useQuery({
+    queryKey: ["value", "positions", "open"],
+    queryFn: () => apiFetch<ValuePositionsResponse>("/value/positions?status=open"),
+    refetchInterval: 60_000,
+  });
   // Roll alerts the monitor fired (same key as the position page's Roll card). Unreadable means
   // no flag is shown; the rows themselves never depend on it.
   const shorts = useQuery({
@@ -71,16 +80,25 @@ export function PositionsCard({ strategy }: { strategy: StrategyFilter }) {
   const spreadsKnown = spreads.data?.available === true;
   const spreadsOut = spreads.isError || spreads.data?.available === false;
   const spreadRows = spreadsKnown ? spreads.data!.positions : [];
+  // The same for the value book: an unreadable book is not an empty one.
+  const valueKnown = value.data?.available === true;
+  const valueOut = value.isError || value.data?.available === false;
+  const valueRows = valueKnown ? buildValueRows(value.data!.positions ?? []) : [];
   const rows = positions.data
-    ? buildPositionRows(positions.data.groups, spreadRows, todayNewYork(), spreads.data?.underlying, alerted)
+    ? [...buildPositionRows(positions.data.groups, spreadRows, todayNewYork(), spreads.data?.underlying, alerted), ...valueRows]
     : [];
   // The search narrows first, so every chip's count says what that chip would show right now.
   const searched = rows.filter((r) => matchesQuery(r, query));
   const visible = searched.filter((r) => matches(r, filter));
+  const wheelRows = visible.filter((r) => r.kind !== "value");
+  const bookRows = visible.filter((r) => r.kind === "value");
   const options = FILTERS.map((f) => ({
     value: f,
     label: LABEL[f],
-    count: !positions.data || (f === "spread" && !spreadsKnown) ? null : searched.filter((r) => matches(r, f)).length,
+    count:
+      !positions.data || (f === "spread" && !spreadsKnown) || (f === "value" && !valueKnown)
+        ? null
+        : searched.filter((r) => matches(r, f)).length,
   }));
   const searching = query.trim() !== "";
 
@@ -90,6 +108,8 @@ export function PositionsCard({ strategy }: { strategy: StrategyFilter }) {
     if (searching) message = `No positions match "${query.trim()}".`;
     else if (filter === "spread" && spreadsOut) message = "Credit spreads are unavailable right now.";
     else if (filter === "spread" && spreads.isPending) message = "Loading credit spreads.";
+    else if (filter === "value" && valueOut) message = "The value book could not be read, so its shares are not listed.";
+    else if (filter === "value" && value.isPending) message = "Loading the value book.";
     else if (positions.data.source === "none" && filter !== "spread") message = "No positions captured yet.";
     else message = EMPTY[filter];
   }
@@ -159,11 +179,30 @@ export function PositionsCard({ strategy }: { strategy: StrategyFilter }) {
       ) : message !== null ? (
         <p className="py-3 text-sm text-muted">{message}</p>
       ) : (
-        <ul>
-          {visible.map((r) => (
-            <PositionRowItem key={r.key} row={r} />
-          ))}
-        </ul>
+        <>
+          {wheelRows.length > 0 && (
+            <ul>
+              {wheelRows.map((r) => (
+                <PositionRowItem key={r.key} row={r} />
+              ))}
+            </ul>
+          )}
+          {bookRows.length > 0 && (
+            <div className={wheelRows.length > 0 ? "mt-2 border-t border-border pt-2" : undefined}>
+              <h3 className="text-xs font-semibold tracking-[0.04em] text-muted">Value book</h3>
+              <ul>
+                {bookRows.map((r) => (
+                  <PositionRowItem key={r.key} row={r} />
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
+      {filter === "all" && valueOut && positions.data && (
+        <p className="border-t border-border pt-2.5 text-[0.8125rem] text-muted">
+          The value book could not be read, so its shares are not listed.
+        </p>
       )}
       {filter === "all" && spreadsOut && positions.data && (
         <p className="border-t border-border pt-2.5 text-[0.8125rem] text-muted">

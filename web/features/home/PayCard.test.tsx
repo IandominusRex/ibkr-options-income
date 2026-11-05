@@ -179,4 +179,105 @@ describe("PayCard", () => {
       expect(screen.queryByText(/Spread income is unavailable/)).toBeNull();
     });
   });
+  describe("the value book", () => {
+    const valuePay = (over: Record<string, unknown> = {}, valueAvailable = true) => ({
+      ...pay(
+        {
+          strategy: "value",
+          premium_collected: 0,
+          bought_back: 0,
+          commissions: 0,
+          net: 640,
+          n_opened: 0,
+          n_closed: 0,
+          progress_pct: null,
+          value_realised: 640,
+          value_commissions: null,
+          value_commissions_complete: false,
+          value_n_closed: 2,
+          ...over,
+        },
+      ),
+      value_available: valueAvailable,
+    });
+
+    it("shows only value lines under Value, with no target meter and a sentence saying why", async () => {
+      renderWithQuery(<PayCard strategy="value" />, { "/pnl/month": valuePay() });
+      const toggle = await screen.findByRole("button", { name: /October value book/ });
+      expect(within(toggle).getByText("+$640.00")).toBeInTheDocument();
+      expect(screen.queryByRole("progressbar")).toBeNull();
+      expect(screen.getByText("The income target counts options income only.")).toBeInTheDocument();
+      expect(screen.queryByText(/of target/)).toBeNull();
+      expect(screen.queryByRole("link", { name: /Set a target/ })).toBeNull();
+      fireEvent.click(toggle);
+      const stub = screen.getByRole("group", { name: "October value book stub" });
+      expect(within(stub).getByText("Value book, realised")).toBeInTheDocument();
+      expect(within(stub).queryByText("Premium collected")).toBeNull();
+      expect(within(stub).queryByText("Bought back")).toBeNull();
+    });
+    it("asks for the value strategy", async () => {
+      renderWithQuery(<PayCard strategy="value" />, { "/pnl/month": valuePay() });
+      await screen.findByRole("button", { name: /October value book/ });
+      expect(apiFetchMock.mock.calls.some((c) => c[0] === "/pnl/month?strategy=value")).toBe(true);
+    });
+    it("says commissions are not recorded rather than counting them as zero", async () => {
+      renderWithQuery(<PayCard strategy="value" />, { "/pnl/month": valuePay() });
+      fireEvent.click(await screen.findByRole("button", { name: /October value book/ }));
+      const stub = screen.getByRole("group", { name: "October value book stub" });
+      expect(within(stub).getByText("Commissions (not recorded)")).toBeInTheDocument();
+      expect(within(stub).getByText("n/a")).toHaveClass("hatch");
+    });
+    it("reads a month with no sale as a real zero, in words", async () => {
+      renderWithQuery(<PayCard strategy="value" />, {
+        "/pnl/month": valuePay({ net: 0, value_realised: null, value_n_closed: 0 }),
+      });
+      await screen.findByRole("button", { name: /October value book/ });
+      expect(screen.getByText("Nothing was sold from the value book in October.")).toBeInTheDocument();
+    });
+    it("keeps the value line apart from premium under All, and the meter's sum unchanged", async () => {
+      renderWithQuery(<PayCard strategy="all" />, {
+        "/pnl/month": { ...pay({ value_realised: 640, value_n_closed: 2 }), value_available: true },
+      });
+      const toggle = await screen.findByRole("button", { name: /October pay/ });
+      // Options income only: the net, the target and the progress are what they were without the book.
+      expect(within(toggle).getByText("+$1,413.60")).toBeInTheDocument();
+      expect(screen.getByText("71% of target · 18 days left")).toBeInTheDocument();
+      expect(screen.getByRole("progressbar", { name: "October target" })).toHaveAttribute("aria-valuenow", "71");
+      fireEvent.click(toggle);
+      const stub = screen.getByRole("group", { name: "October pay stub" });
+      expect(within(stub).getByText("Premium collected").nextSibling).toHaveTextContent("+$1,642.00");
+      expect(within(stub).getByText("Net so far").nextSibling).toHaveTextContent("+$1,413.60");
+      expect(within(stub).queryByText("Value book, realised")).toBeNull();
+      const beside = screen.getByRole("group", { name: "October value book, realised" });
+      expect(within(beside).getByText("Value book, realised").nextSibling).toHaveTextContent("+$640.00");
+    });
+    it("adds no value line under All when nothing was sold", async () => {
+      renderWithQuery(<PayCard strategy="all" />, { "/pnl/month": { ...pay({ value_realised: null }), value_available: true } });
+      fireEvent.click(await screen.findByRole("button", { name: /October pay/ }));
+      expect(screen.queryByText("Value book, realised")).toBeNull();
+    });
+    it("says the book could not be read under Value, with the net n/a and never $0", async () => {
+      renderWithQuery(<PayCard strategy="value" />, {
+        "/pnl/month": valuePay({ net: 0, value_realised: null, value_n_closed: 0 }, false),
+      });
+      const toggle = await screen.findByRole("button", { name: /October value book/ });
+      expect(screen.getByText("Value book unavailable")).toBeInTheDocument();
+      expect(screen.getByText(/could not be read/)).toBeInTheDocument();
+      expect(within(toggle).getByText("n/a")).toHaveClass("hatch");
+      expect(screen.queryByText("$0")).toBeNull();
+      expect(screen.queryByText(/Nothing was sold/)).toBeNull();
+    });
+    it("flags the unread book under All without hiding the options income", async () => {
+      renderWithQuery(<PayCard strategy="all" />, { "/pnl/month": { ...pay(), value_available: false } });
+      expect(await screen.findByText("Value book unavailable")).toBeInTheDocument();
+      const toggle = screen.getByRole("button", { name: /October pay/ });
+      expect(within(toggle).getByText("+$1,413.60")).toBeInTheDocument();
+      expect(screen.getByText(/so its sales are not counted/)).toBeInTheDocument();
+    });
+    it("stays quiet about the value book for a wheel strategy", async () => {
+      renderWithQuery(<PayCard strategy="csp" />, { "/pnl/month": { ...pay({ strategy: "csp" }), value_available: false } });
+      await screen.findByRole("button", { name: /October pay/ });
+      expect(screen.queryByText("Value book unavailable")).toBeNull();
+    });
+  });
 });

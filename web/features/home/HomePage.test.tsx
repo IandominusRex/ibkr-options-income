@@ -124,4 +124,48 @@ describe("HomePage", () => {
     expect(errors).toEqual([]);
     container.remove();
   });
+  describe("the Value kind", () => {
+    const proposal = (id: number, over: Record<string, unknown> = {}) => ({
+      id, kind: "buy", symbol: "GOOGL", list_name: "quality_growth", shares: 10, price: 180, reason: "tranche 1",
+      cause: "python", needs_tap: true, status: "pending", fingerprint: `fp${id}`, expires_at: "2099-01-01T00:00:00Z", ...over,
+    });
+    const book = (proposals: unknown[]) => ({
+      ...responses["/value/book"], available: true, enabled: true, ceiling_usd: 30000, used_usd: 0, proposals,
+    });
+
+    it("lists Value last in the switcher with the proposals waiting on a tap", async () => {
+      renderWithQuery(<HomePage />, {
+        ...responses,
+        "/value/book": book([proposal(1), proposal(2), proposal(3, { needs_tap: false, status: "approved" })]),
+      });
+      const switcher = await screen.findByRole("group", { name: "Strategy" });
+      const names = within(switcher).getAllByRole("button").map((b) => b.textContent);
+      expect(names[names.length - 1]).toMatch(/^Value/);
+      expect(await within(switcher).findByRole("button", { name: "Value 2" })).toBeInTheDocument();
+    });
+    it("shows no count when nothing waits on a tap, and none when the book cannot be read", async () => {
+      renderWithQuery(<HomePage />, { ...responses, "/value/book": book([proposal(1, { needs_tap: false, status: "approved" })]) });
+      const switcher = await screen.findByRole("group", { name: "Strategy" });
+      expect(await within(switcher).findByRole("button", { name: "Value" })).toBeInTheDocument();
+      cleanup();
+      renderWithQuery(<HomePage />, responses);
+      const again = await screen.findByRole("group", { name: "Strategy" });
+      expect(within(again).getByRole("button", { name: "Value" })).toBeInTheDocument();
+    });
+    it("writes value into the URL", async () => {
+      nav.replace.mockClear();
+      renderWithQuery(<HomePage />, responses);
+      const switcher = await screen.findByRole("group", { name: "Strategy" });
+      fireEvent.click(within(switcher).getByRole("button", { name: "Value" }));
+      expect(nav.replace).toHaveBeenCalledWith("/?strategy=value", { scroll: false });
+    });
+    it("shows the Value book card under Value, and points Needs you at it", async () => {
+      nav.params = new URLSearchParams("strategy=value");
+      renderWithQuery(<HomePage />, { ...responses, "/value/book": book([proposal(1)]) });
+      expect(await screen.findByRole("heading", { name: "Value book" })).toBeInTheDocument();
+      expect(await screen.findByText("Value proposals wait in the Value book card.")).toBeInTheDocument();
+      expect(screen.queryByText("Nothing needs you right now.")).toBeNull();
+      nav.params = new URLSearchParams();
+    });
+  });
 });

@@ -776,7 +776,12 @@ components/
   value/            The value book (value book Part 6, Section F). ValueCard (react-query on
                     GET /value/book, key ["value","book"]: the ceiling as a sum and a Stub, the
                     breakers as words, the held names with their next exit, the open proposals;
-                    shown on Home under All; `available: false` and `enabled: false` each read as a
+                    shown on Home under All and Value (Part 6, Section I added the Value filter: `lib/strategy.ts`
+                    has the `value` kind, label "Value", eyebrow "Value book", `WHEEL_FILTERS` for the pages
+                    that have no Value; `useValueBook` shares the query and `waitingOnTap` is the switcher's
+                    count; the Home cards read the value book through `strategy=value` on `/pnl/*` and
+                    `GET /value/positions`, show "Value book, realised" apart from the options net, and say
+                    an unread book in words); `available: false` and `enabled: false` each read as a
                     sentence, an unknown figure is a hatched n/a), ValueProposalRow (Review, lime,
                     only while a proposal waits on a tap, opening the sheet), ValueDecide (the
                     approve and reject flow, a NEW component that mirrors the shape of the protected

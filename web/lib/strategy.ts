@@ -1,20 +1,25 @@
-/** The three kinds of trade the console groups everything by (DESIGN.md Strategy switcher). */
-export type StrategyKind = "csp" | "cc" | "spread";
+/** The kinds of trade the console groups everything by (DESIGN.md Strategy switcher). */
+export type StrategyKind = "csp" | "cc" | "spread" | "value";
 export type StrategyFilter = "all" | StrategyKind;
 
-export const STRATEGY_FILTERS: StrategyFilter[] = ["all", "csp", "cc", "spread"];
+export const STRATEGY_FILTERS: StrategyFilter[] = ["all", "csp", "cc", "spread", "value"];
+
+/** The filters the wheel's own pages (Trades) offer: the value book has no proposals or history there. */
+export const WHEEL_FILTERS: StrategyFilter[] = STRATEGY_FILTERS.filter((f) => f !== "value");
 
 export const STRATEGY_LABEL: Record<StrategyFilter, string> = {
   all: "All",
   csp: "CSPs",
   cc: "CCs",
   spread: "Credit spreads",
+  value: "Value",
 };
 
 export const STRATEGY_EYEBROW: Record<StrategyKind, string> = {
   csp: "Cash-secured put",
   cc: "Covered call",
   spread: "Credit spread",
+  value: "Value book",
 };
 
 /**
@@ -36,8 +41,11 @@ export function kindOf(
   return null;
 }
 
-export function parseStrategyFilter(raw: string | null | undefined): StrategyFilter {
-  return (STRATEGY_FILTERS as string[]).includes(raw ?? "") ? (raw as StrategyFilter) : "all";
+export function parseStrategyFilter(
+  raw: string | null | undefined,
+  allowed: StrategyFilter[] = STRATEGY_FILTERS,
+): StrategyFilter {
+  return (allowed as string[]).includes(raw ?? "") ? (raw as StrategyFilter) : "all";
 }
 
 export function matchesFilter(kind: StrategyKind | null, filter: StrategyFilter): boolean {

@@ -170,3 +170,64 @@ describe("countByAction", () => {
     });
   });
 });
+
+// A value fill is a share trade in the option card's shape: `strike` is the fill price,
+// `contracts` the share count and `expiry` the fill's date (src/reporting/day.py _value_trade).
+describe("a value-book trade", () => {
+  const bought = (over: Partial<DayTrade> = {}) =>
+    trade({
+      key: "value:7:buy:20261015T144200",
+      action: "opened",
+      kind: "value",
+      source: "value",
+      right: null,
+      underlying: "GOOGL",
+      strike: 180.5,
+      expiry: "2026-10-15",
+      contracts: 10,
+      premium: null,
+      commissions: null,
+      capital: 1805,
+      approval_id: null,
+      reason: "Bought 10 GOOGL at $180.50: scaling in, tranche 1.",
+      ...over,
+    });
+  const sold = (over: Partial<DayTrade> = {}) =>
+    bought({
+      key: "value:8:sell:20261015T150000",
+      action: "closed",
+      contracts: 5,
+      strike: 190,
+      capital: null,
+      net_pnl: 47.5,
+      reason: "Sold 5 GOOGL at $190.00: the stop was hit.",
+      ...over,
+    });
+
+  it("is titled by what happened to the shares", () => {
+    expect(tradeTitle(bought())).toBe("Bought 10 GOOGL");
+    expect(tradeTitle(sold())).toBe("Sold 5 GOOGL");
+  });
+  it("is eyed as the value book, with the verb, not as an option", () => {
+    expect(tradeEyebrow(bought())).toBe("Bought · Value book");
+    expect(tradeEyebrow(sold())).toBe("Sold · Value book");
+  });
+  it("says it in the system's own sentence, and falls back to the fill when none was stored", () => {
+    expect(tradeSentence(bought())).toBe("Bought 10 GOOGL at $180.50: scaling in, tranche 1.");
+    expect(tradeSentence(sold({ reason: null }))).toBe("Sold 5 GOOGL at $190.00.");
+  });
+  it("sums a buy as the price and the cost, with no premium or commission line", () => {
+    const lines = tradeStub(bought());
+    expect(lines.map((l) => l.label)).toEqual(["Price a share", "Cost"]);
+    expect(lines[0].value).toBe(180.5);
+    expect(lines[1]).toMatchObject({ value: 1805, total: true });
+  });
+  it("sums a sale as the price and the realised result, which stays unknown rather than 0", () => {
+    expect(tradeStub(sold()).map((l) => l.label)).toEqual(["Price a share", "Realised P&L"]);
+    expect(tradeStub(sold())[1]).toMatchObject({ value: 47.5, total: true });
+    expect(tradeStub(sold({ net_pnl: null }))[1].value).toBeNull();
+  });
+  it("counts as opened when bought and closed when sold", () => {
+    expect(countByAction([bought(), sold(), sold()])).toEqual({ opened: 1, closed: 2, rolled: 0 });
+  });
+});

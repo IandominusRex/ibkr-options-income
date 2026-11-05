@@ -206,4 +206,93 @@ describe("TodayTrades", () => {
     await screen.findByRole("article");
     expect(screen.queryByText(/^Approved/)).toBeNull();
   });
+  describe("the value book", () => {
+    const valueBuy = trade({
+      key: "value:7:buy:20261015T144200",
+      kind: "value",
+      source: "value",
+      right: null,
+      underlying: "GOOGL",
+      strike: 180.5,
+      expiry: "2026-10-15",
+      contracts: 10,
+      premium: null,
+      commissions: null,
+      capital: 1805,
+      approval_id: null,
+      reason: "Bought 10 GOOGL at $180.50: Claude's verdict made it READY.",
+      facts: [
+        { label: "Rule", text: "Scaling in, tranche 1.", source: "system" },
+        { label: "Claude's call", text: "Claude's value work called for this buy; Python's gates still applied.", source: "claude" },
+      ],
+    });
+    const valueSale = trade({
+      key: "value:8:sell:20261015T150000",
+      action: "closed",
+      kind: "value",
+      source: "value",
+      right: null,
+      underlying: "GOOGL",
+      strike: 190,
+      expiry: "2026-10-15",
+      contracts: 5,
+      premium: null,
+      commissions: null,
+      capital: null,
+      net_pnl: 47.5,
+      approval_id: null,
+      reason: "Sold 5 GOOGL at $190.00: the stop was hit.",
+      facts: [{ label: "Rule", text: "The stop was hit.", source: "system" }],
+    });
+
+    it("lists a value fill as a trade card titled by what happened to the shares", async () => {
+      renderWithQuery(<TodayTrades strategy="all" />, { "/pnl/day": day([valueBuy, valueSale], { value_available: true }) });
+      expect(await screen.findByRole("heading", { name: "Bought 10 GOOGL" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Sold 5 GOOGL" })).toBeInTheDocument();
+      expect(screen.getByText("Bought · Value book")).toBeInTheDocument();
+      expect(screen.getByText("Bought 10 GOOGL at $180.50: Claude's verdict made it READY.")).toBeInTheDocument();
+    });
+    it("labels Claude's cause as Claude's, apart from the rule", async () => {
+      renderWithQuery(<TodayTrades strategy="value" />, { "/pnl/day": day([valueBuy], { strategy: "value", value_available: true }) });
+      const why = await screen.findByRole("button", { name: /Why it was bought/ });
+      expect(why).toHaveTextContent("the system's rules and Claude's view");
+      fireEvent.click(why);
+      expect(screen.getByText("Claude's call:")).toBeInTheDocument();
+      expect(screen.getByText("Rule:")).toBeInTheDocument();
+    });
+    it("says a rule-only sale is the system's rules alone, and shows the realised result in its stub", async () => {
+      renderWithQuery(<TodayTrades strategy="value" />, { "/pnl/day": day([valueSale], { strategy: "value", value_available: true }) });
+      const why = await screen.findByRole("button", { name: /Why it was sold/ });
+      expect(why).toHaveTextContent("the system's rules");
+      expect(why).not.toHaveTextContent("Claude");
+      const stub = screen.getByRole("group", { name: "GOOGL closed math" });
+      expect(within(stub).getByText("Realised P&L")).toBeInTheDocument();
+      expect(within(stub).getByText("+$47.50")).toBeInTheDocument();
+    });
+    it("has no Details link, since a value fill has no approval", async () => {
+      renderWithQuery(<TodayTrades strategy="value" />, { "/pnl/day": day([valueBuy], { strategy: "value" }) });
+      await screen.findByRole("heading", { name: "Bought 10 GOOGL" });
+      expect(screen.queryByRole("link", { name: "Details" })).toBeNull();
+    });
+    it("asks for the value strategy", async () => {
+      renderWithQuery(<TodayTrades strategy="value" />, { "/pnl/day": day([], { strategy: "value", value_available: true }) });
+      await screen.findByText("Nothing has traded yet today.");
+      expect(apiFetchMock.mock.calls.some((c) => c[0] === "/pnl/day?strategy=value")).toBe(true);
+    });
+    it("says the book could not be read under Value, never that nothing traded", async () => {
+      renderWithQuery(<TodayTrades strategy="value" />, { "/pnl/day": day([], { strategy: "value", value_available: false }) });
+      expect(await screen.findByText("The value book could not be read, so its trades are not listed.")).toBeInTheDocument();
+      expect(screen.queryByText("Nothing has traded yet today.")).toBeNull();
+    });
+    it("notes the unread book under All without hiding the option trades", async () => {
+      renderWithQuery(<TodayTrades strategy="all" />, { "/pnl/day": day([opened], { value_available: false }) });
+      expect(await screen.findByText("The value book could not be read, so its trades are not listed.")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "AAPL · Sold $180 put" })).toBeInTheDocument();
+    });
+    it("stays quiet about the value book for a wheel strategy", async () => {
+      renderWithQuery(<TodayTrades strategy="cc" />, { "/pnl/day": day([], { strategy: "cc", value_available: false }) });
+      await screen.findByText("Nothing has traded yet today.");
+      expect(screen.queryByText(/value book/i)).toBeNull();
+    });
+  });
 });

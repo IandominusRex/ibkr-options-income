@@ -16,9 +16,40 @@ import type { MonthPay, MonthPayResponse } from "./types";
 
 const MONTH = new Intl.DateTimeFormat("en-US", { month: "long", timeZone: "UTC" });
 
-/** `unknown` blanks every figure: a month whose only income source could not be read. */
-export function payStubLines(pay: MonthPay, unknown = false): StubLineData[] {
+/** The value book's own stub: what it sold, the commissions we know of (none are recorded) and the net. */
+function valueStubLines(pay: MonthPay, unknown: boolean): StubLineData[] {
+  const vc = pay.value_commissions ?? null;
+  const fees: StubLineData =
+    pay.value_commissions_complete === false
+      ? vc === null
+        ? {
+            label: "Commissions (not recorded)",
+            value: null,
+            format: "signed-money",
+            explain: "The value book's store holds no commission, so the net below is before them.",
+          }
+        : { label: "Commissions (incomplete)", value: unknown ? null : -vc, format: "signed-money" }
+      : { label: "Commissions", value: unknown ? null : -(vc ?? 0), format: "signed-money" };
   return [
+    {
+      label: "Value book, realised",
+      value: unknown ? null : (pay.value_realised ?? 0),
+      format: "signed-money",
+      explain: "Shares sold from the value book this month: the proceeds less the average cost of what was sold.",
+    },
+    fees,
+    { label: "Net so far", value: unknown ? null : pay.net, format: "signed-money", total: true },
+  ];
+}
+
+/**
+ * `unknown` blanks every figure: a month whose only income source could not be read. Under All the
+ * value book's realised result is its own line beneath the net, never part of it: a share sale is a
+ * capital gain and the target is the wheel's wage (plan ruling 26).
+ */
+export function payStubLines(pay: MonthPay, unknown = false): StubLineData[] {
+  if (pay.strategy === "value") return valueStubLines(pay, unknown);
+  const lines: StubLineData[] = [
     {
       label: "Premium collected",
       value: unknown ? null : pay.premium_collected,
@@ -40,6 +71,24 @@ export function payStubLines(pay: MonthPay, unknown = false): StubLineData[] {
         : "Some fills have no commission recorded yet, so this is a lower bound.",
     },
     { label: "Net so far", value: unknown ? null : pay.net, format: "signed-money", total: true },
+  ];
+  return lines;
+}
+
+/**
+ * Under All, the value book's realised result as a stub of its own beneath the pay stub, so it can
+ * never read as one more line of the sum above it. Null when the book sold nothing this month.
+ */
+export function valueBesideLines(pay: MonthPay, unknown = false): StubLineData[] | null {
+  if (unknown || pay.strategy === "value" || pay.value_realised == null) return null;
+  return [
+    {
+      label: "Value book, realised",
+      value: pay.value_realised,
+      format: "signed-money",
+      explain:
+        "Shares sold from the value book this month. A share sale is a capital gain, so it sits beside the net and is not added to it or to the target.",
+    },
   ];
 }
 
@@ -69,15 +118,21 @@ export function PayCard({ strategy }: { strategy: StrategyFilter }) {
   // A spreads book is in scope but data/spreads.db could not be read. Never show the wheel's
   // total as the whole month, and never show an unread spreads-only month as $0.
   const spreadsOut = data.spreads_available === false && (pay.strategy === "all" || pay.strategy === "spread");
-  const wholeUnknown = spreadsOut && pay.strategy === "spread";
+  const isValue = pay.strategy === "value";
+  // The same rule for the value book: an unread book is not a month of $0, and under All it is
+  // flagged without hiding the options income.
+  const valueOut = data.value_available === false && (pay.strategy === "all" || isValue);
+  const wholeUnknown = (spreadsOut && pay.strategy === "spread") || (valueOut && isValue);
+  const beside = valueBesideLines(pay, wholeUnknown);
   const net = wholeUnknown ? null : pay.net;
   // An unread spread-only month keeps its target (it comes from the account value, not the
   // spreads book); only the progress against it is unknown.
   const progress = wholeUnknown ? null : pay.progress_pct;
   const daysLeft = `${pay.days_left} ${pay.days_left === 1 ? "day" : "days"} left`;
-  const noTarget = pay.target_mode === "off";
-  const pace =
-    noTarget ? (
+  const noTarget = pay.target_mode === "off" && !isValue;
+  const pace = isValue ? (
+    "The income target counts options income only."
+  ) : noTarget ? (
       `No target set · ${daysLeft}`
     ) : pay.target === null ? (
       // The setting is there; the account value at the month's start is not (the first month
@@ -102,12 +157,14 @@ export function PayCard({ strategy }: { strategy: StrategyFilter }) {
             {/* Each phrase is unbreakable: the figure block drops below the title when they do not
                 fit side by side (320px), and "of $target" drops under the net as one unit. */}
             <span className="flex flex-wrap items-baseline justify-between gap-x-2.5">
-              <span className="whitespace-nowrap text-[1.0625rem] font-bold">{month} pay</span>
+              <span className="whitespace-nowrap text-[1.0625rem] font-bold">
+                {month} {isValue ? "value book" : "pay"}
+              </span>
               <span className="tabular ml-auto text-right font-mono font-semibold">
                 <span className={clsx("whitespace-nowrap", net === null && "hatch text-unknown")}>
                   {formatStubValue(net, "signed-money")}
                 </span>
-                {pay.target !== null && (
+                {pay.target !== null && !isValue && (
                   <>
                     {" "}
                     <span className="whitespace-nowrap font-normal text-muted">of {formatMoneyCell(pay.target)}</span>
@@ -115,14 +172,17 @@ export function PayCard({ strategy }: { strategy: StrategyFilter }) {
                 )}
               </span>
             </span>
-            <span className="mt-2.5 block">
-              <Meter value={net} max={pay.target} label={`${month} target`} />
-            </span>
+            {!isValue && (
+              <span className="mt-2.5 block">
+                <Meter value={net} max={pay.target} label={`${month} target`} />
+              </span>
+            )}
             <span className="mt-1.5 block text-[0.8125rem] text-muted">{pace}</span>
           </span>
         }
       >
-        <Stub label={`${month} pay stub`} lines={payStubLines(pay, wholeUnknown)} />
+        <Stub label={`${month} ${isValue ? "value book" : "pay"} stub`} lines={payStubLines(pay, wholeUnknown)} />
+        {beside && <Stub label={`${month} value book, realised`} lines={beside} />}
       </Disclosure>
       {noTarget && (
         <p className="mt-1.5 text-[0.8125rem]">
@@ -133,6 +193,19 @@ export function PayCard({ strategy }: { strategy: StrategyFilter }) {
             Set a target in More
           </Link>
         </p>
+      )}
+      {valueOut && (
+        <p className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.8125rem] text-muted">
+          <StatusWord tone="flag">Value book unavailable</StatusWord>
+          <span>
+            {isValue
+              ? "The value book could not be read, so there is no figure for this month."
+              : "The value book could not be read, so its sales are not counted here."}
+          </span>
+        </p>
+      )}
+      {isValue && !valueOut && (pay.value_n_closed ?? 0) === 0 && (
+        <p className="mt-3 text-[0.8125rem] text-muted">Nothing was sold from the value book in {month}.</p>
       )}
       {spreadsOut && (
         <p className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.8125rem] text-muted">

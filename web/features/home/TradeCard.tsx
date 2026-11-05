@@ -23,7 +23,13 @@ function FactsDisclosure({ trade, facts }: { trade: DayTrade; facts: DayFact[] }
       <Disclosure
         summary={
           <span className="text-[0.8125rem] font-bold">
-            {trade.action === "rolled" ? "Why it was rolled" : "Why it closed"}{" "}
+            {trade.kind === "value"
+              ? trade.action === "opened"
+                ? "Why it was bought"
+                : "Why it was sold"
+              : trade.action === "rolled"
+                ? "Why it was rolled"
+                : "Why it closed"}{" "}
             <span className="font-medium text-muted">
               · {hasClaude ? "the system's rules and Claude's view" : "the system's rules"}
             </span>
@@ -80,7 +86,7 @@ export function TradeCard({
       {trade.action !== "closed" && trade.decided_by && (
         <p className="mt-1 text-[0.8125rem] text-muted">{decisionWords("approved", trade.decided_by)}</p>
       )}
-      {trade.action === "opened" ? (
+      {trade.action === "opened" && trade.kind !== "value" ? (
         <WhyDisclosure review={trade.review} />
       ) : (
         <FactsDisclosure trade={trade} facts={trade.facts} />

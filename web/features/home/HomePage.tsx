@@ -1,6 +1,7 @@
 "use client";
 
 import { ValueCard } from "@/components/value/ValueCard";
+import { useValueBook, waitingOnTap } from "@/components/value/useValueBook";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { STRATEGY_FILTERS, STRATEGY_LABEL, kindOf } from "@/lib/strategy";
 import { useHydrated } from "@/lib/useHydrated";
@@ -19,13 +20,17 @@ export function HomePage() {
   const { data } = usePendingApprovals("all");
   // Counts on the switcher are pending proposals per kind: what each tab has waiting.
   const pending = data?.approvals.filter((a) => a.status === "pending") ?? null;
+  // The Value tab counts the value book's own proposals that wait on a tap (GET /value/book).
+  const valueWaiting = waitingOnTap(useValueBook().data) || null;
   const options = STRATEGY_FILTERS.map((f) => ({
     value: f,
     label: STRATEGY_LABEL[f],
     count:
-      pending === null || f === "all" || f === "spread"
-        ? null
-        : pending.filter((a) => kindOf(a.strategy, a.right) === f).length || null,
+      f === "value"
+        ? valueWaiting
+        : pending === null || f === "all" || f === "spread"
+          ? null
+          : pending.filter((a) => kindOf(a.strategy, a.right) === f).length || null,
   }));
 
   const heading = (

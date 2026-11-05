@@ -34,12 +34,16 @@ export function TodayTrades({ strategy, className }: { strategy: StrategyFilter;
     count: p === "all" ? trades.length : counts[p],
   }));
   const spreadsOut = data?.spreads_available === false && (strategy === "all" || strategy === "spread");
+  // An unread value book is not a day without value trades.
+  const valueOut = data?.value_available === false && (strategy === "all" || strategy === "value");
 
   let body: ReactNode;
   if (isError && !data) {
     body = <p className="text-sm text-muted">Today's trades are unavailable right now.</p>;
   } else if (!data) {
     body = <div className="h-24 rounded-[18px] bg-surface" role="status" aria-busy="true" aria-label="Loading today's trades" />;
+  } else if (trades.length === 0 && valueOut && strategy === "value") {
+    body = <p className="text-sm text-muted">The value book could not be read, so its trades are not listed.</p>;
   } else if (trades.length === 0) {
     body = <p className="text-sm text-muted">Nothing has traded yet today.</p>;
   } else {
@@ -65,6 +69,9 @@ export function TodayTrades({ strategy, className }: { strategy: StrategyFilter;
         Done today{data && trades.length > 0 ? ` · ${trades.length} trade${trades.length === 1 ? "" : "s"}` : ""}
       </h2>
       {body}
+      {valueOut && !(trades.length === 0 && strategy === "value") && (
+        <p className="mt-3 text-[0.8125rem] text-muted">The value book could not be read, so its trades are not listed.</p>
+      )}
       {spreadsOut && (
         <p className="mt-3 text-[0.8125rem] text-muted">Credit spreads are unavailable right now, so they are not listed.</p>
       )}

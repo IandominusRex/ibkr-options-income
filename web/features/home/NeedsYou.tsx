@@ -29,6 +29,9 @@ export function NeedsYou({ strategy }: { strategy: StrategyFilter }) {
   let body: ReactNode;
   if (strategy === "spread") {
     body = <p className="text-sm text-muted">Credit spreads trade on their own in paper. Nothing here needs you.</p>;
+  } else if (strategy === "value") {
+    // The value book's proposals are not approvals; they are decided from its own card.
+    body = <p className="text-sm text-muted">Value proposals wait in the Value book card.</p>;
   } else if (isError && !data) {
     body = <p className="text-sm text-muted">Proposals unavailable right now.</p>;
   } else if (!data) {
@@ -48,7 +51,7 @@ export function NeedsYou({ strategy }: { strategy: StrategyFilter }) {
   return (
     <section aria-labelledby="needs-you-title">
       <h2 id="needs-you-title" className="mb-2.5 text-[0.8125rem] font-semibold text-muted">
-        Needs you{strategy !== "spread" && data ? ` · ${visible.length} proposal${visible.length === 1 ? "" : "s"}` : ""}
+        Needs you{strategy !== "spread" && strategy !== "value" && data ? ` · ${visible.length} proposal${visible.length === 1 ? "" : "s"}` : ""}
       </h2>
       {body}
       <ReviewSheet approval={reviewing} open={reviewing !== null} onClose={() => setReviewing(null)} />

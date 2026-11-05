@@ -1,7 +1,7 @@
 import { fireEvent, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
-import { renderWithQuery } from "@/lib/test-query";
+import { apiFetchMock, renderWithQuery } from "@/lib/test-query";
 import type { StrategyFilter } from "@/lib/strategy";
 import { PositionsCard } from "./PositionsCard";
 
@@ -216,5 +216,96 @@ describe("PositionsCard", () => {
     });
     const row = await screen.findByRole("link", { name: /AAPL \$180 put/ });
     expect(within(row).getByText("Roll alert")).toBeInTheDocument();
+  });
+  describe("the value book", () => {
+    const vpos = (over: Record<string, unknown> = {}) => ({
+      id: 1, symbol: "AAPL", list_name: "quality_growth", status: "open", shares: 10, avg_cost: 170, mark: 180,
+      opened_at: "2026-10-01T00:00:00Z", closed_on: null, next_exit: { kind: "sell_half", level: 210 }, realised_usd: null,
+      ...over,
+    });
+    const valueOn = (rows: unknown[] = [vpos()]) => ({ as_of: "", available: true, status: "open", positions: rows });
+    const valueOff = { as_of: "", available: false, status: "open", positions: [] };
+    // The wheel holds 100 AAPL shares itself: the same name, a different book.
+    const wheel = {
+      ...positions,
+      groups: [
+        ...positions.groups,
+        {
+          as_of: "", underlying: "AAPL", options: [],
+          stock: { shares: 100, avg_cost: 150, adjusted_cost_basis: 148, unrealized_pnl: 3000, unrealized_pnl_adjusted: 3200 },
+        },
+      ],
+    };
+    const serve = (value: unknown, pos: unknown = wheel) => ({
+      "/options/shorts": { as_of: "", shorts: [] }, "/portfolio/positions": pos, "/spreads/positions": spreadsOn,
+      "/value/positions": value,
+    });
+
+    it("lists the book's shares with their average cost and next exit under Value", async () => {
+      renderWithQuery(<PositionsCard strategy="value" />, serve(valueOn()));
+      expect(await screen.findByText("AAPL · 10 shares")).toBeInTheDocument();
+      expect(screen.getByText(/average cost \$170\.00/)).toBeInTheDocument();
+      expect(screen.getByText(/next exit: sell half at \$210\.00/)).toBeInTheDocument();
+      expect(screen.queryByText("AAPL · 100 shares")).toBeNull();
+      expect(screen.queryByText("AMD $150 put")).toBeNull();
+    });
+    it("asks the value book for its open positions", async () => {
+      renderWithQuery(<PositionsCard strategy="all" />, serve(valueOn()));
+      await screen.findByText("AAPL · 10 shares");
+      expect(apiFetchMock.mock.calls.some((c) => c[0] === "/value/positions?status=open")).toBe(true);
+    });
+    it("adds them under All as a Value book group, apart from the wheel's share row on the same name", async () => {
+      renderWithQuery(<PositionsCard strategy="all" />, serve(valueOn()));
+      const mine = await screen.findByText("AAPL · 100 shares");
+      const book = await screen.findByText("AAPL · 10 shares");
+      expect(mine).not.toBe(book);
+      const group = screen.getByRole("heading", { name: "Value book" }).parentElement as HTMLElement;
+      expect(within(group).getByText("AAPL · 10 shares")).toBeInTheDocument();
+      expect(within(group).queryByText("AAPL · 100 shares")).toBeNull();
+      // Two counts, never one: the chips keep the wheel's shares and the book's apart.
+      expect(screen.getByRole("button", { name: "Shares 1" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Value 1" })).toBeInTheDocument();
+    });
+    it("keeps the wheel's own rows out of the group, and the book's out of the Shares chip", async () => {
+      renderWithQuery(<PositionsCard strategy="all" />, serve(valueOn()));
+      await screen.findByText("AAPL · 10 shares");
+      fireEvent.click(screen.getByRole("button", { name: /^Shares/ }));
+      expect(screen.getByText("AAPL · 100 shares")).toBeInTheDocument();
+      expect(screen.queryByText("AAPL · 10 shares")).toBeNull();
+    });
+    it("names the group as the value book in words, also when it is the only one shown", async () => {
+      renderWithQuery(<PositionsCard strategy="value" />, serve(valueOn()));
+      const row = (await screen.findByText("AAPL · 10 shares")).closest("li") as HTMLElement;
+      const group = screen.getByRole("heading", { name: "Value book" }).parentElement as HTMLElement;
+      expect(group).toContainElement(row);
+    });
+    it("reads a name with no average cost or exit level in words, never $0", async () => {
+      renderWithQuery(<PositionsCard strategy="value" />, serve(valueOn([vpos({ avg_cost: null, mark: null, next_exit: null })])));
+      expect(await screen.findByText(/average cost not recorded/)).toBeInTheDocument();
+      expect(screen.getByText(/next exit not set/)).toBeInTheDocument();
+      expect(screen.getByText("n/a")).toHaveClass("hatch");
+    });
+    it("says the book holds no shares, in words, when it is readable and empty", async () => {
+      renderWithQuery(<PositionsCard strategy="value" />, serve(valueOn([])));
+      expect(await screen.findByText("The value book holds no shares.")).toBeInTheDocument();
+    });
+    it("says the book could not be read, never that it is empty", async () => {
+      renderWithQuery(<PositionsCard strategy="value" />, serve(valueOff));
+      expect(await screen.findByText("The value book could not be read, so its shares are not listed.")).toBeInTheDocument();
+      expect(screen.queryByText("The value book holds no shares.")).toBeNull();
+    });
+    it("lists the options and notes the unread book under All, with no count on the Value chip", async () => {
+      renderWithQuery(<PositionsCard strategy="all" />, serve(valueOff));
+      expect(await screen.findByText("AMD $150 put")).toBeInTheDocument();
+      expect(await screen.findByText("The value book could not be read, so its shares are not listed.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Value" })).toBeInTheDocument();
+    });
+    it("finds a value row by its ticker in the search", async () => {
+      renderWithQuery(<PositionsCard strategy="all" />, serve(valueOn([vpos(), vpos({ id: 2, symbol: "MSFT" })])));
+      await screen.findByText("MSFT · 10 shares");
+      fireEvent.change(screen.getByRole("textbox", { name: "Search positions" }), { target: { value: "msft" } });
+      expect(screen.getByText("MSFT · 10 shares")).toBeInTheDocument();
+      expect(screen.queryByText("AAPL · 10 shares")).toBeNull();
+    });
   });
 });

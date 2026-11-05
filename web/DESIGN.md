@@ -370,19 +370,28 @@ More ("Set a target in More", below the disclosure, because a link inside the di
 would nest interactive elements); a percent of the account with no month-start value (the first
 month after install, a journal gap) says "Target n/a · needs the month's opening account value"
 (hatched n/a); either way the meter is hatched. An unknown progress reads "n/a of target" (hatched
-n/a). One day left reads "1 day left". When the spreads book cannot be read, a flag word "Spreads
+n/a). One day left reads "1 day left". Under All, a month in which the value book sold shares
+adds a second, separate stub beneath the pay stub ("Value book, realised"), so the share sale never
+reads as a line of the sum above it: it is a capital gain, outside the net, the meter and the target.
+Under Value the card is "November value book" with that realised result, the commissions ("not
+recorded": value.db holds none, a hatched n/a) and the net; an unread book is a flag word "Value
+book unavailable" and a sentence, with n/a, never $0. When the spreads book cannot be read, a flag word "Spreads
 unavailable" and a sentence say so: a spreads-only month shows n/a, never $0, keeps its target and
 reads "n/a of target", and an all-strategies month says its total leaves spreads out.
 
 **Strategy switcher**: a segmented control on a white pill track, one button per kind of trade:
-All, CSPs, CCs, Credit spreads, each with its live count. It sits at the very top of Home and
-Trades. The selected button takes an ink fill (never lime or green) and `aria-pressed`. It scopes
+All, CSPs, CCs, Credit spreads and Value, each with its live count (Value's is the value book's
+proposals that wait on a tap, from `GET /value/book`; no count when that book cannot be read). It
+sits at the very top of Home and Trades; Trades has no Value, since the book has no proposals or
+history there, and reads `?strategy=value` as All. The selected button takes an ink fill (never lime or green) and `aria-pressed`. It scopes
 everything below the hero: proposals, October pay (that strategy's premium and stub), and
 positions. The account-value hero stays account-wide, because account value cannot be split by
 strategy honestly. The choice is kept in the URL (`?strategy=csp`), so a link or reload keeps it.
 On Trades it also picks which views exist: the wheel (All, CSPs, CCs) gets Proposals, History and
 Assessed; Credit spreads gets Spreads only, so the view chips are hidden there.
-The Positions card carries the same tabs as smaller chips, plus Shares.
+The Positions card carries the same tabs as smaller chips, plus Shares. Under Value, October pay
+becomes the value book's own stub with no target meter ("The income target counts options income
+only."); the book's proposals live in the Value card, and "Needs you" points at it.
 
 **Account hero** (Home): "Account value", the number (display, 38px on phones, 46px from 768px),
 then today's signed change in words ("+$1,234.50 (0.50%) today"; a genuine zero is neutral ink; an
@@ -393,7 +402,11 @@ In market hours (09:30-16:00 New York time, weekdays) a headline older than 30 m
 positions card's rule, shows the flag word "Delayed" and its age beside "Account value"; a last
 close after 16:00 or at a weekend is the right headline and is never flagged.
 
-**Positions card** (Home): the title, "Sorted by expiry", a search field (the **Search field**), filter chips (All, CSPs, CCs, Credit spreads, Shares, each with its count, which follows the search), then position rows. A delayed portfolio snapshot shows a
+**Positions card** (Home): the title, "Sorted by expiry", a search field (the **Search field**), filter chips (All, CSPs, CCs, Credit spreads, Value, Shares, each with its count, which follows the search), then position rows.
+The value book's shares are rows of their own under a "Value book" group heading (list, average cost, next exit
+as words, open P&L), never merged into the wheel's share row on the same name: the two counts stay apart,
+and the Shares chip counts the wheel's only. An unreadable value book is said in words ("The value book could not
+be read, so its shares are not listed."), never "none". A delayed portfolio snapshot shows a
 flag word "Delayed" and its age; an unreadable spreads book is said in words ("Credit spreads are
 unavailable right now."), never shown as "none open".
 
@@ -471,13 +484,15 @@ never reads as "up".
 (lime, "Expires today" only).
 
 **Trade card** (Home, "Done today", and the Position page): a proposal card's anatomy for a trade that
-has happened. Eyebrow in words (OPENED, CLOSED or ROLLED, then the kind of trade) with the fill's
+has happened. Eyebrow in words (OPENED, CLOSED or ROLLED, then the kind of trade; a value-book fill reads BOUGHT or SOLD · VALUE BOOK) with the fill's
 clock time (New York) or, on the Position page, its date; a title ("AAPL · Sold $180 put",
 "KO · Bought back $68 put", "NVDA · Rolled $160 call to $165"); one sentence (an opened trade: what
 you collected and the consequence; a closed or rolled one: the reason); the reasoning collapsed
 above the stub (an opened trade: Claude's review, labelled; a close or roll: "Why it closed" or
 "Why it was rolled", "the system's rules", plus "and Claude's view" when a line is Claude's, which
-carries Claude's name in its label); then the stub, which sums the whole trade (opened: Premium,
+carries Claude's name in its label; a value fill's title is "Bought 10 GOOGL" or "Sold 5 GOOGL", its reasoning
+"Why it was bought" or "Why it was sold" with Claude's call labelled as Claude's, and its stub is the price a share
+and the cost, or the realised result, with no commission line because the book records none); then the stub, which sums the whole trade (opened: Premium,
 Commission, On $X held, A year; closed: Premium collected, Bought back, Commissions, Net P&L, with
 "Net on this leg" for a roll). An opened or rolled card says who approved it under its sentence
 ("Approved by the system", "Approved by you, on the web", "Approved by you, in Telegram"), from
@@ -533,8 +548,11 @@ with closes is a `calendar-day` button (no fill at rest, because gain and loss a
 under them to clear 4.5:1; a ring on hover; an ink fill when selected) showing the day and a
 signed figure without the currency sign, which the month total carries ("+413", "−231", "+1.7K", "+12K"; the gain and loss colours never carry it alone); a day
 nothing closed is plain text, never "$0". A tapped day lists what closed with each reason and its
-result. A footnote says it is options and credit spreads after commissions, that share sales are
-not included, and that a blank day is not a flat one.
+result. The month total and each day include the value book's sales; they are named apart, never left silently inside
+the options total: a line under the month total ("Includes the value book: +$400.00 from 1 sale"), the figure in the day's
+accessible name, and "Of this day's total, the value book" above a tapped day's closes (the sale itself labelled
+"Value book"). An unread value book is a flag word and a sentence. A footnote says it is options and credit spreads after
+commissions, that share sales are not included (the value book's are the one exception), and that a blank day is not a flat one.
 
 **Search field** (Positions card): a `field` with a magnifier, a screen-reader label (never the
 placeholder alone), 16px text so iOS does not zoom, and a Clear button once it has text. Commas
@@ -742,8 +760,7 @@ Operate. Dials as the project default.
   "Suspended today" / "Cuts paused today" flag words, three stories ("since" dates, the descriptions
   stay on What Claude knows) and a link there. A position row gains "Weak health" (flag) and a near
   "Event <date>" word from its name's notes. Read-only; no lime.
-- **Value card (2026-11-05):** a white card after Positions, under All (and Value once Home has that
-  filter), titled "Value book" with "$7,200 of $30,000 in use" at the right of the title. A perforated stub
+- **Value card (2026-11-05):** a white card after Positions, under All and under Value, titled "Value book" with "$7,200 of $30,000 in use" at the right of the title. A perforated stub
   does the sum (Ceiling, In use as a minus, Room left as the total). Below it the breakers as words: flag
   amber "Trend brake on", "Drawdown stop on" and "Trim offered" each with a sentence, a hatched n/a word when a
   breaker is unknown, "No breaker is on." when none is. The trim has no button here: the line reads "Trim to
@@ -889,6 +906,9 @@ the figure face.
   two marks, worded so that a positive number is what the action cost), then the score-vs-outcome
   evidence with its read-only sentences first.
 - **FINISH:** unreviewed and undocumented is unfinished.
+- **Value book in Pay (2026-11-05):** the month's stub is options income as before; a month in which the value book
+  sold shares adds the second "Value book, realised" stub beneath it, and an unread value book is a flag word
+  "Value book unavailable". The meter and the target never take the sale.
 - **Market and sizing (2026-10-23):** an order in the Orders list says what shaped its size
   ("Claude's cut · Sent 1 of 3 contracts"). System opens with the sizing record, the review the
   live-cutover gate asks for. Claude's cut is labelled as Claude's wherever its reason shows.
@@ -1032,6 +1052,15 @@ sibling keys; re-run the check after edits.
 
 ## Decision Log
 
+- 2026-11-05: **The value kind across Home** (value book Part 6, Section I). Added Value to the strategy
+  switcher and taught the pay card, the Positions card, Done today and the realised calendar (and Activity's
+  pay stub) to carry it (Components, Surfaces: Home and Activity). No new token, colour, font, radius or
+  elevation. The value book's realised result is a separate stub, never a line inside the net, because the
+  income target is the wheel's wage. Critique and audit at 1440px and 390px against a mock of the Home
+  endpoints found two things, fixed: the realised line sat directly under the "Net so far" total and read as part
+  of the sum (now its own stub under the pay stub), and a "Value book" status word repeated its group heading on
+  every share row (removed). Not changed: at 390px the five-option switcher wraps to two rows, which is the
+  control's own designed wrap. Not captured: dark.
 - 2026-11-05: **Top opportunities on Research** (value book Part 6, Section H). Added the strip above the
   watchlist (Surfaces, Research) in `features/research/`. The price bar is a new component, not a new token:
   it uses only the sunk and border fills, the ink and muted text colours and the hatch, no animation, and its
