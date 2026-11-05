@@ -50,8 +50,9 @@ function inScope(orders: OrderSummary[], strategy: StrategyFilter): OrderSummary
 
 /** Approvals still pending on the server whose Approve this browser has sent. */
 function useSent(strategy: StrategyFilter, submitted: Map<number, CommandStatus>) {
-  const { data, visible } = usePendingApprovals(strategy);
-  return { loaded: data !== undefined, sent: visible.filter((a) => submitted.has(a.id)) };
+  const { data, isError, visible } = usePendingApprovals(strategy);
+  // `failed` is a read that errored with nothing to show: unknown, which History must say and never render as none.
+  return { loaded: data !== undefined, failed: isError && data === undefined, sent: visible.filter((a) => submitted.has(a.id)) };
 }
 
 /** History's chip count: sent approvals plus working orders in scope; null until both load. */
@@ -144,18 +145,21 @@ function InFlight({
   submitted: Map<number, CommandStatus>;
   onSettled: (id: number) => void;
 }) {
-  const { loaded, sent } = useSent(strategy, submitted);
+  const { loaded, failed, sent } = useSent(strategy, submitted);
   const orders = useWorkingOrders();
   const controls = useControls();
   const drainHealthy = controls.data?.drain_healthy ?? true;
   const working = orders.data ? inScope(orders.data.orders, strategy) : [];
-  if (!loaded || !orders.data || (sent.length === 0 && working.length === 0)) return null;
+  const unknown = failed || (orders.isError && !orders.data);
+  // Loading (no data, no error) shows nothing; both loaded and empty shows nothing; an unread side is said.
+  if (!unknown && (!loaded || !orders.data || (sent.length === 0 && working.length === 0))) return null;
   return (
     <section aria-labelledby="flight-title">
       <h2 id="flight-title" className={H2}>
         In flight
       </h2>
       <div className="grid gap-4">
+        {unknown && <p className="text-sm text-muted">In-flight orders could not be loaded right now.</p>}
         {sent.length > 0 && (
           <div className="grid items-start gap-4 lg:grid-cols-2">
             {sent.map((a) => (
@@ -190,43 +194,53 @@ function NotTraded({ strategy, day }: { strategy: StrategyFilter; day: string })
       apiFetch<ApprovalListResponse>(`/options/approvals?status=all&since=${since}&until=${until}&limit=200`),
     refetchInterval: 60_000,
   });
-  if (!q.data) return null;
-  const rows = notTradedRows(q.data.approvals, day, strategy);
-  if (rows.length === 0) return null;
+  if (!q.data && !q.isError) return null;
+  const rows = q.data ? notTradedRows(q.data.approvals, day, strategy) : [];
+  // The read asks for 200 and a full answer may have more behind it: an older proposal may be missing.
+  const capped = (q.data?.approvals.length ?? 0) >= 200;
+  if (q.data && rows.length === 0 && !capped) return null;
   return (
     <section aria-labelledby="not-traded-title">
       <h2 id="not-traded-title" className={H2}>
         Not traded
       </h2>
-      <Card as="div">
-        <ul>
-          {rows.map((r) => (
-            <li key={r.id} className="border-t border-border first:border-t-0">
-              <Link
-                href={`/trades/${r.id}`}
-                className="-mx-2 grid grid-cols-[1fr_auto_16px] items-center gap-x-2.5 rounded-xl px-2 py-[11px] text-sm hover:bg-sunk"
-              >
-                <div className="min-w-0">
-                  <span className="font-bold">{r.title}</span>
-                  <span className="ml-1.5 align-[1px]">
-                    <StatusWord>{r.word}</StatusWord>
-                  </span>
-                  <div className="text-[0.8125rem] text-muted">
-                    {r.decision} · {r.raised}
+      {!q.data && <p className="text-sm text-muted">Proposals that did not trade could not be loaded right now.</p>}
+      {rows.length > 0 && (
+        <Card as="div">
+          <ul>
+            {rows.map((r) => (
+              <li key={r.id} className="border-t border-border first:border-t-0">
+                <Link
+                  href={`/trades/${r.id}`}
+                  className="-mx-2 grid grid-cols-[1fr_auto_16px] items-center gap-x-2.5 rounded-xl px-2 py-[11px] text-sm hover:bg-sunk"
+                >
+                  <div className="min-w-0">
+                    <span className="font-bold">{r.title}</span>
+                    <span className="ml-1.5 align-[1px]">
+                      <StatusWord>{r.word}</StatusWord>
+                    </span>
+                    <div className="text-[0.8125rem] text-muted">
+                      {r.decision} · {r.raised}
+                    </div>
                   </div>
-                </div>
-                <div className="tabular text-right font-semibold">
-                  <span className={clsx(r.value === null && "hatch text-unknown")}>
-                    {r.value === null ? UNKNOWN : formatMoneyCell(r.value)}
-                  </span>
-                  <div className="text-[0.8125rem] font-normal text-muted">{r.valueLabel}</div>
-                </div>
-                <ChevronRight size={16} aria-hidden="true" className="text-muted" />
-              </Link>
-            </li>
-          ))}
-        </ul>
-      </Card>
+                  <div className="tabular text-right font-semibold">
+                    <span className={clsx(r.value === null && "hatch text-unknown")}>
+                      {r.value === null ? UNKNOWN : formatMoneyCell(r.value)}
+                    </span>
+                    <div className="text-[0.8125rem] font-normal text-muted">{r.valueLabel}</div>
+                  </div>
+                  <ChevronRight size={16} aria-hidden="true" className="text-muted" />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+      {capped && (
+        <p className="mt-2 text-[0.8125rem] text-muted">
+          Only the newest 200 proposals over these days could be read, so an older one may be missing.
+        </p>
+      )}
     </section>
   );
 }

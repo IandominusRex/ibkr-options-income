@@ -49,10 +49,15 @@ type World = {
   previous?: string | null;
   next?: string | null;
   commandStatus?: string;
+  /** Reads that answer with an error (Task 11): the approvals pending list, the working orders, the day's range. */
+  fail?: ("pending" | "orders" | "range")[];
 };
 
 function serve(w: World = {}) {
   apiFetchMock.mockImplementation(async (path: string) => {
+    if (path === "/options/approvals?status=pending" && w.fail?.includes("pending")) throw new Error("down");
+    if (path.startsWith("/options/orders") && w.fail?.includes("orders")) throw new Error("down");
+    if (path.startsWith("/options/approvals?status=all") && w.fail?.includes("range")) throw new Error("down");
     if (path === "/options/approvals?status=pending") return { as_of: "", approvals: w.sent ?? [] };
     if (path.startsWith("/options/approvals?status=all")) return { as_of: "", approvals: w.range ?? [] };
     if (path === "/options/controls") return controls;
@@ -219,5 +224,73 @@ describe("HistoryView", () => {
       </QueryClientProvider>,
     );
     expect(await screen.findByText("count 3")).toBeInTheDocument();
+  });
+
+  describe("an unknown read is never shown as none (Task 11)", () => {
+    it("says in flight orders could not be loaded when the orders read fails and nothing was sent", async () => {
+      serve({ fail: ["orders"] });
+      mount();
+      const flight = await screen.findByRole("region", { name: "In flight" });
+      expect(within(flight).getByText("In-flight orders could not be loaded right now.")).toBeInTheDocument();
+    });
+
+    it("says so when the pending approvals read fails, even with working orders to show", async () => {
+      serve({ fail: ["pending"], orders: [order(4, "MSFT", "covered_call")] });
+      mount({ submitted: new Map([[1, pending]]) });
+      const flight = await screen.findByRole("region", { name: "In flight" });
+      expect(within(flight).getByText("In-flight orders could not be loaded right now.")).toBeInTheDocument();
+      expect(await within(flight).findByText("MSFT")).toBeInTheDocument();
+    });
+
+    it("stays out of the way while loading, and when both reads succeed and are empty", async () => {
+      serve();
+      mount();
+      await screen.findByRole("region", { name: "Traded" });
+      await waitFor(() => expect(apiFetchMock.mock.calls.some((c) => String(c[0]).startsWith("/options/orders"))).toBe(true));
+      expect(screen.queryByRole("region", { name: "In flight" })).toBeNull();
+      expect(screen.queryByText(/could not be loaded right now/)).toBeNull();
+    });
+
+    it("does not say it on a past day, where In flight is not shown", async () => {
+      serve({ fail: ["orders"] });
+      mount({ day: "2026-10-09" });
+      await screen.findByRole("region", { name: "Traded" });
+      expect(screen.queryByRole("region", { name: "In flight" })).toBeNull();
+    });
+
+    it("shows Not traded with a sentence when the proposals read fails", async () => {
+      serve({ fail: ["range"] });
+      mount();
+      const not = await screen.findByRole("region", { name: "Not traded" });
+      expect(within(not).getByText("Proposals that did not trade could not be loaded right now.")).toBeInTheDocument();
+    });
+
+    it("says the newest 200 were read when the read hit the limit", async () => {
+      const rows = Array.from({ length: 200 }, (_, i) =>
+        approval({ id: 1000 + i, status: "expired", underlying: "KO", created_at: "2026-10-15T14:00:00Z" }),
+      );
+      serve({ range: rows });
+      mount();
+      const not = await screen.findByRole("region", { name: "Not traded" });
+      expect(
+        within(not).getByText("Only the newest 200 proposals over these days could be read, so an older one may be missing."),
+      ).toBeInTheDocument();
+      expect(within(not).getAllByRole("link").length).toBe(200);
+    });
+
+    it("says the limit even when none of the 200 is that day's", async () => {
+      const rows = Array.from({ length: 200 }, (_, i) => approval({ id: 1000 + i, status: "expired", created_at: "2026-10-14T14:00:00Z" }));
+      serve({ range: rows });
+      mount();
+      const not = await screen.findByRole("region", { name: "Not traded" });
+      expect(within(not).getByText(/Only the newest 200 proposals/)).toBeInTheDocument();
+    });
+
+    it("renders neither section for a successful empty read, and no limit sentence under 200 rows", async () => {
+      serve({ range: [approval({ id: 3, status: "expired" })] });
+      mount();
+      const not = await screen.findByRole("region", { name: "Not traded" });
+      expect(within(not).queryByText(/Only the newest 200/)).toBeNull();
+    });
   });
 });
