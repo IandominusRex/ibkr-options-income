@@ -91,11 +91,6 @@ def test_annotation_goes_through_post_commands(seeded) -> None:
     assert r.json()["status"] == "pending"
 
 
-def test_nav_has_a_ledger_section(client) -> None:
-    sections = {s["key"]: s for s in client.get("/nav", headers=OWNER).json()["sections"]}
-    assert sections["ledger"]["available"] is True
-
-
 NOW = datetime(2026, 10, 22, 15, 0, tzinfo=UTC)
 
 

@@ -52,32 +52,6 @@
         ]
       }
     },
-    "/nav": {
-      "get": {
-        "tags": [
-          "meta"
-        ],
-        "summary": "Nav",
-        "operationId": "nav_nav_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NavResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ]
-      }
-    },
     "/research/search": {
       "get": {
         "tags": [
@@ -10704,68 +10678,6 @@
           "spreads_available"
         ],
         "title": "MonthPayResponse"
-      },
-      "NavResponse": {
-        "properties": {
-          "as_of": {
-            "type": "string",
-            "format": "date-time",
-            "title": "As Of"
-          },
-          "sections": {
-            "items": {
-              "$ref": "#/components/schemas/NavSection"
-            },
-            "type": "array",
-            "title": "Sections"
-          }
-        },
-        "type": "object",
-        "required": [
-          "as_of",
-          "sections"
-        ],
-        "title": "NavResponse"
-      },
-      "NavSection": {
-        "properties": {
-          "as_of": {
-            "type": "string",
-            "format": "date-time",
-            "title": "As Of"
-          },
-          "key": {
-            "type": "string",
-            "title": "Key"
-          },
-          "label": {
-            "type": "string",
-            "title": "Label"
-          },
-          "available": {
-            "type": "boolean",
-            "title": "Available"
-          },
-          "note": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Note"
-          }
-        },
-        "type": "object",
-        "required": [
-          "as_of",
-          "key",
-          "label",
-          "available"
-        ],
-        "title": "NavSection"
       },
       "NewsCalendarResponse": {
         "properties": {

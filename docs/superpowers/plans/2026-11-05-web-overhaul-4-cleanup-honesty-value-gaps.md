@@ -109,7 +109,7 @@ check's count.
 | **Task 2: the value drain heartbeat** | done | 3ff7463 (`feat(value): the value drain's heartbeat, served on GET /value/book`) | red 3 failed; targeted Step 7 set 124 passed; `py_compile scripts/run_value.py` silent; `test_openapi_current` green; full pytest 5670 passed + 1 skipped (5665 + 2 + 3; the plan's 5669 counted the prototype copy's non-repo quirk); ruff check clean; mypy 361 files clean; vitest 1485 in 152 files (unchanged), tsc and lint clean; G1 empty, G2 the four files | 2026-11-05 | (1) the red reasons differ from Step 2's text: the two API tests fail on `ImportError: VALUE_DRAIN_HEARTBEAT_KEY` (imported before the GET), the structural one on `assert len(beats) == 2`, not `KeyError` (cost: none). (2) `api-types.ts` makes `drain_healthy` a required `boolean` (as Step 8 says), so `tsc` failed on two typed web fixtures, `components/value/useValueBook.test.ts` and `ValueCard.test.tsx` `book()`; each gains `drain_healthy: true, drain_last_seen: "2026-11-05T14:59:30Z"` (a running process, so Section D's `ValueDrainNote` stays silent in the existing cases). The web sections were not prototyped (ruling 31); test files only, no web source changed (cost if wrong: Section D adjusts a fixture). (3) STATUS.md's "Deferred (web, Sections F-I)" item is one paragraph, so the capital-release line is a nested bullet under it (cost: none). Six files outside this task fail `ruff format --check` on main already (not touched). |
 | **Section A exit / early merge** | done (not merged early) | 07cb80a, 3ff7463 | orchestrator re-verified: G1 empty, G2 four files, py_compile silent, 144 targeted passed; implementer's full gates green | 2026-11-05 | Operator replied "continue to the end" to the early-merge question; read as go-ahead for the sections, not for a restart of the live stack, so Section A merges with the rest (cost: the false capital-release sentence stays live until the final merge) |
 | **Section B entry** | pending | | | | |
-| **Task 3: `GET /nav` removed** | pending | | | | |
+| **Task 3: `GET /nav` removed** | done | (this commit; hash in Task 4's row) | red: `test_the_old_nav_manifest_is_gone` failed (200) as planned; `test_api_meta.py` + `test_api_ledger.py` 20 passed; full pytest 5669 passed + 1 skipped (5670 - 1); ruff check clean; mypy 361 files clean; vitest 1485 in 152 files, tsc and lint clean; api-types.ts diff removes only the `/nav` path, `NavResponse`, `NavSection` and `nav_nav_get`; no web reference to them | 2026-11-05 | (1) `docs/web/api.md` has no "meta routes' introduction", so the "`GET /nav` was removed" sentence is a new bullet in its Conventions list (cost: none). (2) The `tests/test_api_meta.py` module docstring still described the nav manifest, so it now says it was removed (cost: none). (3) STATUS.md already says `GET /nav` is removed in Part 4 (lines 1397, 1415), so it needed no edit; line 2998 is a dated history entry and stays (cost: none). |
 | **Task 4: `GET /spreads/orders` says when it is capped** | pending | | | | |
 | **Section C entry** | pending | | | | |
 | **Task 5: `DecideControls.test.tsx`, ported from `ApprovalCard.test.tsx`** | pending | | | | |
@@ -832,13 +832,13 @@ def value_book(user: OwnerUser, db: TradingDb) -> ValueBookResponse:  # noqa: AR
 
 **Entry checks:**
 
-- [ ] **B1. Section A landed.** `git log --oneline main..HEAD` shows A0's successor commits (two task commits,
+- [x] **B1. Section A landed.** `git log --oneline main..HEAD` shows A0's successor commits (two task commits,
   plus the A0 commit if `main` was not fast-forwarded); Tasks 1-2 are ticked.
-- [ ] **B2. Green.** Python gate, web gate; pytest = A3 baseline + 5.
-- [ ] **B3. Anchors.** Each prints a line: `grep -n '@router.get("/nav"' src/api/routers/meta.py`;
+- [x] **B2. Green.** Python gate, web gate; pytest = A3 baseline + 5.
+- [x] **B3. Anchors.** Each prints a line: `grep -n '@router.get("/nav"' src/api/routers/meta.py`;
   `grep -n "def test_nav_has_a_ledger_section" tests/test_api_ledger.py`;
   `grep -n "limit=limit$" src/api/routers/spreads.py`.
-- [ ] **B4. Nobody reads `/nav`.** `grep -rn '"/nav"' web/app web/components web/features web/lib --include=*.ts --include=*.tsx | grep -v api-types`
+- [x] **B4. Nobody reads `/nav`.** `grep -rn '"/nav"' web/app web/components web/features web/lib --include=*.ts --include=*.tsx | grep -v api-types`
   prints nothing.
 
 **Section exit:** two more commits; pytest = A's + 0 (Task 3: -2 +1; Task 4: +0; see the counts in each task);
@@ -849,7 +849,7 @@ def value_book(user: OwnerUser, db: TradingDb) -> ValueBookResponse:  # noqa: AR
 **Files:** Modify `src/api/routers/meta.py`, `tests/test_api_meta.py`, `tests/test_api_ledger.py`,
 `docs/web/openapi.json`, `web/lib/api-types.ts`, `docs/web/api.md`, `ARCHITECTURE.md`, `SETUP.md`, this plan.
 
-- [ ] **Step 1: The test that it is gone.** Append to `tests/test_api_meta.py`:
+- [x] **Step 1: The test that it is gone.** Append to `tests/test_api_meta.py`:
 
 ```python
 
@@ -860,26 +860,26 @@ def test_the_old_nav_manifest_is_gone(client) -> None:
 ```
 
   Run it: fails (200).
-- [ ] **Step 2: Remove the tests of the route.** Delete `test_nav_lists_every_section_with_availability`
+- [x] **Step 2: Remove the tests of the route.** Delete `test_nav_lists_every_section_with_availability`
   (`tests/test_api_meta.py` line 46 to the end of that function, `assert all(s["available"] and s["note"] is None for s in sections.values())`)
   and, in `tests/test_api_ledger.py`, lines 94-96 (`def test_nav_has_a_ledger_section` and its two lines) with
   the two blank lines after them.
-- [ ] **Step 3: Remove the route.** In `src/api/routers/meta.py`: line 1 becomes
+- [x] **Step 3: Remove the route.** In `src/api/routers/meta.py`: line 1 becomes
   `"""Liveness and identity. (`GET /nav`, the old rail manifest, was removed in web overhaul Part 4.)"""`;
   delete `class NavSection` (line 32) through the end of `_SECTIONS` (the `]` after
   `("explain", "System Explanation", True, None),`) and the blank lines after it, so `@router.get("/health"`
   follows `class MeResponse`; delete the whole `nav` route (line 99 to the end of the file) so the file ends
   with `me`'s `return`.
-- [ ] **Step 4: Green.** `python -m pytest -q tests/test_api_meta.py tests/test_api_ledger.py` passes;
+- [x] **Step 4: Green.** `python -m pytest -q tests/test_api_meta.py tests/test_api_ledger.py` passes;
   `ruff check src/api/routers/meta.py tests/test_api_meta.py tests/test_api_ledger.py` clean.
-- [ ] **Step 5: Regenerate the contract.** The `api-types.ts` diff removes only the `/nav` path, `NavResponse`,
+- [x] **Step 5: Regenerate the contract.** The `api-types.ts` diff removes only the `/nav` path, `NavResponse`,
   `NavSection` and the `nav_nav_get` operation. `grep -rn "NavResponse\|NavSection" web --include=*.ts --include=*.tsx | grep -v node_modules` prints nothing.
-- [ ] **Step 6: Docs.** `docs/web/api.md`: delete the `## GET /nav` section (from its heading to the `---`
+- [x] **Step 6: Docs.** `docs/web/api.md`: delete the `## GET /nav` section (from its heading to the `---`
   before the next section) and say in the meta routes' introduction "`GET /nav` was removed in web overhaul
   Part 4 (the rail comes from `web/lib/nav.ts`)." `ARCHITECTURE.md` line 947: replace the `GET /nav (...)` clause
   and the two sentences after it with "`GET /nav` was removed in web overhaul Part 4 (the rail and tab bar come
   from `web/lib/nav.ts`)". `SETUP.md` line 789: drop `` `GET /nav`, `` from the endpoint list.
-- [ ] **Step 7: Gate and commit.** Python gate (pytest = A's - 1: two removed, one added), web gate. Commit
+- [x] **Step 7: Gate and commit.** Python gate (pytest = A's - 1: two removed, one added), web gate. Commit
   `chore(api): remove GET /nav, unread since web overhaul Part 1`.
 
 ### Task 4: `GET /spreads/orders` says when it is capped

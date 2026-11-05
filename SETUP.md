@@ -786,7 +786,7 @@ python -m scripts.run_api
 | `python -m scripts.run_api` | Starts the web API on `config/research.yaml → api.host:port` (default `127.0.0.1:8787`). Requires `WEB_API_TOKEN` in `.env`. No IBKR connection. Included by default in `scripts.start` — opt out with `--no-api`. |
 | `python -m scripts.run_research_worker` | Runs the research ingestion worker (APScheduler). Populates `data/research.db` from SEC EDGAR — the symbol directory first, then weekly refreshes; a nightly warm-tier refresh (daily bars + news for watchlisted/recently-viewed symbols, at `research.tiers.warm_refresh_hour_et`, default 04:00 ET); delayed intraday quotes every 15 min during RTH. Holds no IBKR connection, no clientId. Requires `SEC_CONTACT_EMAIL` in `.env`. Included by default in `scripts.start` — opt out with `--no-research`. |
 
-Endpoints available now: `GET /health` (no auth), `GET /me`, `GET /nav`, and
+Endpoints available now: `GET /health` (no auth), `GET /me`, and
 `GET /research/search?q=<ticker>` (bearer token). See `docs/web/api.md` for the full
 reference. The research worker populates the `symbols` table from SEC EDGAR so search has
 something to search — on first start, give it a few moments (or run it once standalone) to

@@ -1,4 +1,4 @@
-"""Health, identity, and the nav manifest that drives the left rail."""
+"""Health and identity (the nav manifest, GET /nav, was removed in web overhaul Part 4)."""
 
 from __future__ import annotations
 
@@ -43,43 +43,6 @@ def test_me_returns_the_owner(client) -> None:
     assert r.json()["role"] == "owner"
 
 
-def test_nav_lists_every_section_with_availability(client) -> None:
-    r = client.get("/nav", headers=AUTH)
-    assert r.status_code == 200
-    sections = {s["key"]: s for s in r.json()["sections"]}
-    assert set(sections) == {
-        "research",
-        "options",
-        "portfolio",
-        "pnl",
-        "ledger",
-        "news",
-        "universe",
-        "explain",
-    }
-    assert sections["research"]["available"] is True
-    # P2 M2 ships the options console read surfaces — the rail is now available.
-    assert sections["options"]["available"] is True
-    assert sections["options"]["note"] is None
-    # P3 M3 ships the portfolio console read surfaces — the rail is now available.
-    assert sections["portfolio"]["available"] is True
-    assert sections["portfolio"]["note"] is None
-    # P4 M5 ships the P&L surfaces — every section is now available, none carries a note.
-    assert sections["pnl"]["available"] is True
-    assert sections["pnl"]["note"] is None
-    # The trade ledger ships its read surfaces from day one too.
-    assert sections["ledger"]["available"] is True
-    assert sections["ledger"]["note"] is None
-    # The news thread ships its read surfaces from day one too.
-    assert sections["news"]["available"] is True
-    assert sections["news"]["note"] is None
-    # System Explanation is a static walkthrough, not a data surface — ships available
-    # from day one, same as every other section.
-    assert sections["explain"]["available"] is True
-    assert sections["explain"]["note"] is None
-    assert all(s["available"] and s["note"] is None for s in sections.values())
-
-
 def test_unknown_route_returns_json_not_html(client) -> None:
     r = client.get("/nope", headers=AUTH)
     assert r.status_code == 404
@@ -104,3 +67,8 @@ def test_an_open_breaker_makes_health_report_degraded(client) -> None:
 
     # Clean up so other tests don't see an open circuit.
     edgar.record_success()
+
+
+def test_the_old_nav_manifest_is_gone(client) -> None:
+    """Web overhaul Part 4 (D3): the rail comes from web/lib/nav.ts; GET /nav is removed."""
+    assert client.get("/nav", headers=AUTH).status_code == 404

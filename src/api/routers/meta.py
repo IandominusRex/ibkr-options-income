@@ -1,4 +1,4 @@
-"""Liveness, identity, and the navigation manifest."""
+"""Liveness and identity. (`GET /nav`, the old rail manifest, was removed in web overhaul Part 4.)"""
 
 from __future__ import annotations
 
@@ -27,38 +27,6 @@ class HealthResponse(Envelope):
 class MeResponse(Envelope):
     id: str
     role: str
-
-
-class NavSection(Envelope):
-    key: str
-    label: str
-    available: bool
-    note: str | None = None
-
-
-class NavResponse(Envelope):
-    sections: list[NavSection]
-
-
-# P2-P4 sections render an explicit placeholder rather than being hidden, so the finished
-# shape of the product is legible from milestone 1. See design §9.
-# "options" flipped to available=True in P2 M2 (the console ships read surfaces).
-# "portfolio" flipped to available=True in P3 M3 (the console ships read surfaces).
-# "pnl" flipped to available=True in P4 M5 (the P&L surfaces ship).
-# "explain" added alongside the P3-P4 M6 System tab: a static, read-nothing walkthrough of
-# how the pipeline works, not a data surface, so it carries no fallback/degraded story.
-# "ledger" added with the trade ledger (docs/superpowers/specs/2026-10-04-trade-ledger-design.md).
-_SECTIONS: list[tuple[str, str, bool, str | None]] = [
-    ("research", "Research", True, None),
-    ("options", "Options", True, None),
-    ("portfolio", "Portfolio", True, None),
-    ("pnl", "P&L", True, None),
-    ("ledger", "Ledger", True, None),
-    # "news" added with the news thread (docs/superpowers/specs/2026-10-09-news-thread-design.md §7.6).
-    ("news", "News", True, None),
-    ("universe", "Universe", True, None),
-    ("explain", "System Explanation", True, None),
-]
 
 
 @router.get("/health", response_model=HealthResponse, tags=["meta"])
@@ -94,15 +62,3 @@ def health(db: ResearchDb) -> HealthResponse:
 @router.get("/me", response_model=MeResponse, tags=["meta"])
 def me(user: CurrentUser) -> MeResponse:
     return MeResponse(as_of=datetime.now(UTC), id=user.id, role=str(user.role))
-
-
-@router.get("/nav", response_model=NavResponse, tags=["meta"])
-def nav(user: CurrentUser) -> NavResponse:
-    now = datetime.now(UTC)
-    return NavResponse(
-        as_of=now,
-        sections=[
-            NavSection(as_of=now, key=k, label=lbl, available=avail, note=note)
-            for k, lbl, avail, note in _SECTIONS
-        ],
-    )

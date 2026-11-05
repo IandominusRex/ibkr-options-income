@@ -10,6 +10,8 @@ Every endpoint the FastAPI app (`src/api/main.py`) exposes. Updated by every rou
   never HTML).
 - **Envelope:** every response body carries a top-level `as_of: <ISO 8601 UTC>` stamp. Headline
   numbers ship as `Sourced{value, source, as_of, stale}` (see `src/api/models/common.py`).
+- **Meta routes:** `GET /health` and `GET /me` only. `GET /nav` was removed in web overhaul Part 4 (the rail
+  comes from `web/lib/nav.ts`).
 - **Errors:** `{ "detail": "<message>" }`. FastAPI's standard 422 validation errors keep their
   nested `detail` array shape.
 
@@ -61,39 +63,6 @@ The authenticated user's identity and role.
 
 ```json
 { "as_of": "2026-09-03T10:00:00Z", "id": "owner", "role": "owner" }
-```
-
----
-
-## `GET /nav`
-
-The navigation manifest that used to drive the web app's left rail. Lists every section with an
-`available` flag; unavailable sections render disabled with their `note` as the reason.
-**No longer read by the web** since web overhaul Part 1 (the rail and tab bar come from
-`web/lib/nav.ts`); the route and its test are removed in Part 4.
-
-**Response — `NavResponse`:**
-
-| Field | Type |
-|---|---|
-| `as_of` | datetime |
-| `sections` | `NavSection[]` |
-
-`NavSection`: `{ as_of, key, label, available, note? }`
-
-**Example:**
-
-```json
-{
-  "as_of": "2026-09-03T10:00:00Z",
-  "sections": [
-    { "as_of": "2026-09-03T10:00:00Z", "key": "research", "label": "Research", "available": true, "note": null },
-    { "as_of": "2026-09-03T10:00:00Z", "key": "options", "label": "Options", "available": true, "note": null },
-    { "as_of": "2026-09-03T10:00:00Z", "key": "portfolio", "label": "Portfolio", "available": true, "note": null },
-    { "as_of": "2026-09-03T10:00:00Z", "key": "pnl", "label": "P&L", "available": true, "note": null },
-    { "as_of": "2026-09-03T10:00:00Z", "key": "universe", "label": "Universe", "available": true, "note": null }
-  ]
-}
 ```
 
 ---

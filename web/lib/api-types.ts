@@ -38,23 +38,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/nav": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Nav */
-        get: operations["nav_nav_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/research/search": {
         parameters: {
             query?: never;
@@ -3987,32 +3970,6 @@ export interface components {
              */
             value_available: boolean;
         };
-        /** NavResponse */
-        NavResponse: {
-            /**
-             * As Of
-             * Format: date-time
-             */
-            as_of: string;
-            /** Sections */
-            sections: components["schemas"]["NavSection"][];
-        };
-        /** NavSection */
-        NavSection: {
-            /**
-             * As Of
-             * Format: date-time
-             */
-            as_of: string;
-            /** Key */
-            key: string;
-            /** Label */
-            label: string;
-            /** Available */
-            available: boolean;
-            /** Note */
-            note?: string | null;
-        };
         /** NewsCalendarResponse */
         NewsCalendarResponse: {
             /**
@@ -6439,26 +6396,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MeResponse"];
-                };
-            };
-        };
-    };
-    nav_nav_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NavResponse"];
                 };
             };
         };
