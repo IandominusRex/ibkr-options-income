@@ -742,6 +742,26 @@ Operate. Dials as the project default.
   "Suspended today" / "Cuts paused today" flag words, three stories ("since" dates, the descriptions
   stay on What Claude knows) and a link there. A position row gains "Weak health" (flag) and a near
   "Event <date>" word from its name's notes. Read-only; no lime.
+- **Value card (2026-11-05):** a white card after Positions, under All (and Value once Home has that
+  filter), titled "Value book" with "$7,200 of $30,000 in use" at the right of the title. A perforated stub
+  does the sum (Ceiling, In use as a minus, Room left as the total). Below it the breakers as words: flag
+  amber "Trend brake on", "Drawdown stop on" and "Trim offered" each with a sentence, a hatched n/a word when a
+  breaker is unknown, "No breaker is on." when none is. The trim has no button here: the line reads "Trim to
+  half is offered in Telegram." A name waiting for cash is a plain sentence. "Held" lists each name (list,
+  shares, average cost, the next exit as words, "sell half at $180.00"; a hatched n/a after the plain label
+  "Next exit:" when none is set) with its value at the right; "Proposals" lists each open proposal (the
+  trade, list and reason in words, who proposed it, the cost of a buy). A proposal that waits on a tap carries
+  the card's one lime control, Review, and how long it has left; one that does not reads "Approved by the
+  system" (or "Approved by your tap") with a neutral word for where it stands (Approved, Waiting for cash,
+  Order sent). Review opens the sheet with the trade in a sentence, who proposed it (Claude's number is named
+  as Claude's), why, and Approve and Reject as the sheet's secondary and quiet buttons, never lime and never
+  carrying Claude's words. Approve opens the confirm dialog first, whose sentence says what the tap may cause
+  ("Approving lets the system buy 20 shares of AAPL at up to $182.40 at its next check. If cash is short it
+  may close up to 2 of your wheel's cash-secured puts at breakeven or better to fund it."; for a sale that
+  only Claude's number makes, it opens with "Only Claude's number makes this sale."). A receipt follows the
+  command; an approved one says nothing has been sent yet, because the order goes out at the next check; a
+  stale card reads "This card is out of date; refresh it." Unavailable reads "The value book has not written
+  anything yet."; off reads "The value book is off." No new token, colour, font, radius or elevation.
 
 ### Position
 Operate. Dials as the project default. Added 2026-10-15 at the operator's request: pressing a
@@ -963,6 +983,15 @@ sibling keys; re-run the check after edits.
 
 ## Decision Log
 
+- 2026-11-05: **Value card on Home** (value book Part 6, Section F). Added the "Value book" card after
+  Positions (Surfaces, Home) and its decide flow in `components/value/`: a new `ValueDecide` that mirrors the
+  protected `DecideControls` shape (confirm first, one command, a receipt, in-flight disable, persistence
+  under `value:<proposal id>`) and sends `value_approve` / `value_reject` with the fingerprint from
+  `GET /value/book`. Approve and Reject use the Button primitive as secondary and quiet inside the review
+  sheet; lime stays on Review. No new token, colour, font, radius or elevation. Critique and audit at 1440px
+  and 390px, light and dark, found three things, fixed: the missing next exit was one long hatched phrase
+  (now a plain label and a hatched n/a), a waiting-for-cash word repeated beside its own sentence, and the
+  sheet's expiry ran on after the reason in lower case.
 - 2026-10-28: **Portfolio, Trades, Activity and refresh follow-ups**, at the operator's request. The Account
   card's hero is now a two-ring donut (net liquidation in the centre, buying power used outside, cash left
   inside) in place of two long figure blocks; the name card gains the price at its top right, the open P&L as

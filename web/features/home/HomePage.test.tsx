@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
@@ -30,6 +30,7 @@ const responses = {
   "/options/shorts": { as_of: "", shorts: [] }, "/portfolio/positions": { as_of: "", source: "none", degraded: true, groups: [] },
   "/spreads/positions": { as_of: "", available: false, underlying: "SPY", mode: "paper", positions: [] },
   "/options/approvals": { as_of: "", approvals: [] },
+  "/value/book": { as_of: "", available: false, enabled: false, positions: [], proposals: [], funding: [], release_max_closes: 2 },
   "/options/controls": { as_of: "", autonomy: { level: "a", label: "A" }, rungs: [], halted: false, halt_reason: null, halted_at: null, mode: "paper", drain_healthy: true, drain_last_seen: null, pending_commands: 0 },
 };
 
@@ -44,6 +45,20 @@ describe("HomePage", () => {
     for (let i = 1; i < order.length; i++) {
       expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }
+  });
+  it("puts the Value book card right after Positions, under All only", async () => {
+    nav.params = new URLSearchParams();
+    renderWithQuery(<HomePage />, responses);
+    const positions = await screen.findByRole("heading", { name: "Positions" });
+    const value = await screen.findByRole("heading", { name: "Value book" });
+    expect(positions.compareDocumentPosition(value) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(await screen.findByText("The value book has not written anything yet.")).toBeInTheDocument();
+    cleanup();
+    nav.params = new URLSearchParams("strategy=csp");
+    renderWithQuery(<HomePage />, responses);
+    await screen.findByRole("heading", { name: "Positions" });
+    expect(screen.queryByRole("heading", { name: "Value book" })).toBeNull();
+    nav.params = new URLSearchParams();
   });
   it("puts Done today under Positions on a phone, where it is the page's last card", async () => {
     renderWithQuery(<HomePage />, responses);

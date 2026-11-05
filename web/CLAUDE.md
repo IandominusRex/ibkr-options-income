@@ -772,6 +772,24 @@ components/
                     `rounded-full border-focus/40 text-focus` chips). Every `SourceRefs`
                     file path is a real path checked against the tree at write time, not a
                     guess.
+  value/            The value book (value book Part 6, Section F). ValueCard (react-query on
+                    GET /value/book, key ["value","book"]: the ceiling as a sum and a Stub, the
+                    breakers as words, the held names with their next exit, the open proposals;
+                    shown on Home under All; `available: false` and `enabled: false` each read as a
+                    sentence, an unknown figure is a hatched n/a), ValueProposalRow (Review, lime,
+                    only while a proposal waits on a tap, opening the sheet), ValueDecide (the
+                    approve and reject flow, a NEW component that mirrors the shape of the protected
+                    options/DecideControls and does not edit it: ConfirmAction first, one
+                    `POST /commands` of `value_approve` or `value_reject` carrying the proposal id
+                    and the fingerprint from the book response, CommandReceipt, both buttons
+                    disabled in flight, the in-flight command persisted under `value:<proposal id>`
+                    through lib/commands.ts's helpers, the live second confirmation handled like
+                    DecideControls), `types.ts` (aliases over the generated api-types) and
+                    `format.ts` (the sentences: the sum, the next exit, the confirm text naming the
+                    wheel puts a buy may close, the reason codes in words). The value flow lives here
+                    so `grep -rn "submitCommand\|confirmCommand" web/features` still prints only
+                    features/more/TargetCard. A trim has no web button (plan ruling 10): the card
+                    says it is offered in Telegram. Claude's words never sit on a button.
 features/
   home/             Web overhaul Part 1: the Home page. HomePage (strategy switcher with
                     pending counts, then AccountHero, ProposalsBanner below 1024px, PayCard,

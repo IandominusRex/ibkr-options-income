@@ -1,5 +1,6 @@
 "use client";
 
+import { ValueCard } from "@/components/value/ValueCard";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { STRATEGY_FILTERS, STRATEGY_LABEL, kindOf } from "@/lib/strategy";
 import { useHydrated } from "@/lib/useHydrated";
@@ -51,6 +52,9 @@ export function HomePage() {
             <MarketCard variant="home" />
           </div>
           <PositionsCard strategy={strategy} />
+          <div className="mt-4 empty:hidden">
+            <ValueCard strategy={strategy} />
+          </div>
         </div>
         <div className="hidden lg:col-start-2 lg:row-start-1 lg:block">
           <NeedsYou strategy={strategy} />
