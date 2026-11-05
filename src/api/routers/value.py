@@ -140,8 +140,10 @@ def _breakers(state: dict[str, dict], now: datetime, trim_pct: float) -> ValueBr
     )
 
 
-# The value drain's slow steps (the night, the RTH cycle) hold the drain for a minute or two; a
-# Claude read drains between items. Five minutes covers them without hiding a dead process long.
+# The value drain's slow steps (the night, the RTH cycle) hold the drain while they run; a Claude
+# read drains between items. Five minutes covers the usual ones without hiding a dead process long.
+# A run longer than five minutes (the night has no drain between items) reads stale, with its true
+# last-seen time, until it finishes.
 VALUE_DRAIN_FLOOR_SECONDS = 300
 
 

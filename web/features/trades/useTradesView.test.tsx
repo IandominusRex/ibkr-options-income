@@ -103,6 +103,10 @@ describe("tradesReturnQuery", () => {
   });
   it("validates each: an unknown view, an impossible day and an unknown strategy are dropped", () => {
     expect(tradesReturnQuery(new URLSearchParams("view=nope&day=2026-02-30&strategy=value"))).toBe("");
+    // An inherited property name is not a view (review fix: `in` walked the prototype chain).
+    for (const junk of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+      expect(tradesReturnQuery(new URLSearchParams({ view: junk }))).toBe("");
+    }
     expect(tradesReturnQuery(new URLSearchParams("view=assessed&day=junk&strategy=zzz"))).toBe("view=assessed");
   });
   it("is empty for nothing, and for no params at all", () => {

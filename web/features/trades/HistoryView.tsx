@@ -196,6 +196,8 @@ function InFlight({
   );
 }
 
+const NOT_TRADED_LIMIT = 200;
+
 function NotTraded({ strategy, day, detailQuery }: { strategy: StrategyFilter; day: string; detailQuery: string }) {
   // The approvals route filters by UTC date; ask for the day either side and keep New York's day.
   const since = shiftDay(day, -1);
@@ -203,13 +205,13 @@ function NotTraded({ strategy, day, detailQuery }: { strategy: StrategyFilter; d
   const q = useQuery({
     queryKey: ["options", "approvals", "range", since, until],
     queryFn: () =>
-      apiFetch<ApprovalListResponse>(`/options/approvals?status=all&since=${since}&until=${until}&limit=200`),
+      apiFetch<ApprovalListResponse>(`/options/approvals?status=all&since=${since}&until=${until}&limit=${NOT_TRADED_LIMIT + 1}`),
     refetchInterval: 60_000,
   });
   if (!q.data && !q.isError) return null;
-  const rows = q.data ? notTradedRows(q.data.approvals, day, strategy) : [];
-  // The read asks for 200 and a full answer may have more behind it: an older proposal may be missing.
-  const capped = (q.data?.approvals.length ?? 0) >= 200;
+  // The read asks for one more than it shows: 201 back proves an older proposal is missing, exactly 200 does not.
+  const capped = (q.data?.approvals.length ?? 0) > NOT_TRADED_LIMIT;
+  const rows = q.data ? notTradedRows(q.data.approvals.slice(0, NOT_TRADED_LIMIT), day, strategy) : [];
   if (q.data && rows.length === 0 && !capped) return null;
   return (
     <section aria-labelledby="not-traded-title">

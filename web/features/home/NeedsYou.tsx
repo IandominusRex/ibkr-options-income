@@ -27,8 +27,14 @@ export function usePendingApprovals(strategy: StrategyFilter) {
 export function NeedsYou({ strategy }: { strategy: StrategyFilter }) {
   const { data, isError, visible } = usePendingApprovals(strategy);
   const [reviewing, setReviewing] = useState<ApprovalSummary | null>(null);
-  const valueWaiting = waitingProposals(useValueBook().data)?.length ?? 0;
+  const valueBook = useValueBook().data;
+  const waiting = waitingProposals(valueBook);
+  const valueWaiting = waiting?.length ?? 0;
   const showsValue = strategy === "all" || strategy === "value";
+  // Unknown is not none: with the value rows shown, "Nothing needs you" is said only once the book is read (an
+  // empty list) or is off and never wrote. An errored, still-loading or on-but-unreadable book stays silent
+  // here and <ValueWaiting/> speaks alone (whole-branch review fix).
+  const valueSettled = !showsValue || (valueBook !== undefined && (waiting !== null || !valueBook.enabled));
 
   let body: ReactNode;
   if (strategy === "spread") {
@@ -43,7 +49,7 @@ export function NeedsYou({ strategy }: { strategy: StrategyFilter }) {
     body = <div className="h-24 rounded-[18px] bg-surface" role="status" aria-busy="true" aria-label="Loading proposals" />;
   } else if (visible.length === 0) {
     // A value proposal listed below is something that needs you: the sentence would contradict the row.
-    body = valueWaiting > 0 ? null : <p className="text-sm text-muted">Nothing needs you right now.</p>;
+    body = valueWaiting > 0 || !valueSettled ? null : <p className="text-sm text-muted">Nothing needs you right now.</p>;
   } else {
     body = (
       <div className="grid gap-3">

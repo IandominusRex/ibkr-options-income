@@ -91,9 +91,47 @@ describe("NeedsYou", () => {
     });
     expect(await screen.findByText("Credit spreads trade on their own in paper. Nothing here needs you.")).toBeInTheDocument();
   });
-  it("says so when nothing is waiting", async () => {
-    renderWithQuery(<NeedsYou strategy="all" />, { "/options/approvals": list(), "/options/controls": controls });
+  // Review fix (whole-branch, Important): an unknown value book is not an empty one. Under All, with no wheel
+  // proposal, "Nothing needs you right now." beside "a value proposal may be waiting" contradicted itself.
+  const valueBook = (over: Record<string, unknown> = {}) => ({
+    as_of: "2026-11-05T15:00:00Z", available: true, enabled: true, ceiling_usd: 30000, used_usd: 0, positions: [],
+    proposals: [], funding: [], release_max_closes: 2, drain_healthy: true, drain_last_seen: null, ...over,
+  });
+  const couldNotRead = "The value book could not be read, so a value proposal may be waiting.";
+  it("says so when nothing is waiting and the value book was read empty", async () => {
+    renderWithQuery(<NeedsYou strategy="all" />, {
+      "/options/approvals": list(),
+      "/options/controls": controls,
+      "/value/book": valueBook(),
+    });
     expect(await screen.findByText("Nothing needs you right now.")).toBeInTheDocument();
+  });
+  it("says so when the value book is off and never wrote (nothing to miss)", async () => {
+    renderWithQuery(<NeedsYou strategy="all" />, {
+      "/options/approvals": list(),
+      "/options/controls": controls,
+      "/value/book": valueBook({ available: false, enabled: false }),
+    });
+    expect(await screen.findByText("Nothing needs you right now.")).toBeInTheDocument();
+    expect(screen.queryByText(couldNotRead)).toBeNull();
+  });
+  it("says so under a filter that does not show the value book, whatever the book does", async () => {
+    renderWithQuery(<NeedsYou strategy="cc" />, { "/options/approvals": list(), "/options/controls": controls });
+    expect(await screen.findByText("Nothing needs you right now.")).toBeInTheDocument();
+  });
+  it("does not say nothing needs you when the value book request failed", async () => {
+    renderWithQuery(<NeedsYou strategy="all" />, { "/options/approvals": list(), "/options/controls": controls });
+    expect(await screen.findByText(couldNotRead)).toBeInTheDocument();
+    expect(screen.queryByText("Nothing needs you right now.")).toBeNull();
+  });
+  it("does not say nothing needs you when the value book is on but unreadable", async () => {
+    renderWithQuery(<NeedsYou strategy="all" />, {
+      "/options/approvals": list(),
+      "/options/controls": controls,
+      "/value/book": valueBook({ available: false, enabled: true }),
+    });
+    expect(await screen.findByText(couldNotRead)).toBeInTheDocument();
+    expect(screen.queryByText("Nothing needs you right now.")).toBeNull();
   });
   it("Review opens the sheet with the decide controls; the card itself decides nothing", async () => {
     renderWithQuery(<NeedsYou strategy="all" />, {

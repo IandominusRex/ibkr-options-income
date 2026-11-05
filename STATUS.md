@@ -450,6 +450,16 @@ Open Decisions before Part 7.
   only restoring and clearing on a terminal state are pinned. A save-side case is a follow-up.
 - Home's `PositionsCard` still says "No portfolio snapshot has been captured yet." under the Value chip with an
   empty book (Portfolio's view skips it).
+- **Accepted costs found in the whole-branch review (2026-11-05), documented and not fixed:**
+  (a) a book switched off after it sold, whose value.db later cannot be read, answers `enabled: false,
+  available: false` and so hides the "Value book unavailable" flag beside P&L (ruling 7: a book that is off
+  and unreadable is read as never having written; the sales it made are the cost). (b) The mixed phone banner
+  can read "2 proposals need you" with a wheel and a value proposal while its lime Open goes to Trades, where
+  only the wheel one is listed (ruling 15; the value one is reached from the Needs you rows or the Value card).
+  (c) An enabled book whose value.db does not exist yet reads "could not be read" (not strictly accurate; it
+  errs safe). (d) The value drain heartbeat can read "Not checking" during a night run longer than 300 s,
+  because the value process's `_tick` runs no drain between items; the note's time is the true last-seen
+  time, and the comment in `src/api/routers/value.py` says so.
 - The stale comments in the protected `AutonomyControl`, `HaltControl` and `DecideControls` (they name
   `ControlsStrip` and `ApprovalCard.test.tsx`), and comment-only mentions of deleted files inside four test files,
   stay as written.

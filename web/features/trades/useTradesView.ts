@@ -77,7 +77,7 @@ export function tradesReturnQuery(params: { get(name: string): string | null } |
   if (params === null) return "";
   const out = new URLSearchParams();
   const view = params.get("view");
-  if (view !== null && view in VIEW_LABEL) out.set("view", view);
+  if (view !== null && Object.hasOwn(VIEW_LABEL, view)) out.set("view", view);
   const day = params.get("day");
   if (day !== null && isCalendarDay(day)) out.set("day", day);
   const strategy = params.get("strategy");

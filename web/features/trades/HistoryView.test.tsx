@@ -182,7 +182,7 @@ describe("HistoryView", () => {
     serve({ range: [approval({ id: 3, status: "expired", created_at: "2026-10-15T03:00:00Z" })] });
     mount();
     await screen.findByRole("region", { name: "Traded" });
-    expect(apiFetchMock.mock.calls.some((c) => c[0] === "/options/approvals?status=all&since=2026-10-14&until=2026-10-16&limit=200")).toBe(true);
+    expect(apiFetchMock.mock.calls.some((c) => c[0] === "/options/approvals?status=all&since=2026-10-14&until=2026-10-16&limit=201")).toBe(true);
     // 03:00 UTC on the 15th is the 14th in New York.
     expect(screen.queryByRole("region", { name: "Not traded" })).toBeNull();
   });
@@ -265,8 +265,8 @@ describe("HistoryView", () => {
       expect(within(not).getByText("Proposals that did not trade could not be loaded right now.")).toBeInTheDocument();
     });
 
-    it("says the newest 200 were read when the read hit the limit", async () => {
-      const rows = Array.from({ length: 200 }, (_, i) =>
+    it("says the newest 200 were read when the read came back with more than 200", async () => {
+      const rows = Array.from({ length: 201 }, (_, i) =>
         approval({ id: 1000 + i, status: "expired", underlying: "KO", created_at: "2026-10-15T14:00:00Z" }),
       );
       serve({ range: rows });
@@ -279,11 +279,22 @@ describe("HistoryView", () => {
     });
 
     it("says the limit even when none of the 200 is that day's", async () => {
-      const rows = Array.from({ length: 200 }, (_, i) => approval({ id: 1000 + i, status: "expired", created_at: "2026-10-14T14:00:00Z" }));
+      const rows = Array.from({ length: 201 }, (_, i) => approval({ id: 1000 + i, status: "expired", created_at: "2026-10-14T14:00:00Z" }));
       serve({ range: rows });
       mount();
       const not = await screen.findByRole("region", { name: "Not traded" });
       expect(within(not).getByText(/Only the newest 200 proposals/)).toBeInTheDocument();
+    });
+
+    it("says nothing about a limit when the window holds exactly 200 (nothing older is missing)", async () => {
+      const rows = Array.from({ length: 200 }, (_, i) =>
+        approval({ id: 1000 + i, status: "expired", underlying: "KO", created_at: "2026-10-15T14:00:00Z" }),
+      );
+      serve({ range: rows });
+      mount();
+      const not = await screen.findByRole("region", { name: "Not traded" });
+      expect(within(not).queryByText(/Only the newest 200/)).toBeNull();
+      expect(within(not).getAllByRole("link").length).toBe(200);
     });
 
     it("renders neither section for a successful empty read, and no limit sentence under 200 rows", async () => {
