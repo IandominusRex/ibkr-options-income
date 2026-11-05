@@ -4,6 +4,7 @@ import { useState } from "react";
 import { CommandPalette } from "@/components/search/CommandPalette";
 import { SectorGrid } from "@/components/home/SectorGrid";
 import { WatchlistTable } from "@/components/home/WatchlistTable";
+import { TopOpportunities } from "@/features/research/TopOpportunities";
 
 export default function Home() {
   const [searchOpen, setSearchOpen] = useState(false);
@@ -24,6 +25,11 @@ export default function Home() {
         </button>
       </div>
       <CommandPalette open={searchOpen} onOpenChange={setSearchOpen} />
+
+      <section className="mt-10">
+        <h2 className="mb-3 text-sm font-medium tracking-wide text-muted">Top opportunities</h2>
+        <TopOpportunities />
+      </section>
 
       <section className="mt-10">
         <h2 className="mb-3 text-sm font-medium tracking-wide text-muted">Watchlist</h2>

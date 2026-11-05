@@ -143,7 +143,8 @@ app/                App Router pages and the root layout
                     row with the page title and a visible
                     search-bar button (opens the same <CommandPalette/> ⌘K does — the
                     page owns `searchOpen` state and passes it as controlled
-                    `open`/`onOpenChange` props), then WatchlistTable, then SectorGrid
+                    `open`/`onOpenChange` props), then <TopOpportunities/> (features/research/),
+                    then WatchlistTable, then SectorGrid
                     (ordered by IV rank). A client component because the watchlist and
                     sector grid use react-query.
   research/universe/  (moved from universe/; `/universe` redirects here) Universe page: react-query on GET /universe (M7: `lists[]`, one
@@ -806,6 +807,20 @@ features/
                     Claude's text carries a "Claude's ..." label with the date it was read against; a
                     hatched n/a is an unknown; Claude's words never sit on a button. Mounted by one line in
                     app/stock/[symbol]/page.tsx after NameNotes.
+  research/         Top opportunities (value book Part 6, Section H), the strip above the watchlist.
+                    TopOpportunities (two tabs on a SegmentedControl, Deep value and Quality growth; react-query
+                    on GET /value/top?list=, key ["value","top",list], only the list on view is fetched; a second
+                    query, key ["value","top","assessed-passed"], reads `GET /options/assessed?run=latest&stage=
+                    passed&limit=1000` only when a shown name has a `put_ceiling`), OpportunityCard (name, list,
+                    verdict and who decided it, PriceBar, margin of safety, Python's reasons, the age, and two
+                    links), PriceBar (one static bar: price, entry ceiling, fair value with the half sale, the stop
+                    when the API has one; labels in rows so none overlaps; unknown levels are not drawn), `format.ts`
+                    (`readyFirst`, `layoutBar`, `reasonSentence`, `sellPutAvailable`, the two hrefs) and `types.ts`
+                    (aliases over the generated api-types). Reads and links only: "Buy shares" is a link to
+                    `/stock/SYM#value-block-SYM`, "Sell a put up to $C" a link to `/trades?view=assessed&strategy=
+                    csp&symbol=SYM` shown only when a passed CSP candidate at or under the ceiling is in the latest
+                    scan. The strip never reaches `submitCommand` or `confirmCommand`. `?symbol=` is read by
+                    TradesPage and seeds AssessedBrowser's Symbol filter (`initialSymbol`).
   home/             Web overhaul Part 1: the Home page. HomePage (strategy switcher with
                     pending counts, then AccountHero, ProposalsBanner below 1024px, PayCard,
                     PositionsCard; the NeedsYou column from 1024px; renders the bare page

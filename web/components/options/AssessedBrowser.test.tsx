@@ -181,4 +181,14 @@ describe("AssessedBrowser", () => {
     expect(screen.getByLabelText("Stage")).toBeDefined();
     expect(screen.getByLabelText("Symbol")).toBeDefined();
   });
+
+  it("starts with the symbol filter it is given", async () => {
+    const { apiFetch } = await import("@/lib/api");
+    (apiFetch as any).mockResolvedValue({ as_of: "x", run_id: "r1", computed_at: null, groups: [] });
+    withClient(<AssessedBrowser initialSymbol="googl" />);
+    expect(await screen.findByDisplayValue("googl")).toBeDefined();
+    await screen.findByText(/No assessed contracts/i);
+    const calls = (apiFetch as any).mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(calls.some((c: string) => c.includes("symbol=GOOGL"))).toBe(true);
+  });
 });

@@ -140,6 +140,16 @@ describe("TradesPage", () => {
     expect(apiFetchMock.mock.calls.some((c) => c[0] === "/pnl/day?date=2026-10-09&strategy=all")).toBe(true);
   });
 
+  it("opens Assessed filtered to ?symbol= (the link Top opportunities uses)", async () => {
+    nav.params = new URLSearchParams("view=assessed&strategy=csp&symbol=googl");
+    mount();
+    const input = await screen.findByLabelText("Symbol");
+    expect(input).toHaveValue("GOOGL");
+    expect(
+      apiFetchMock.mock.calls.some((c) => String(c[0]).startsWith("/options/assessed") && String(c[0]).includes("symbol=GOOGL")),
+    ).toBe(true);
+  });
+
   it("writes the view into the URL", async () => {
     mount();
     const views = await screen.findByRole("group", { name: "View" });

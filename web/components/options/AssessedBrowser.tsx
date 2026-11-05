@@ -25,9 +25,13 @@ export function stageCounts(contracts: AssessedContract[]): string {
     .join(" · ");
 }
 
-export function AssessedBrowser({ strategy = "all" }: { strategy?: StrategyFilter } = {}) {
+/** `initialSymbol` seeds the Symbol filter once (a link such as Research's "Sell a put" carries `?symbol=`). */
+export function AssessedBrowser({
+  strategy = "all",
+  initialSymbol = "",
+}: { strategy?: StrategyFilter; initialSymbol?: string } = {}) {
   const [stageFilter, setStageFilter] = useState<AssessedStage | "all">("all");
-  const [symbolFilter, setSymbolFilter] = useState("");
+  const [symbolFilter, setSymbolFilter] = useState(initialSymbol);
   const stageId = useId();
   const symbolId = useId();
 

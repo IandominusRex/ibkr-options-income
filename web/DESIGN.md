@@ -896,6 +896,26 @@ the figure face.
 ### Research
 Read. Search, watchlist, sectors, the stock page, and Universe. VARIANCE 3, DENSITY 6.
 
+- **Top opportunities (2026-11-05):** a strip above the watchlist, headed "Top opportunities", with two tabs on
+  the strategy-switch track, Deep value and Quality growth (only the list on view is fetched). Up to ten white
+  cards a list in two columns from 768px, READY first, then Watch, then Wait. A card names the stock, the list,
+  and the verdict as a neutral status word, with one line on who decided it ("Python only", or "Claude's verdict
+  decides this. Python's gates still apply."). One static bar follows: a sunk track with the price as a filled
+  dot, the entry ceiling as a dashed tick, fair value as a tall tick (the half sale sits at the same price today
+  and shares its label: "Fair value, half sale") and the stop as a short muted tick when the API supplies one;
+  the span between price and fair value is a slightly darker fill. Every mark carries a two-line label, the name
+  and the number, in rows under the track so none overlaps; a thin leader joins a lower row's label to its mark.
+  A level with no number is not drawn: a line under the bar reads "Not on the bar: Stop" and a hatched n/a (the
+  stop is unknown for every name today). Then the margin of safety as a figure line (hatched n/a when unknown),
+  "Python's reasons" (up to three plain sentences from the baseline's reason codes), and the file's age ("Scorecard
+  1 day old"; a hatched n/a when unknown). The two links are secondary pills, never lime, because they act on
+  nothing: "Buy shares" (READY only) goes to the stock page's value block, where the book's own decide flow lives;
+  "Sell a put up to $190.00" appears only when the book has a put ceiling and the latest scan has a passed
+  cash-secured put at or under it, and opens Trades, Assessed on that name. The strip sends no command and has no
+  button but the two tabs. Claude's one-line note is not shown, because the API does not carry one. Unavailable
+  reads "The value book has not written anything yet."; an empty list names the list. No new token, colour,
+  font, radius or elevation.
+
 - **Value block (2026-11-05):** a white card on the stock page under the name notes, titled "Value book on
   GOOGL" with the file's age at the right ("Scorecard of Nov 4, 2026, 1 day old"; "Worked out just now from the
   latest filings" when the page recomputed it on open; "Fetching the filings" while it is pending, and the page
@@ -1012,6 +1032,14 @@ sibling keys; re-run the check after edits.
 
 ## Decision Log
 
+- 2026-11-05: **Top opportunities on Research** (value book Part 6, Section H). Added the strip above the
+  watchlist (Surfaces, Research) in `features/research/`. The price bar is a new component, not a new token:
+  it uses only the sunk and border fills, the ink and muted text colours and the hatch, no animation, and its
+  labels never rely on colour (each level has its own mark shape and a printed name and number). The strip is
+  read-only and links only. Critique and audit at 1440px and 390px (light) against a mock of `GET /value/top`
+  found two things, fixed: a lower row's leader line ran through another label (labels now sit over the leaders
+  on the card's own fill) and the file's age floated under a short card (now pinned to the foot). Not captured:
+  dark, because the scratch build follows the stored theme preference, not the OS.
 - 2026-11-05: **Value block on the stock page** (value book Part 6, Section G). Added the "Value book on
   SYMBOL" card under the name notes (Surfaces, Research) in `features/stock-value/`, mounted with one line.
   The one command it sends, `value_analyse`, lives in `AnalyseButton` (confirm-less, with a receipt), so the

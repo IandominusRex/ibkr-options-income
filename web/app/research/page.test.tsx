@@ -33,4 +33,12 @@ describe("Home — visible search bar", () => {
     fireEvent.click(screen.getByRole("button", { name: /search a ticker/i }));
     expect(screen.getByPlaceholderText(/search a ticker or company/i)).toBeDefined();
   });
+
+  it("puts Top opportunities above the watchlist", () => {
+    withClient(<Home />);
+    const top = screen.getByRole("heading", { name: "Top opportunities" });
+    const watch = screen.getByRole("heading", { name: "Watchlist" });
+    expect(top.compareDocumentPosition(watch) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Opportunity list" })).toBeDefined();
+  });
 });

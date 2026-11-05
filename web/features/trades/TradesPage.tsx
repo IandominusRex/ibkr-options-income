@@ -6,6 +6,7 @@ import { useControls } from "@/components/shell/BotCard";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { RefreshButton } from "@/components/shell/RefreshButton";
 import { usePendingApprovals } from "@/features/home/NeedsYou";
+import { useSearchParams } from "next/navigation";
 import { STRATEGY_FILTERS, STRATEGY_LABEL, kindOf } from "@/lib/strategy";
 import { useHydrated } from "@/lib/useHydrated";
 import { useStrategyFilter } from "@/lib/useStrategyFilter";
@@ -31,6 +32,8 @@ export function TradesPage() {
   // The count never arrives when that request failed: the default view must not wait for it forever.
   const [view, setView] = useTradesView(strategy, pendingCount, scoped.isError && !scoped.data);
   const [dayParam, setDay] = useTradesDay();
+  // Assessed opens on one name when the link says so (Research's Top opportunities).
+  const symbolParam = (useSearchParams().get("symbol") ?? "").trim().toUpperCase().slice(0, 12);
   const inFlight = useInFlightCount(strategy, submitted);
   const controls = useControls();
   const today = todayInNewYork();
@@ -93,7 +96,7 @@ export function TradesPage() {
             onSettled={clearSubmitted}
           />
         )}
-        {view === "assessed" && <AssessedBrowser strategy={strategy} />}
+        {view === "assessed" && <AssessedBrowser strategy={strategy} initialSymbol={symbolParam} />}
         {view === "spreads" && <SpreadsView />}
       </div>
     </div>
