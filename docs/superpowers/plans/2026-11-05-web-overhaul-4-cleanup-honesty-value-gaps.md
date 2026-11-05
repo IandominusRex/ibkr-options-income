@@ -103,9 +103,9 @@ check's count.
 | Section / task | Status | Commits | Gate | Date | Rulings |
 |---|---|---|---|---|---|
 | **Plan written** | done | (plan file only) | Sections A and B prototyped on a code-only copy of `main` at ca14c40 (see Self-review): full pytest 5666 passed + 1 skipped, with 3 failures that need a git checkout (`test_private_config_files_are_gitignored`, `test_a_relative_ai_workdir_stays_gitignored`, `test_spreads_runtime_files_are_gitignored`: the copy is not a repo), so 5669 expected in the worktree (5665 + 5 - 1); ruff check clean; mypy src clean; `test_openapi_current` green after regeneration. Web sections not prototyped (ruling 31) | 2026-11-05 | Written from the HANDOFF section 7.1 brief, re-checked against the code; corrections are rulings 1-9; the HANDOFF's six operator questions take its defaults (ruling 10). |
-| **A0 setup** | pending | | | | |
-| **Section A entry** | pending | | | | |
-| **Task 1: a capital-release close says why** | pending | | | | |
+| **A0 setup** | done | 20fcd7e (plan + handoff on main) | df 21 GiB free | 2026-11-05 | worktree `.claude/worktrees/web-overhaul-4` on `feat/web-overhaul-4`, .venv and web/node_modules symlinked, init_db run |
+| **Section A entry** | done | | A1 anchors all print; A2 empty; A3 pytest 5665 passed + 1 skipped, ruff clean, mypy 361 files (plan said 360; baseline is what the worktree shows), vitest 1485 in 152 files, tsc and lint clean | 2026-11-05 | mypy baseline is 361 files, not 360 (cost: none) |
+| **Task 1: a capital-release close says why** | done | this commit (`fix(reporting): a capital-release close says why`) | red 2 failed as planned; `test_reporting_day.py` 36 passed; full pytest 5667 passed + 1 skipped (baseline 5665 + 2); ruff clean; mypy 361 files clean | 2026-11-05 | none: every block applied as written (ARCHITECTURE.md anchor is on line 1137 as planned) |
 | **Task 2: the value drain heartbeat** | pending | | | | |
 | **Section A exit / early merge** | pending | | | | |
 | **Section B entry** | pending | | | | |
@@ -461,7 +461,7 @@ Then the early-merge question (Execution model).
 
 **Files:** Modify `src/reporting/day.py`, `tests/test_reporting_day.py`, `ARCHITECTURE.md`, this plan.
 
-- [ ] **Step 1: Write the failing tests.** In `tests/test_reporting_day.py`, replace line 158
+- [x] **Step 1: Write the failing tests.** In `tests/test_reporting_day.py`, replace line 158
 
 ```python
         ("manual", "Closed outside the system", "reconciled"),
@@ -487,9 +487,9 @@ def test_every_close_reason_but_a_roll_has_words_of_its_own() -> None:
 
 ```
 
-- [ ] **Step 2: Run them red.** `python -m pytest -q tests/test_reporting_day.py` → 2 failed (the
+- [x] **Step 2: Run them red.** `python -m pytest -q tests/test_reporting_day.py` → 2 failed (the
   `capital_release` case reads "the reason was not recorded"; the guard finds `CAPITAL_RELEASE` missing).
-- [ ] **Step 3: Add the words.** In `src/reporting/day.py`, replace lines 285-287
+- [x] **Step 3: Add the words.** In `src/reporting/day.py`, replace lines 285-287
 
 ```python
         "the account next reconciled.",
@@ -515,11 +515,11 @@ with
   (The sentence matches `src/execution/capital_release.py`: the fewest wheel CSPs at breakeven or better,
   `max_price = entry_credit x (1 - release.min_profit_pct / 100)`; "approved" covers a tap and an
   autonomy-approved buy, ruling 7 of value Part 5.)
-- [ ] **Step 4: Green.** `python -m pytest -q tests/test_reporting_day.py` → 36 passed.
-- [ ] **Step 5: Docs.** In `ARCHITECTURE.md` line 1137 (the `day.py` row), after "closed (the `CloseReason`
+- [x] **Step 4: Green.** `python -m pytest -q tests/test_reporting_day.py` → 36 passed.
+- [x] **Step 5: Docs.** In `ARCHITECTURE.md` line 1137 (the `day.py` row), after "closed (the `CloseReason`
   stamped on the buy-back fill," insert "including a capital release (web overhaul Part 4: "Closed to fund a
   value-book buy."; every reason except a roll has words, test-pinned),".
-- [ ] **Step 6: Gate and commit.** `ruff format src/reporting/day.py tests/test_reporting_day.py`;
+- [x] **Step 6: Gate and commit.** `ruff format src/reporting/day.py tests/test_reporting_day.py`;
   `python -m pytest -q && ruff check . && mypy src` (pytest baseline + 2). Fill this task's and A0's rows; commit
   `fix(reporting): a capital-release close says why, not "the reason was not recorded"`.
 

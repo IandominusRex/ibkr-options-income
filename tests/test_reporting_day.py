@@ -156,6 +156,7 @@ def test_the_new_york_day_decides_not_utc(db) -> None:
         ("loss_exit", "Closed at the loss limit", "loss limit"),
         ("defensive", "Closed defensively", "you chose it"),
         ("manual", "Closed outside the system", "reconciled"),
+        ("capital_release", "Closed to fund a value-book buy", "breakeven or better"),
         (None, "reason was not recorded", "predates"),
     ],
 )
@@ -171,6 +172,14 @@ def test_a_buy_back_says_why_in_the_words_of_its_close_reason(db, reason, headli
     assert headline in (t.reason or "")
     rule_fact = next(f for f in t.facts if f.label == "Rule")
     assert rule in rule_fact.text and rule_fact.source == "system"
+
+
+def test_every_close_reason_but_a_roll_has_words_of_its_own() -> None:
+    """A roll is its own card; every other stamped reason must say why in words. A reason added to
+    CloseReason without words here would read "the reason was not recorded", which is false."""
+    from src.reporting.day import _CLOSE_RULE
+
+    assert set(CloseReason) - set(_CLOSE_RULE) == {CloseReason.ROLL}
 
 
 def test_a_closed_card_shows_the_whole_trade_so_its_stub_can_sum(db) -> None:

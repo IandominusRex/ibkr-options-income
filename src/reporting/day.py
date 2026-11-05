@@ -284,6 +284,13 @@ _CLOSE_RULE: dict[CloseReason, tuple[str, str]] = {
         "The position was bought back at the broker, not by this system. It was recorded when "
         "the account next reconciled.",
     ),
+    CloseReason.CAPITAL_RELEASE: (
+        "Closed to fund a value-book buy.",
+        "An approved value-book buy needed more cash than the account had free, so the system "
+        "bought this put back to release the cash it secured. A release closes only at breakeven "
+        "or better: the buy-back may not cost more than the premium taken in, less the required "
+        "profit.",
+    ),
 }
 
 
