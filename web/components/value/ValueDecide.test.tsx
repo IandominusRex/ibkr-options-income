@@ -162,4 +162,17 @@ describe("ValueDecide", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("The command could not be created. Nothing was sent.");
     expect(screen.getByRole("button", { name: "Approve" })).not.toBeDisabled();
   });
+  it("says in its own words that the value process is not checking, and never names the trading service", async () => {
+    submitCommand.mockResolvedValue(cmd());
+    show(buy, {
+      "/value/book": {
+        as_of: "2026-11-05T15:00:00Z", available: true, enabled: true, positions: [], proposals: [], funding: [],
+        release_max_closes: 2, drain_healthy: false, drain_last_seen: "2026-11-05T19:31:00Z",
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Approve" }));
+    expect(await screen.findByTestId("value-drain-note")).toHaveTextContent("last checked for taps");
+    expect(screen.queryByTestId("stalled-words")).toBeNull();
+  });
 });

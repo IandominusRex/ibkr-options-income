@@ -118,7 +118,7 @@ check's count.
 | **Task 7: delete the sixteen unmounted files** | done | (this commit; `chore(web): delete the sixteen files Parts 2 and 3 left unmounted, their live coverage ported`) | `git rm` of 16 sources + 9 tests (25 files); tsc clean before and after the comment edits; the C2 loop prints nothing; the survivors in Step 2 all resolve; vitest 1413 in 145 files (1513 - 100, 154 - 9; matches the plan's 1413 / 145); lint clean; G1 empty and DecideControls.tsx exists; G2 the four files of ruling 27; G4 scratch build green, 19 routes (`/`, `/activity`, `/explain`, `/ledger/{import,ticker/[symbol],trades}`, `/more`, `/more/claude`, `/news`, `/news/[symbol]`, `/portfolio`, `/positions/[underlying]/[slug]`, `/research`, `/research/universe`, `/stock/[symbol]`, `/trades`, `/trades/[approvalId]`, plus `/_not-found` and the API proxy) | 2026-11-05 | (1) Comments that named the deleted, reworded to live files (non-test, non-protected): `ExplainShell.tsx` (the cross-reference to PortfolioShell/PnlShell dropped), `BotCard.tsx` (names AssessedBrowser, ApprovalDetail, useBrokerRefresh), `Rail.tsx` and `NeedsYou.tsx` (usePendingApprovals / the Rail's count), `portfolio/RefreshControl.tsx` (PortfolioPage), `pnl/SummaryPanel.tsx` (three mentions of `PnlShell` now name `useLegFilters`, the live composer of that query string), `RollCard.tsx` ("Same key as Home's Roll alert word") and `lib/test-query.tsx` (two mentions of ShortsTable.test.tsx; this file is not a `.test.` file so the grep listed it). (2) Left on purpose: `AutonomyControl.tsx:17`, `HaltControl.tsx:16` ("ControlsStrip mounts one ...") and `DecideControls.tsx:23` ("tested in ApprovalCard.test.tsx") are protected (G1); comment mentions inside test files (`AssessedRow.test.tsx`, `shell.test.tsx`, `LedgerTable.test.tsx`, `SystemPanel.test.tsx`) are history/regression notes, left as written (cost: stale comments). (3) `web/CLAUDE.md`, `STATUS.md`, `ARCHITECTURE.md` still name the deleted files; they are Task 16's rewrite (its Step 1 lists the lines), not touched here. (4) The G4 build ran in a scratchpad copy (`.../scratchpad/g4/web`, removed after), not `mktemp`: the `rm -rf "$(dirname ...)"` form of the plan's command is refused by the sandbox's command-substitution check; same steps otherwise (cost: none). |
 | **Section C exit** | done | b42c0d9, 363bf07, Task 7 commit | vitest 1413 in 145 files (1485 - 100 + 14 + 12 + 2; files 152 - 9 + 2), tsc and lint clean, G1 empty, G2 four files, G4 green | 2026-11-05 | none beyond the task rows (the Task 5 and Task 6 save-side finding is the one to read) |
 | **Section D entry** | done | | D1 vitest 1413 in 145 files (re-run by orchestrator, tsc+lint clean, G1/G2 clean); D2/D3 anchors print. Task 7 hash 228b1ce | 2026-11-05 | Section C finding: no case (old or new) pins that a pending DecideControls/RollProposal command is *saved* to storage; only restore and clear-on-terminal are pinned. Counts fixed by the plan, so left as a possible follow-up (cost: a save-side regression would pass) |
-| **Task 8: a value tap says when the value process is not checking** | pending | | | | |
+| **Task 8: a value tap says when the value process is not checking** | done | (this commit; `feat(web): a value tap says when the value process is not checking for taps`) | red: ValueDrainNote.test.tsx failed (module missing) and the ValueDecide / AnalyseButton note cases failed; 3 files 82 passed after; full vitest 1420 in 146 files (1413 + 5 + 1 + 1, 145 + 1); tsc and lint clean; da-vinci lint.py over components/value and features/stock-value: no finding | 2026-11-05 | (1) Step 1's wording check for the stalled-words absence passes before the change too (the receipt is always given a healthy drain), so it is a guard, not a red case; the red ones are the note cases (cost: none). (2) `ValueDecide` has a test-only gap: the unhealthy `/value/book` answer in its test is a partial object cast by `renderWithQuery`'s untyped responses (cost: none). (3) The `drainHealthy` prop's comment now says the default true is the rule (ruling 5). (4) The component is the plan's reference unchanged; no spacing change (cost: none). |
 | **Task 9: value taps in "Needs you" and the phone banner** | pending | | | | |
 | **Task 10: the value book on Portfolio and At IBKR; the unavailable flag** | pending | | | | |
 | **Section E entry** | pending | | | | |
@@ -1086,7 +1086,7 @@ da-vinci `lint.py` over the touched folders: no finding in a non-test file.
 `web/components/value/ValueDecide.tsx`, `ValueDecide.test.tsx`, `web/features/stock-value/AnalyseButton.tsx`,
 `AnalyseButton.test.tsx`; this plan.
 
-- [ ] **Step 1: Tests first.** `ValueDrainNote.test.tsx` with `renderWithQuery` answering `/value/book`:
+- [x] **Step 1: Tests first.** `ValueDrainNote.test.tsx` with `renderWithQuery` answering `/value/book`:
   1. `pending` and `drain_healthy: true` → renders nothing (`queryByTestId("value-drain-note")` null);
   2. `pending`, `drain_healthy: false`, `drain_last_seen: "2026-11-05T19:31:00Z"` → the note contains
      "Not checking" and "last checked for taps" and "2:31 PM ET" (19:31 UTC is 2:31 PM in New York in November);
@@ -1097,7 +1097,7 @@ da-vinci `lint.py` over the touched folders: no finding in a non-test file.
   `data-testid="stalled-words"` (the protected receipt's trading-service sentence never appears for a value tap).
   Append to `AnalyseButton.test.tsx`: the same note appears under a pending analysis with an unhealthy drain.
   Run red (the module does not exist).
-- [ ] **Step 2: The component** (reference; da-vinci may adjust spacing, not the words or the rules of ruling 16):
+- [x] **Step 2: The component** (reference; da-vinci may adjust spacing, not the words or the rules of ruling 16):
 
 ```tsx
 "use client";
@@ -1129,12 +1129,12 @@ export function ValueDrainNote({ pending }: { pending: boolean }) {
 }
 ```
 
-- [ ] **Step 3: Mount it.** In `ValueDecide.tsx`, directly after
+- [x] **Step 3: Mount it.** In `ValueDecide.tsx`, directly after
   `{current && <CommandReceipt command={current} order={null} drainHealthy={drainHealthy} />}` add
   `<ValueDrainNote pending={current?.status === "pending"} />` and its import; the `drainHealthy` prop stays
   (its default `true` is now the rule, ruling 5; say so in the prop's comment). In `AnalyseButton.tsx`, after its
   `CommandReceipt` line (88) add the same line and import.
-- [ ] **Step 4: Gate and commit.** Web gate (vitest + 7); da-vinci `lint.py web/components/value web/features/stock-value`.
+- [x] **Step 4: Gate and commit.** Web gate (vitest + 7); da-vinci `lint.py web/components/value web/features/stock-value`.
   Commit `feat(web): a value tap says when the value process is not checking for taps`.
 
 ### Task 9: Value taps in "Needs you" and the phone banner

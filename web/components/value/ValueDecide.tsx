@@ -15,6 +15,7 @@ import {
   type CommandStatus,
 } from "@/lib/commands";
 import { approveSentence, failureSentence, rejectSentence } from "./format";
+import { ValueDrainNote } from "./ValueDrainNote";
 import type { ValueProposalLike } from "./types";
 
 /** The decision, in words, for a proposal that is no longer waiting on a tap. */
@@ -42,6 +43,11 @@ export function ValueDecide({
   proposal: ValueProposalLike;
   /** `release.max_closes_per_request` from GET /value/book: the K in the approval sentence. */
   releaseMaxCloses: number;
+  /**
+   * The receipt's drain flag. Defaults to healthy and should stay there: the protected receipt names "the
+   * trading service" when stalled, the wrong process for a value tap, so the value process's own drain is
+   * said by `ValueDrainNote` (web overhaul Part 4, ruling 5).
+   */
   drainHealthy?: boolean;
 }) {
   const subject = `value:${proposal.id}`;
@@ -143,6 +149,7 @@ export function ValueDecide({
       )}
 
       {current && <CommandReceipt command={current} order={null} drainHealthy={drainHealthy} />}
+      <ValueDrainNote pending={current?.status === "pending"} />
       {failure && <p className="mt-2 text-sm">{failure}</p>}
       {approvedNow && (
         <p className="mt-2 text-sm">

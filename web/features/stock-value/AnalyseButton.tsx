@@ -12,6 +12,7 @@ import {
   useCommandStatus,
   type CommandStatus,
 } from "@/lib/commands";
+import { ValueDrainNote } from "@/components/value/ValueDrainNote";
 
 /**
  * "Run Claude's analysis": one click queues a Claude read of this name (`value_analyse`). There is
@@ -86,6 +87,7 @@ export function AnalyseButton({ symbol, onQueued }: { symbol: string; onQueued?:
         </p>
       )}
       {current && <CommandReceipt command={current} order={null} drainHealthy plainReasons={["claude_off"]} />}
+      <ValueDrainNote pending={current?.status === "pending"} />
       {off && <p className="mt-2 text-sm">Claude&apos;s reads are off in config.</p>}
       {current?.status === "applied" && (
         <p className="mt-2 text-sm">

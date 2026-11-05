@@ -85,4 +85,17 @@ describe("AnalyseButton", () => {
     const button = await screen.findByRole("button", { name: "Run Claude's analysis" });
     expect(button).toHaveAttribute("data-variant", "secondary");
   });
+
+  it("says the value process is not checking for taps when its drain is stale, under a pending analysis", async () => {
+    submitCommand.mockResolvedValue(cmd());
+    showButton({
+      "/value/book": {
+        as_of: "2026-11-05T15:00:00Z", available: true, enabled: true, positions: [], proposals: [], funding: [],
+        release_max_closes: 2, drain_healthy: false, drain_last_seen: null,
+      },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Run Claude's analysis" }));
+    expect(await screen.findByTestId("value-drain-note")).toHaveTextContent("has not checked for taps yet");
+    expect(screen.queryByTestId("stalled-words")).toBeNull();
+  });
 });
