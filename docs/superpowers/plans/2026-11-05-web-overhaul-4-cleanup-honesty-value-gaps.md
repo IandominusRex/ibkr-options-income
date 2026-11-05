@@ -119,7 +119,7 @@ check's count.
 | **Section C exit** | done | b42c0d9, 363bf07, Task 7 commit | vitest 1413 in 145 files (1485 - 100 + 14 + 12 + 2; files 152 - 9 + 2), tsc and lint clean, G1 empty, G2 four files, G4 green | 2026-11-05 | none beyond the task rows (the Task 5 and Task 6 save-side finding is the one to read) |
 | **Section D entry** | done | | D1 vitest 1413 in 145 files (re-run by orchestrator, tsc+lint clean, G1/G2 clean); D2/D3 anchors print. Task 7 hash 228b1ce | 2026-11-05 | Section C finding: no case (old or new) pins that a pending DecideControls/RollProposal command is *saved* to storage; only restore and clear-on-terminal are pinned. Counts fixed by the plan, so left as a possible follow-up (cost: a save-side regression would pass) |
 | **Task 8: a value tap says when the value process is not checking** | done | (this commit; `feat(web): a value tap says when the value process is not checking for taps`) | red: ValueDrainNote.test.tsx failed (module missing) and the ValueDecide / AnalyseButton note cases failed; 3 files 82 passed after; full vitest 1420 in 146 files (1413 + 5 + 1 + 1, 145 + 1); tsc and lint clean; da-vinci lint.py over components/value and features/stock-value: no finding | 2026-11-05 | (1) Step 1's wording check for the stalled-words absence passes before the change too (the receipt is always given a healthy drain), so it is a guard, not a red case; the red ones are the note cases (cost: none). (2) `ValueDecide` has a test-only gap: the unhealthy `/value/book` answer in its test is a partial object cast by `renderWithQuery`'s untyped responses (cost: none). (3) The `drainHealthy` prop's comment now says the default true is the rule (ruling 5). (4) The component is the plan's reference unchanged; no spacing change (cost: none). |
-| **Task 9: value taps in "Needs you" and the phone banner** | pending | | | | |
+| **Task 9: value taps in "Needs you" and the phone banner** | done | (this commit; `feat(web): value proposals waiting on a tap show in Needs you and the phone banner`) | red: 3 `waitingProposals` cases, ValueWaiting.test.tsx (module missing) and 5 HomePage cases failed first; full vitest 1437 in 147 files (1420 + 3 + 9 + 5, 146 + 1); tsc and lint clean; da-vinci lint.py over features/home and components/value: no finding; G3 design_md_check exit 0 | 2026-11-05 | (1) The existing HomePage case "shows the Value book card under Value, and points Needs you at it" pinned the sentence this task removes, so it now pins the row and the heading "Needs you · 1 value" (an existing test changes, as the plan expects; cost: none). (2) `ValueWaiting` shows the unreadable-book sentence also when `GET /value/book` answers but `available: false` with `enabled: true` (on but unreadable may hide a proposal), and nothing when the book is off and never wrote (the plan said only "unreadable"; cost if wrong: one sentence on an on-but-unreadable install). Under Value, an off/never-wrote book reads "No value proposal waits on you.". (3) An optional `emptyText` prop on `ValueWaiting` carries the "No value proposal waits on you." line and a loading skeleton for Home under Value only, so `NeedsYou` need not know whether the component rendered. (4) Under All, with no wheel proposal and a waiting value one, "Nothing needs you right now." is not shown (it would contradict the row below it); the heading stays "Needs you · 0 proposals · 1 value" (cost: none). (5) `scroll-mt-4` was not added to the Value card's h2: nothing in the shell is sticky (grep of shell and layout), so the jump cannot hide the heading under a halted banner; `ValueCard.tsx` is untouched (cost: none). (6) The banner's Show link has `aria-label="Show in the Value book"`; the mixed banner keeps the lime Open to Trades only. (7) DESIGN.md: a Surfaces, Home bullet, two one-sentence edits in Components (Strategy switcher, Needs you), a Decision Log entry, marker `updated=2026-11-05`. |
 | **Task 10: the value book on Portfolio and At IBKR; the unavailable flag** | pending | | | | |
 | **Section E entry** | pending | | | | |
 | **Task 11: History never shows unknown as none** | pending | | | | |
@@ -1144,7 +1144,7 @@ export function ValueDrainNote({ pending }: { pending: boolean }) {
 `HomePage.test.tsx`, `web/components/value/ValueCard.tsx` (only if `#value-title` needs `scroll-mt`),
 `web/DESIGN.md`; this plan.
 
-- [ ] **Step 1: Tests first.**
+- [x] **Step 1: Tests first.**
   - `useValueBook.test.ts`: `waitingProposals(book)` returns the `needs_tap && status === "pending"` proposals in
     the book's order; `null` when the book is unread or unavailable (as `waitingOnTap`).
   - `ValueWaiting.test.tsx` (`renderWithQuery` with `/value/book`): one waiting buy → a row with "Value book", the
@@ -1158,7 +1158,7 @@ export function ValueDrainNote({ pending }: { pending: boolean }) {
     needs you", names it, and its link is not lime (no `bg-primary` class) and jumps to `#value-title`; with a
     wheel proposal too, the lime Open still goes to `/trades`.
   Run red.
-- [ ] **Step 2: Build.** `waitingProposals` beside `waitingOnTap` in `useValueBook.ts`. `ValueWaiting.tsx`: a
+- [x] **Step 2: Build.** `waitingProposals` beside `waitingOnTap` in `useValueBook.ts`. `ValueWaiting.tsx`: a
   `Card` per the row anatomy of `ProposalCard`'s eyebrow and title (eyebrow "Value book", `proposalTitle`,
   the cost with `price()` or a hatched `n/a`, `expiresWords`), the link a secondary pill (`bg-sunk`, 44 px,
   the `ProposalCard` Details pill's classes), `href="#value-title"`. `NeedsYou.tsx`: under `all` render the wheel
@@ -1167,9 +1167,9 @@ export function ValueDrainNote({ pending }: { pending: boolean }) {
   read `waitingProposals(useValueBook().data)`; under `all` and `value` add them to the count and the names
   ("GOOGL buy"); the link per ruling 15. If the jump hides the heading under the halted banner, add `scroll-mt-4`
   to the Value card's `h2`.
-- [ ] **Step 3: DESIGN.md.** Surfaces → Home: one paragraph for the value rows in Needs you and the banner
+- [x] **Step 3: DESIGN.md.** Surfaces → Home: one paragraph for the value rows in Needs you and the banner
   (ruling 15's rule and words); a Decision Log entry dated the day; bump the marker's `updated=`. G3 exits 0.
-- [ ] **Step 4: Gate and commit.** Web gate; da-vinci lint over `web/features/home web/components/value`.
+- [x] **Step 4: Gate and commit.** Web gate; da-vinci lint over `web/features/home web/components/value`.
   Commit `feat(web): value proposals waiting on a tap show in Needs you and the phone banner`.
 
 ### Task 10: The value book on Portfolio and At IBKR; the unavailable flag

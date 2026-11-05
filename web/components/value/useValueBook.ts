@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
-import type { ValueBook } from "./types";
+import type { ValueBook, ValueProposal } from "./types";
 
 /**
  * `GET /value/book`, one query for every reader on Home (the Value card and the strategy
@@ -23,4 +23,13 @@ export function useValueBook() {
 export function waitingOnTap(book: ValueBook | undefined): number | null {
   if (!book || !book.available) return null;
   return (book.proposals ?? []).filter((p) => p.needs_tap && p.status === "pending").length;
+}
+
+/**
+ * The book's proposals that wait on a tap, in the book's order (web overhaul Part 4, ruling 15). Null, not an
+ * empty list, when the book could not be read: the same rule as `waitingOnTap`.
+ */
+export function waitingProposals(book: ValueBook | undefined): ValueProposal[] | null {
+  if (!book || !book.available) return null;
+  return (book.proposals ?? []).filter((p) => p.needs_tap && p.status === "pending");
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { waitingOnTap } from "./useValueBook";
+import { waitingOnTap, waitingProposals } from "./useValueBook";
 import type { ValueBook, ValueProposal } from "./types";
 
 function proposal(over: Partial<ValueProposal>): ValueProposal {
@@ -36,5 +36,27 @@ describe("waitingOnTap", () => {
   it("is null, not zero, when the book could not be read", () => {
     expect(waitingOnTap(undefined)).toBeNull();
     expect(waitingOnTap(book({ available: false }))).toBeNull();
+  });
+});
+
+describe("waitingProposals", () => {
+  it("lists the proposals that need a tap and are still pending, in the book's order", () => {
+    const b = book({
+      proposals: [
+        proposal({ id: 7 }),
+        proposal({ id: 2, status: "approved" }),
+        proposal({ id: 3, needs_tap: false }),
+        proposal({ id: 4, kind: "sell" }),
+        proposal({ id: 5, status: "funding" }),
+      ],
+    });
+    expect(waitingProposals(b)?.map((p) => p.id)).toEqual([7, 4]);
+  });
+  it("is an empty list when the book was read and nothing waits", () => {
+    expect(waitingProposals(book({ proposals: [] }))).toEqual([]);
+  });
+  it("is null, not an empty list, when the book could not be read", () => {
+    expect(waitingProposals(undefined)).toBeNull();
+    expect(waitingProposals(book({ available: false }))).toBeNull();
   });
 });

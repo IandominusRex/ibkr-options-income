@@ -221,7 +221,7 @@ components:
     backgroundColor: "{colors.ink}"
     textColor: "{colors.ground}"
 ---
-<!-- da-vinci schema=1 status=ratified updated=2026-10-28 -->
+<!-- da-vinci schema=1 status=ratified updated=2026-11-05 -->
 # Design System: IBKR Income
 
 ## Overview
@@ -391,7 +391,8 @@ On Trades it also picks which views exist: the wheel (All, CSPs, CCs) gets Propo
 Assessed; Credit spreads gets Spreads only, so the view chips are hidden there.
 The Positions card carries the same tabs as smaller chips, plus Shares. Under Value, October pay
 becomes the value book's own stub with no target meter ("The income target counts options income
-only."); the book's proposals live in the Value card, and "Needs you" points at it.
+only."); the book's proposals are decided on the Value card, and "Needs you" lists each one as a row that
+jumps to it (see **Surfaces, Home**).
 
 **Account hero** (Home): "Account value", the number (display, 38px on phones, 46px from 768px),
 then today's signed change in words ("+$1,234.50 (0.50%) today"; a genuine zero is neutral ink; an
@@ -427,7 +428,9 @@ contract.
 
 **Needs you** (Home, from 1024px): a right column of proposal cards under "Needs you · N
 proposals". Below 1024px it becomes the **proposals banner**: one card, "2 proposals need you",
-the first names, and a lime Open that goes to Trades.
+the first names, and a lime Open that goes to Trades. A value proposal waiting on a tap is named
+there too, and a banner with only value proposals reads "1 value proposal needs you" with a secondary
+Show that jumps to the Value card instead of the lime Open.
 
 **Review sheet**: a bottom sheet on phones, a right-side sheet on desktop, portaled to the page so
 a resize across a breakpoint never hides it. One step at a time:
@@ -843,6 +846,18 @@ Operate. Dials as the project default. Built in web overhaul Part 2
   leveraged-ETF limit or Claude's cut held back or made smaller, a status word for the rule, "Sent 1 of 3
   contracts" or "Held back: 0 of 2 contracts sent", and the reason with its codes in words. Claude's
   cut is the flag tone and its reason is labelled as carrying Claude's words.
+- **Value taps in Needs you and the banner (2026-11-05):** under All and Value, "Needs you" lists each value
+  proposal that waits on a tap as a compact card after the wheel's cards: the eyebrow "Value book", the trade
+  ("Buy 10 GOOGL"), how long it has left, its cost (a hatched n/a when unknown; "sells at the next check" for a
+  sale) and one secondary pill, "Review in the Value book", that jumps to the Value card. It is a link, never a
+  button named Review, Approve or Reject: the same proposal on one screen with two lime Reviews would break the
+  lime rule and mount two decide flows on one command, so the Value card keeps the only decide flow and its one
+  lime Review. The heading counts both ("Needs you · 1 proposal · 1 value"; under Value, "Needs you · 1 value").
+  An unreadable book says "The value book could not be read, so a value proposal may be waiting."; a read book
+  with nothing waiting says "No value proposal waits on you." under Value and nothing under All. On a phone the
+  banner counts and names them too ("GOOGL buy"); its lime Open goes to Trades only when a wheel proposal
+  waits, and a banner of value proposals alone carries the secondary Show. No new token, colour, font, radius or
+  elevation.
 
 ### Portfolio
 Operate. Dials as the project default. Built in web overhaul Part 3
@@ -1052,6 +1067,12 @@ sibling keys; re-run the check after edits.
 
 ## Decision Log
 
+- 2026-11-05: **Value taps in Needs you and the phone banner** (web overhaul Part 4, Task 9). Added the value
+  rows to "Needs you" and the value count to the proposals banner (Components, Surfaces: Home). The rule that
+  shaped it: the lime Review is the only act on a proposal, and a value proposal already has one on the Value
+  card, so Needs you carries a secondary link that jumps there instead of a second Review (and a second decide
+  flow polling the same command). No new token, colour, font, radius or elevation. Not changed: a banner with
+  both kinds keeps its lime Open for Trades; the value ones are decided from the card below.
 - 2026-11-05: **The value kind across Home** (value book Part 6, Section I). Added Value to the strategy
   switcher and taught the pay card, the Positions card, Done today and the realised calendar (and Activity's
   pay stub) to carry it (Components, Surfaces: Home and Activity). No new token, colour, font, radius or

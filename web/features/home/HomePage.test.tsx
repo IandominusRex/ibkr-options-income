@@ -159,12 +159,61 @@ describe("HomePage", () => {
       fireEvent.click(within(switcher).getByRole("button", { name: "Value" }));
       expect(nav.replace).toHaveBeenCalledWith("/?strategy=value", { scroll: false });
     });
-    it("shows the Value book card under Value, and points Needs you at it", async () => {
+    it("shows the Value book card under Value, and lists the waiting proposal in Needs you as a row that jumps to it", async () => {
       nav.params = new URLSearchParams("strategy=value");
       renderWithQuery(<HomePage />, { ...responses, "/value/book": book([proposal(1)]) });
       expect(await screen.findByRole("heading", { name: "Value book" })).toBeInTheDocument();
-      expect(await screen.findByText("Value proposals wait in the Value book card.")).toBeInTheDocument();
+      const needs = await screen.findByRole("heading", { name: "Needs you · 1 value" });
+      const section = needs.closest("section") as HTMLElement;
+      expect(await within(section).findByText("Buy 10 GOOGL")).toBeInTheDocument();
+      expect(within(section).getByRole("link", { name: "Review in the Value book" }).getAttribute("href")).toMatch(/#value-title$/);
+      expect(screen.queryByText("Value proposals wait in the Value book card.")).toBeNull();
       expect(screen.queryByText("Nothing needs you right now.")).toBeNull();
+      nav.params = new URLSearchParams();
+    });
+    it("says no value proposal waits once the book is read and nothing does, under Value", async () => {
+      nav.params = new URLSearchParams("strategy=value");
+      renderWithQuery(<HomePage />, { ...responses, "/value/book": book([]) });
+      expect(await screen.findByText("No value proposal waits on you.")).toBeInTheDocument();
+      nav.params = new URLSearchParams();
+    });
+    describe("with a wheel proposal and a value proposal both waiting", () => {
+      const wheel = {
+        as_of: "", id: 1, candidate_id: "c1", status: "pending", underlying: "AAPL", strategy: "cash_secured_put", right: "P",
+        strike: 180, expiry: "2099-11-21", contracts: 1, premium: 2.35, blended_score: 0.7, created_at: "2026-10-13T13:00:00Z",
+        expires_at: null, decided_at: null, order_state: null, source: "scan", review: null, rationale_tags: [],
+      };
+      const both = { ...responses, "/options/approvals": { as_of: "", approvals: [wheel] }, "/value/book": book([proposal(1)]) };
+      it("counts both in the Needs you heading under All", async () => {
+        nav.params = new URLSearchParams();
+        renderWithQuery(<HomePage />, both);
+        expect(await screen.findByRole("heading", { name: "Needs you · 1 proposal · 1 value" })).toBeInTheDocument();
+      });
+      it("keeps the phone banner's lime Open going to Trades and names both", async () => {
+        nav.params = new URLSearchParams();
+        renderWithQuery(<HomePage />, both);
+        expect(await screen.findByText("2 proposals need you")).toBeInTheDocument();
+        expect(screen.getByText(/AAPL put · GOOGL buy/)).toBeInTheDocument();
+        const open = screen.getByRole("link", { name: "Open Trades" });
+        expect(open.getAttribute("href")).toBe("/trades");
+        expect(open.className).toContain("bg-primary");
+      });
+    });
+    it("names a value-only proposal in the phone banner, with a secondary Show that jumps to the Value card", async () => {
+      nav.params = new URLSearchParams();
+      renderWithQuery(<HomePage />, { ...responses, "/value/book": book([proposal(1)]) });
+      expect(await screen.findByText("1 value proposal needs you")).toBeInTheDocument();
+      expect(screen.getByText("GOOGL buy")).toBeInTheDocument();
+      const show = screen.getByRole("link", { name: "Show in the Value book" });
+      expect(show.getAttribute("href")).toBe("#value-title");
+      expect(show.className).not.toContain("bg-primary");
+      expect(screen.queryByRole("link", { name: "Open Trades" })).toBeNull();
+    });
+    it("shows no value proposal in the banner under CSPs, and no banner when only an unread book is the reason", async () => {
+      nav.params = new URLSearchParams("strategy=csp");
+      renderWithQuery(<HomePage />, { ...responses, "/value/book": book([proposal(1)]) });
+      await screen.findByRole("heading", { name: "Positions" });
+      expect(screen.queryByText("1 value proposal needs you")).toBeNull();
       nav.params = new URLSearchParams();
     });
   });
