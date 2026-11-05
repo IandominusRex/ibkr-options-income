@@ -942,6 +942,13 @@ the figure face.
   "Value book unavailable". The meter and the target never take the sale. A value book that is off and has never
   written anything is not flagged on any of these figures (it has no sales to miss); a book that is on but cannot be read,
   or whose read has failed or not arrived, still is.
+- **Honest words and the cross-links (2026-11-05):** Pay's by-strategy table names the wheel's two strategies in words
+  ("Cash-secured puts", "Covered calls"; any other label as the API names it). A `?month=` before the system began opens
+  its first month. A ledger trade's stock gain reads a hatched n/a only when shares were called away and the gain is
+  unknown, and stays blank where there is nothing to know. A credit-spread fill list the API capped says "Only the newest
+  200 are listed." Trades, History ends with "IBKR's own record of each fill is under Activity, Fills and orders." and
+  Fills and orders ends with "Each day's trades, with their reasons, are under Trades, History.", each a secondary text
+  link. No new token, colour, font, radius or elevation.
 - **Market and sizing (2026-10-23):** an order in the Orders list says what shaped its size
   ("Claude's cut · Sent 1 of 3 contracts"). System opens with the sizing record, the review the
   live-cutover gate asks for. Claude's cut is labelled as Claude's wherever its reason shows.

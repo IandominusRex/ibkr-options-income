@@ -247,6 +247,29 @@ describe("SummaryPanel", () => {
     expect(screen.queryByRole("button", { name: /view nvda/i })).toBeNull();
   });
 
+  it("names the strategies in words in the by-strategy table, leaves any other label as it is, and the by-symbol table alone", async () => {
+    renderWithQuery(<SummaryPanel book="paper" qsString="book=paper" />, {
+      "/pnl/summary": aSummaryResponse(
+        aSummary({
+          by_strategy: [
+            aBucket({ label: "cash_secured_put" }),
+            aBucket({ label: "covered_call", realized: 90 }),
+            aBucket({ label: "credit_spread", realized: 10 }),
+          ],
+          by_symbol: [aBucket({ label: "covered_call", realized: 5 })],
+        }),
+      ),
+    });
+    const strategy = (await screen.findByText("By strategy")).closest("[data-testid='breakdown-table']") as HTMLElement;
+    expect(within(strategy).getByText("Cash-secured puts")).toBeInTheDocument();
+    expect(within(strategy).getByText("Covered calls")).toBeInTheDocument();
+    expect(within(strategy).getByText("credit_spread")).toBeInTheDocument();
+    expect(within(strategy).queryByText("cash_secured_put")).toBeNull();
+    // By symbol is unchanged: a symbol is never reworded.
+    const symbol = screen.getByText("By symbol").closest("[data-testid='breakdown-table']") as HTMLElement;
+    expect(within(symbol).getByText("covered_call")).toBeInTheDocument();
+  });
+
   it("keeps the breakdown tables in one column that cannot outgrow the phone, so they scroll inside the card", async () => {
     renderWithQuery(<SummaryPanel book="paper" qsString="book=paper" />, {
       "/pnl/summary": aSummaryResponse(aSummary({ by_strategy: [aBucket()] })),
@@ -275,6 +298,13 @@ describe("BreakdownTable", () => {
     const row = screen.getByRole("row", { name: /0/i });
     expect(within(row).getAllByText(/n\/a/i).length).toBeGreaterThan(0);
     expect(screen.queryByText("0%")).toBeNull();
+  });
+
+  it("writes each label through labelOf when given one, and passes the label through by default", () => {
+    const { rerender } = render(<BreakdownTable buckets={[aBucket({ label: "NVDA" })]} label="By symbol" />);
+    expect(screen.getByText("NVDA")).toBeInTheDocument();
+    rerender(<BreakdownTable buckets={[aBucket({ label: "NVDA" })]} label="By symbol" labelOf={(l) => l.toLowerCase()} />);
+    expect(screen.getByText("nvda")).toBeInTheDocument();
   });
 
   it("says a phone scrolls the table sideways", () => {

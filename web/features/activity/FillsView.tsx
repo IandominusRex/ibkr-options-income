@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { FillsTable } from "@/components/options/FillsTable";
 import { OrdersTable } from "@/components/options/OrdersTable";
@@ -90,6 +91,13 @@ export function FillsView() {
           </div>
         </Card>
       )}
+      <p className="text-[0.8125rem] text-muted">
+        Each day&apos;s trades, with their reasons, are under{" "}
+        <Link href="/trades?view=history" className="font-semibold text-content underline underline-offset-2">
+          Trades, History
+        </Link>
+        .
+      </p>
     </div>
   );
 }

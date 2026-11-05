@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { SummaryPanel } from "@/components/pnl/SummaryPanel";
 import { Card } from "@/components/ui/Card";
 import { todayInNewYork } from "@/features/trades/time";
@@ -21,7 +22,7 @@ const UNFILTERED = "book=all";
  */
 export function PayView() {
   const current = currentMonth(todayInNewYork());
-  const [month, setMonth] = useMonthParam(current);
+  const [urlMonth, setMonth] = useMonthParam(current);
   const legs = useLegFilters();
   // The stepper's floor is the month the system began, which the Legs filters (they belong to the
   // cards under the stepper) must not move: a "Since" later than the start would otherwise refuse
@@ -31,6 +32,12 @@ export function PayView() {
   // show, not when the system began.
   const equity = useEquity(UNFILTERED);
   const floor = earliestMonth(equity.data?.curve.starts_at);
+  // A month before the record began would be a page of zeros that reads as a quiet month: open the first one
+  // instead, and rewrite the URL to match once the floor is known.
+  const month = floor !== null && floor <= current && urlMonth < floor ? floor : urlMonth;
+  useEffect(() => {
+    if (month !== urlMonth) setMonth(month);
+  }, [month, urlMonth, setMonth]);
 
   return (
     <div className="grid grid-cols-1 gap-4">

@@ -9,7 +9,16 @@ import type { PnlBucketData } from "./types";
  * columns, never `0%`: an unknown win rate is not a zero win rate. Scrolls inside its own box on a
  * phone.
  */
-export function BreakdownTable({ buckets, label }: { buckets: PnlBucketData[]; label: string }) {
+export function BreakdownTable({
+  buckets,
+  label,
+  labelOf = (l) => l,
+}: {
+  buckets: PnlBucketData[];
+  label: string;
+  /** How a bucket's label is written (words for a strategy); the label itself by default. */
+  labelOf?: (label: string) => string;
+}) {
   if (buckets.length === 0) {
     return null;
   }
@@ -32,7 +41,7 @@ export function BreakdownTable({ buckets, label }: { buckets: PnlBucketData[]; l
           <tbody>
             {buckets.map((b) => (
               <tr key={b.label} className="border-t border-border first:border-t-0">
-                <td className="py-2 pr-3 font-mono text-content">{b.label}</td>
+                <td className="py-2 pr-3 font-mono text-content">{labelOf(b.label)}</td>
                 <td className="tabular py-2 pr-3 text-right font-mono text-content">{b.n_closed}</td>
                 <td className="tabular py-2 pr-3 text-right font-mono">
                   <span className={b.realized < 0 ? "text-loss" : "text-content"}>

@@ -8,6 +8,14 @@ import { Money } from "@/components/portfolio/Money";
 import { BreakdownTable } from "./BreakdownTable";
 import type { PnlLegData, PnlSummaryResponse } from "./types";
 
+const STRATEGY_WORDS: Record<string, string> = {
+  cash_secured_put: "Cash-secured puts",
+  covered_call: "Covered calls",
+};
+
+/** A by-strategy bucket's label in words; a strategy this table has no words for passes through as the API names it. */
+export const strategyWord = (label: string): string => STRATEGY_WORDS[label] ?? label;
+
 /**
  * The summary: headline figures, the by-strategy and by-symbol breakdowns,
  * and best/worst legs with links into the ledger.
@@ -110,7 +118,7 @@ export function SummaryPanel({ book, qsString, onBookChange, onSelectLeg }: {
       </div>
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-        <BreakdownTable buckets={s.by_strategy ?? []} label="By strategy" />
+        <BreakdownTable buckets={s.by_strategy ?? []} label="By strategy" labelOf={strategyWord} />
         <BreakdownTable buckets={s.by_symbol ?? []} label="By symbol" />
       </div>
 

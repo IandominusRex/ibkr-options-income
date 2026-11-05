@@ -36,6 +36,17 @@ describe("SpreadFills", () => {
     expect(screen.queryByText(/No credit spread orders/)).toBeNull();
   });
 
+  it("says when the list was capped, and says nothing when it was not", async () => {
+    serve(body([order()], { truncated: true }));
+    expect(await screen.findByText("Only the newest 200 are listed.")).toBeInTheDocument();
+  });
+
+  it("does not claim a cap on a whole list", async () => {
+    serve(body([order()], { truncated: false }));
+    await screen.findByText("SPY 763/758 put spread");
+    expect(screen.queryByText(/Only the newest 200/)).toBeNull();
+  });
+
   it("says unavailable when the request fails", async () => {
     renderWithQuery(<SpreadFills days={30} />, {});
     expect(await screen.findByText("Credit spread fills are unavailable right now.")).toBeInTheDocument();

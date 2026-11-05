@@ -132,6 +132,24 @@ describe("PayView", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Previous month" })).toBeDisabled());
   });
 
+  it("opens the first month when ?month= is before the system began, never a month of zeros before the record", async () => {
+    nav.params = new URLSearchParams("month=2026-03");
+    serve(monthBody(), equity("2026-06-24"));
+    expect(await screen.findByRole("heading", { name: "June 2026 pay" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Previous month" })).toBeDisabled());
+    expect(nav.replace).toHaveBeenCalledWith("/activity?month=2026-06", { scroll: false });
+    // The pre-record month is never the one that stays on screen.
+    expect(screen.queryByRole("heading", { name: "March 2026 pay" })).toBeNull();
+  });
+
+  it("leaves a month at or after the first month alone, and rewrites nothing", async () => {
+    nav.params = new URLSearchParams("month=2026-06");
+    serve(monthBody(), equity("2026-06-24"));
+    await screen.findByRole("heading", { name: "June 2026 pay" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Previous month" })).toBeDisabled());
+    expect(nav.replace).not.toHaveBeenCalled();
+  });
+
   it("flags that spread income is unavailable, and says the total leaves it out", async () => {
     serve(monthBody({}, { spreads_available: false }));
     expect(await screen.findByText("Spreads unavailable")).toBeInTheDocument();

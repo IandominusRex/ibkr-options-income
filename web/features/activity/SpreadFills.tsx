@@ -31,33 +31,36 @@ export function SpreadFills({ days }: { days: number }) {
     return <p className="text-sm text-muted">No credit spread orders in {lastWindow(days)}.</p>;
   }
   return (
-    <ul>
-      {orders.map((o, i) => (
-        <li key={`${o.spread_id}:${o.kind}:${i}`} className="border-t border-border py-[11px] first:border-t-0">
-          <div className="flex items-start justify-between gap-3 text-sm">
-            <div className="min-w-0">
-              <span className="font-bold">{spreadOrderTitle(o, data.underlying)}</span>
-              <span className="ml-1.5 align-[1px]">
-                <StatusWord>{o.kind === "open" ? "Opened" : "Closed"}</StatusWord>
-              </span>
-              {o.mode && (
+    <>
+      <ul>
+        {orders.map((o, i) => (
+          <li key={`${o.spread_id}:${o.kind}:${i}`} className="border-t border-border py-[11px] first:border-t-0">
+            <div className="flex items-start justify-between gap-3 text-sm">
+              <div className="min-w-0">
+                <span className="font-bold">{spreadOrderTitle(o, data.underlying)}</span>
                 <span className="ml-1.5 align-[1px]">
-                  <StatusWord>{o.mode}</StatusWord>
+                  <StatusWord>{o.kind === "open" ? "Opened" : "Closed"}</StatusWord>
                 </span>
-              )}
-              <div className="text-[0.8125rem] text-muted">{whenET(o.created_at)}</div>
-              <div className="tabular font-mono text-xs text-muted">
-                {o.filled_qty} {o.filled_qty === 1 ? "contract" : "contracts"} · commission ${o.commission.toFixed(2)}
+                {o.mode && (
+                  <span className="ml-1.5 align-[1px]">
+                    <StatusWord>{o.mode}</StatusWord>
+                  </span>
+                )}
+                <div className="text-[0.8125rem] text-muted">{whenET(o.created_at)}</div>
+                <div className="tabular font-mono text-xs text-muted">
+                  {o.filled_qty} {o.filled_qty === 1 ? "contract" : "contracts"} · commission ${o.commission.toFixed(2)}
+                </div>
+                {o.reason && <p className="text-[0.8125rem] text-muted">Reason: {o.reason.replace(/_/g, " ")}</p>}
               </div>
-              {o.reason && <p className="text-[0.8125rem] text-muted">Reason: {o.reason.replace(/_/g, " ")}</p>}
+              <div className="tabular text-right font-mono font-semibold">
+                {o.price === null ? <span className="hatch text-unknown">{UNKNOWN}</span> : `$${o.price.toFixed(2)}`}
+                <div className="font-sans text-[0.8125rem] font-normal text-muted">a share</div>
+              </div>
             </div>
-            <div className="tabular text-right font-mono font-semibold">
-              {o.price === null ? <span className="hatch text-unknown">{UNKNOWN}</span> : `$${o.price.toFixed(2)}`}
-              <div className="font-sans text-[0.8125rem] font-normal text-muted">a share</div>
-            </div>
-          </div>
-        </li>
-      ))}
-    </ul>
+          </li>
+        ))}
+      </ul>
+      {data.truncated && <p className="mt-2 text-[0.8125rem] text-muted">Only the newest 200 are listed.</p>}
+    </>
   );
 }

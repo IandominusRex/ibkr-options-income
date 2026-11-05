@@ -31,6 +31,28 @@ describe("TradesView", () => {
     }
   });
 
+  it("reads a hatched n/a for a called-away trade whose stock gain is unknown, and a blank for any other", async () => {
+    renderWithQuery(<TradesView />, {
+      "/ledger/trades": {
+        as_of: ISO, n: 3, filters: {},
+        trades: [
+          aTrade({ order_key: "a", underlying: "AAA", outcome: "Called away", stock_gain: null }),
+          aTrade({ order_key: "b", underlying: "BBB", outcome: "Expired", stock_gain: null }),
+          aTrade({ order_key: "c", underlying: "CCC", outcome: "Called away", stock_gain: 250 }),
+        ],
+      },
+    });
+    const cell = async (ticker: string) => {
+      const row = (await screen.findByText(ticker)).closest("tr") as HTMLElement;
+      const head = screen.getAllByRole("columnheader").findIndex((h) => h.textContent === "Stock gain");
+      return within(row).getAllByRole("cell")[head];
+    };
+    const called = await cell("AAA");
+    expect(within(called).getByText("n/a")).toHaveClass("hatch");
+    expect((await cell("BBB")).textContent).toBe("");
+    expect((await cell("CCC")).textContent).toMatch(/250/);
+  });
+
   it("puts the filters into the request and the CSV link", async () => {
     renderWithQuery(<TradesView />, { "/ledger/trades": { as_of: ISO, n: 0, trades: [], filters: {} } });
     fireEvent.change(await screen.findByLabelText("Ticker"), { target: { value: "amzn" } });

@@ -1,6 +1,7 @@
 "use client";
 
 import clsx from "clsx";
+import { UNKNOWN } from "@/lib/format";
 import { money, pct, signClass } from "./format";
 import { OutcomePill } from "./OutcomePill";
 import type { LedgerTrade } from "./types";
@@ -54,7 +55,16 @@ export function TradesTable({ trades, onSelect }: { trades: LedgerTrade[]; onSel
                 <td className="py-2 pr-4">
                   <OutcomePill outcome={t.outcome} overridden={t.outcome_overridden} />
                 </td>
-                <td className={NUM}>{t.stock_gain === null ? "" : money(t.stock_gain, t.currency)}</td>
+                <td className={NUM}>
+                  {t.stock_gain !== null ? (
+                    money(t.stock_gain, t.currency)
+                  ) : t.outcome === "Called away" ? (
+                    // Shares were delivered, so there is a gain to know and it is not known: said, never blank.
+                    <span className="hatch text-unknown">{UNKNOWN}</span>
+                  ) : (
+                    ""
+                  )}
+                </td>
                 <td className={NUM}>{t.dte}</td>
                 <td className={NUM}>{pct(t.pct_profit)}</td>
                 <td className={clsx(NUM, signClass(t.net_pnl))}>{money(t.net_pnl, t.currency)}</td>

@@ -363,6 +363,14 @@ export function HistoryView({
           .
         </p>
       )}
+
+      <p className="text-[0.8125rem] text-muted">
+        IBKR&apos;s own record of each fill is under{" "}
+        <Link href="/activity?view=fills" className="font-semibold text-content underline underline-offset-2">
+          Activity, Fills and orders
+        </Link>
+        .
+      </p>
     </div>
   );
 }

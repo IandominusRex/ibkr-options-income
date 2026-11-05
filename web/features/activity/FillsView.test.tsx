@@ -28,6 +28,13 @@ describe("FillsView", () => {
     expect(await screen.findByText(/No working orders/i)).toBeInTheDocument();
   });
 
+  it("ends with where each day's trades and their reasons are", async () => {
+    renderWithQuery(<FillsView />, world());
+    const link = await screen.findByRole("link", { name: "Trades, History" });
+    expect(link).toHaveAttribute("href", "/trades?view=history");
+    expect(link.parentElement).toHaveTextContent("Each day's trades, with their reasons, are under Trades, History.");
+  });
+
   it("shows the system's fills and the credit-spread fills under their own headings", async () => {
     renderWithQuery(<FillsView />, world());
     fireEvent.click(await screen.findByRole("button", { name: "Fills" }));

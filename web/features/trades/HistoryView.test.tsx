@@ -294,6 +294,14 @@ describe("HistoryView", () => {
     });
   });
 
+  it("ends with where IBKR's own record of each fill is", async () => {
+    serve();
+    mount();
+    const link = await screen.findByRole("link", { name: "Activity, Fills and orders" });
+    expect(link).toHaveAttribute("href", "/activity?view=fills");
+    expect(link.parentElement).toHaveTextContent("IBKR's own record of each fill is under Activity, Fills and orders.");
+  });
+
   describe("links into a proposal carry the Trades view you are on (Task 12)", () => {
     it("a Not traded row opens its page with the view, the day and the strategy", async () => {
       serve({ range: [approval({ id: 3, status: "expired", created_at: "2026-10-09T14:00:00Z" })] });
