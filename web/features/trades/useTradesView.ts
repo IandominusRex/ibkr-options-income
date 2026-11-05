@@ -2,9 +2,9 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import type { StrategyFilter } from "@/lib/strategy";
+import { type StrategyFilter, WHEEL_FILTERS } from "@/lib/strategy";
 import { isCalendarDay } from "./time";
-import { type TradesView, defaultView, explicitView } from "./views";
+import { VIEW_LABEL, type TradesView, defaultView, explicitView } from "./views";
 
 /**
  * The Trades view, kept in `?view=` beside `?strategy=` so a reload or a shared link keeps both.
@@ -66,4 +66,37 @@ export function useTradesDay(): [string | null, (day: string | null) => void] {
   );
 
   return [value, set];
+}
+
+/**
+ * The three Trades parameters a proposal's page hands back to Back to Trades: `view`, `day` (a real
+ * calendar day) and `strategy` (a filter Trades has), in that order, each validated and the rest
+ * dropped. "" for nothing to carry. Takes a plain reader so a null `useSearchParams()` is just empty.
+ */
+export function tradesReturnQuery(params: { get(name: string): string | null } | null): string {
+  if (params === null) return "";
+  const out = new URLSearchParams();
+  const view = params.get("view");
+  if (view !== null && view in VIEW_LABEL) out.set("view", view);
+  const day = params.get("day");
+  if (day !== null && isCalendarDay(day)) out.set("day", day);
+  const strategy = params.get("strategy");
+  if (strategy !== null && (WHEEL_FILTERS as string[]).includes(strategy)) out.set("strategy", strategy);
+  return out.toString();
+}
+
+/**
+ * The return query for a card that knows which view it is in. `day` null (today) and strategy All are left
+ * out: they are the defaults, and a pinned today would open yesterday tomorrow.
+ */
+export function viewReturnQuery(view: TradesView, strategy: StrategyFilter, day: string | null = null): string {
+  const p = new URLSearchParams({ view });
+  if (day !== null) p.set("day", day);
+  if (strategy !== "all") p.set("strategy", strategy);
+  return tradesReturnQuery(p);
+}
+
+/** A proposal's page, carrying the Trades view it was opened from (`query` is a `tradesReturnQuery`). */
+export function detailHref(approvalId: number, query: string): string {
+  return query ? `/trades/${approvalId}?${query}` : `/trades/${approvalId}`;
 }

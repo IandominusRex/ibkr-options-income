@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApprovalDetailCard } from "./ApprovalDetail";
 import type { ApprovalDetail } from "./types";
 
@@ -8,6 +8,9 @@ function withClient(ui: React.ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 }
+
+const nav = vi.hoisted(() => ({ params: new URLSearchParams() }));
+vi.mock("next/navigation", () => ({ useSearchParams: () => nav.params }));
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual("@/lib/api");
@@ -48,6 +51,10 @@ const base: ApprovalDetail = {
 };
 
 describe("ApprovalDetailCard", () => {
+  beforeEach(() => {
+    nav.params = new URLSearchParams();
+  });
+
   it("renders the five review fields as five labelled sections", () => {
     withClient(<ApprovalDetailCard detail={base} />);
     expect(screen.getByText("Why attractive")).toBeDefined();
@@ -119,6 +126,25 @@ describe("ApprovalDetailCard", () => {
     // The page handles 404; this test verifies the card itself does not
     // render when detail is absent. The page-level 404 is tested via the
     // page component's error branch.
+    withClient(<ApprovalDetailCard detail={base} />);
+    expect(screen.getByRole("link", { name: "Back to Trades" })).toHaveAttribute("href", "/trades");
+  });
+
+  it("goes back to the Trades view, day and strategy it was opened from, and nothing else", () => {
+    nav.params = new URLSearchParams("view=history&day=2026-11-03&strategy=csp&x=1");
+    withClient(<ApprovalDetailCard detail={base} />);
+    expect(screen.getByRole("link", { name: "Back to Trades" })).toHaveAttribute(
+      "href",
+      "/trades?view=history&day=2026-11-03&strategy=csp",
+    );
+  });
+
+  it("goes to plain Trades for an unreadable day, or with nothing to return to", () => {
+    nav.params = new URLSearchParams("day=junk");
+    const { unmount } = withClient(<ApprovalDetailCard detail={base} />);
+    expect(screen.getByRole("link", { name: "Back to Trades" })).toHaveAttribute("href", "/trades");
+    unmount();
+    nav.params = new URLSearchParams();
     withClient(<ApprovalDetailCard detail={base} />);
     expect(screen.getByRole("link", { name: "Back to Trades" })).toHaveAttribute("href", "/trades");
   });

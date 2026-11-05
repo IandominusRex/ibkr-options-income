@@ -8,6 +8,7 @@ import { Stub } from "@/components/ui/Stub";
 import type { ApprovalSummary } from "@/components/options/types";
 import { STRATEGY_EYEBROW, kindOf } from "@/lib/strategy";
 import { daysToExpiry, proposalSentence, proposalStub, rollSentence, rollStub, rollTitle } from "./proposal";
+import { detailHref } from "@/features/trades/useTradesView";
 import { WhyDisclosure } from "./WhyDisclosure";
 
 const DAY = new Intl.DateTimeFormat("en-US", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
@@ -36,9 +37,12 @@ export function ProposalBody({ approval }: { approval: ApprovalSummary }) {
 export function ProposalCard({
   approval,
   onReview,
+  detailQuery = "",
 }: {
   approval: ApprovalSummary;
   onReview: (a: ApprovalSummary) => void;
+  /** The Trades view this card sits in, as a `tradesReturnQuery`, so Back from Details returns to it. Home passes none. */
+  detailQuery?: string;
 }) {
   const titleId = useId();
   const kind = kindOf(approval.strategy, approval.right);
@@ -69,7 +73,7 @@ export function ProposalCard({
           Review
         </Button>
         <Link
-          href={`/trades/${approval.id}`}
+          href={detailHref(approval.id, detailQuery)}
           aria-describedby={titleId}
           className="inline-flex min-h-11 w-full items-center justify-center rounded-full bg-sunk px-[18px] text-[1.0625rem] font-bold text-content transition-transform duration-[90ms] hover:bg-sunk-deep motion-safe:active:scale-[0.98]"
         >

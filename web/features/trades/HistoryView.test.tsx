@@ -164,7 +164,7 @@ describe("HistoryView", () => {
     mount();
     const not = await screen.findByRole("region", { name: "Not traded" });
     const tsla = await within(not).findByRole("link", { name: /TSLA/ });
-    expect(tsla).toHaveAttribute("href", "/trades/3");
+    expect(tsla).toHaveAttribute("href", "/trades/3?view=history");
     expect(within(tsla).getByText("Order cancelled")).toBeInTheDocument();
     expect(within(tsla).getByText(/Approved by the system/)).toBeInTheDocument();
     expect(within(not).getByRole("link", { name: /KO/ })).toHaveTextContent(/Expired unanswered/);
@@ -291,6 +291,30 @@ describe("HistoryView", () => {
       mount();
       const not = await screen.findByRole("region", { name: "Not traded" });
       expect(within(not).queryByText(/Only the newest 200/)).toBeNull();
+    });
+  });
+
+  describe("links into a proposal carry the Trades view you are on (Task 12)", () => {
+    it("a Not traded row opens its page with the view, the day and the strategy", async () => {
+      serve({ range: [approval({ id: 3, status: "expired", created_at: "2026-10-09T14:00:00Z" })] });
+      mount({ strategy: "csp", day: "2026-10-09" });
+      const row = await screen.findByRole("link", { name: /AAPL/ });
+      expect(row).toHaveAttribute("href", "/trades/3?view=history&day=2026-10-09&strategy=csp");
+    });
+
+    it("today and All are left out, so Back opens today and every strategy", async () => {
+      serve({ range: [approval({ id: 3, status: "expired" })] });
+      mount();
+      expect(await screen.findByRole("link", { name: /AAPL/ })).toHaveAttribute("href", "/trades/3?view=history");
+    });
+
+    it("a sent card's Details and a working order's row carry it too", async () => {
+      serve({ sent: [approval()], orders: [order(4, "MSFT", "covered_call", { approval_id: 8 })] });
+      mount({ submitted: new Map([[1, pending]]) });
+      const flight = await screen.findByRole("region", { name: "In flight" });
+      const card = await within(flight).findByRole("article", { name: "AAPL · Sell $180 put" });
+      expect(within(card).getByRole("link", { name: "Details" })).toHaveAttribute("href", "/trades/1?view=history");
+      expect((await within(flight).findByText("MSFT")).closest("a")).toHaveAttribute("href", "/trades/8?view=history");
     });
   });
 });

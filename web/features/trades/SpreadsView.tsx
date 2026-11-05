@@ -4,7 +4,7 @@ import clsx from "clsx";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { useId, useState, type ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Disclosure } from "@/components/ui/Disclosure";
@@ -16,6 +16,7 @@ import { UNKNOWN } from "@/lib/format";
 import { formatMoneyCell } from "@/lib/money";
 import { BOOK_LABEL, bookRow, breakEven, dayLabel, itemDetail, itemLabel, itemOutcome, pickSentence, pickTitle, timeET } from "./spreads";
 import { todayInNewYork } from "./time";
+import { useTradesDay } from "./useTradesView";
 import type { SpreadMenuItem, SpreadPick, SpreadPicksResponse } from "./types";
 
 const H2 = "mb-2.5 text-[0.8125rem] font-semibold text-muted";
@@ -25,8 +26,9 @@ const H2 = "mb-2.5 text-[0.8125rem] font-semibold text-muted";
  * menu Claude saw, collapsed, as its reason; picks with no spread here follow. Nothing here sends anything.
  */
 export function SpreadsView() {
-  // null is "today", the server's New York day; a past day is a fixed date that does not change.
-  const [day, setDay] = useState<string | null>(null);
+  // null is "today", the server's New York day; a past day is a fixed date that does not change. It lives in
+  // `?day=` beside History's, so a reload keeps it and switching between the two views keeps the day.
+  const [day, setDay] = useTradesDay();
   const q = useQuery({
     queryKey: ["spreads", "picks", day ?? "today"],
     queryFn: () => apiFetch<SpreadPicksResponse>(day === null ? "/spreads/picks" : `/spreads/picks?day=${day}`),

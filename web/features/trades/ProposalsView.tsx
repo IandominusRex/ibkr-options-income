@@ -9,6 +9,7 @@ import { ProposalCard } from "@/features/home/ProposalCard";
 import { ReviewSheet } from "@/features/home/ReviewSheet";
 import type { CommandStatus } from "@/lib/commands";
 import type { StrategyFilter } from "@/lib/strategy";
+import { viewReturnQuery } from "./useTradesView";
 import { tickerCounts } from "./views";
 
 /**
@@ -30,6 +31,7 @@ export function ProposalsView({
   const [ticker, setTicker] = useState("all");
   const [reviewing, setReviewing] = useState<ApprovalSummary | null>(null);
 
+  const detailQuery = viewReturnQuery("proposals", strategy);
   const waiting = visible.filter((a) => !submitted.has(a.id));
   const tickers = tickerCounts(waiting);
   // A ticker whose last proposal was decided or sent loses its chip; the list then shows them all.
@@ -67,7 +69,7 @@ export function ProposalsView({
         )}
         <div className="grid items-start gap-4 lg:grid-cols-2">
           {shown.map((a) => (
-            <ProposalCard key={a.id} approval={a} onReview={setReviewing} />
+            <ProposalCard key={a.id} approval={a} onReview={setReviewing} detailQuery={detailQuery} />
           ))}
         </div>
       </>

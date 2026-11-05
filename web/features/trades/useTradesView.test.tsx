@@ -8,7 +8,7 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/trades",
 }));
 
-import { useTradesDay, useTradesView } from "./useTradesView";
+import { detailHref, tradesReturnQuery, useTradesDay, useTradesView } from "./useTradesView";
 
 beforeEach(() => {
   nav.replace.mockReset();
@@ -93,5 +93,27 @@ describe("useTradesDay", () => {
     const again = renderHook(() => useTradesDay());
     act(() => again.result.current[1](null));
     expect(nav.replace).toHaveBeenLastCalledWith("/trades?view=history", { scroll: false });
+  });
+});
+
+describe("tradesReturnQuery", () => {
+  it("keeps only view, day and strategy, in that order, and drops the rest", () => {
+    const p = new URLSearchParams("x=1&strategy=csp&symbol=AAPL&day=2026-11-03&view=history");
+    expect(tradesReturnQuery(p)).toBe("view=history&day=2026-11-03&strategy=csp");
+  });
+  it("validates each: an unknown view, an impossible day and an unknown strategy are dropped", () => {
+    expect(tradesReturnQuery(new URLSearchParams("view=nope&day=2026-02-30&strategy=value"))).toBe("");
+    expect(tradesReturnQuery(new URLSearchParams("view=assessed&day=junk&strategy=zzz"))).toBe("view=assessed");
+  });
+  it("is empty for nothing, and for no params at all", () => {
+    expect(tradesReturnQuery(new URLSearchParams())).toBe("");
+    expect(tradesReturnQuery(null)).toBe("");
+  });
+});
+
+describe("detailHref", () => {
+  it("is the detail page, with the return query when there is one", () => {
+    expect(detailHref(42, "")).toBe("/trades/42");
+    expect(detailHref(42, "view=history&day=2026-11-03")).toBe("/trades/42?view=history&day=2026-11-03");
   });
 });

@@ -79,6 +79,18 @@ describe("ProposalsView", () => {
     expect(screen.queryByRole("article", { name: "AAPL · Sell $180 put" })).toBeNull();
   });
 
+  it("opens a proposal's page carrying the view and the strategy, so Back returns here", async () => {
+    mount([approval(1, "AAPL")], { strategy: "csp" });
+    const card = await screen.findByRole("article", { name: "AAPL · Sell $180 put" });
+    expect(within(card).getByRole("link", { name: "Details" })).toHaveAttribute("href", "/trades/1?view=proposals&strategy=csp");
+  });
+
+  it("under All the strategy is left out", async () => {
+    mount([approval(1, "AAPL")]);
+    const card = await screen.findByRole("article", { name: "AAPL · Sell $180 put" });
+    expect(within(card).getByRole("link", { name: "Details" })).toHaveAttribute("href", "/trades/1?view=proposals");
+  });
+
   it("filters by ticker and clears back to all", async () => {
     mount([approval(1, "AAPL"), approval(2, "NVDA", { strike: 190 }), approval(3, "NVDA", { strike: 185 })]);
     const chips = await screen.findByRole("group", { name: "Ticker" });

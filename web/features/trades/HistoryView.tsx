@@ -23,6 +23,7 @@ import { formatMoneyCell } from "@/lib/money";
 import { STRATEGY_EYEBROW, type StrategyFilter, kindOf, matchesFilter } from "@/lib/strategy";
 import { IN_FLIGHT_STATES, notTradedRows, orderContract } from "./history";
 import { dayLabel, shiftDay, timeET } from "./time";
+import { detailHref, viewReturnQuery } from "./useTradesView";
 
 const H2 = "mb-2.5 text-[0.8125rem] font-semibold text-muted";
 
@@ -68,11 +69,13 @@ function SentCard({
   command,
   drainHealthy,
   onSettled,
+  detailQuery,
 }: {
   approval: ApprovalSummary;
   command: CommandStatus | null;
   drainHealthy: boolean;
   onSettled: (id: number) => void;
+  detailQuery: string;
 }) {
   const titleId = useId();
   const kind = kindOf(approval.strategy, approval.right);
@@ -89,7 +92,7 @@ function SentCard({
         <DecideControls approval={approval} drainHealthy={drainHealthy} initialCommand={command} onApprovalSettled={onSettled} />
       </div>
       <Link
-        href={`/trades/${approval.id}`}
+        href={detailHref(approval.id, detailQuery)}
         aria-describedby={titleId}
         className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-full bg-sunk px-[18px] text-[1.0625rem] font-bold text-content transition-transform duration-[90ms] hover:bg-sunk-deep motion-safe:active:scale-[0.98]"
       >
@@ -104,7 +107,7 @@ function Price({ value }: { value: number | null }) {
   return <span>${value.toFixed(2)}</span>;
 }
 
-function OrderRow({ o }: { o: OrderSummary }) {
+function OrderRow({ o, detailQuery }: { o: OrderSummary; detailQuery: string }) {
   const state = ORDER_STATE[o.state] ?? { word: o.state, tone: "neutral" as const };
   const body = (
     <>
@@ -125,7 +128,7 @@ function OrderRow({ o }: { o: OrderSummary }) {
   return (
     <li className="border-t border-border first:border-t-0">
       {o.approval_id !== null ? (
-        <Link href={`/trades/${o.approval_id}`} className="-mx-2 grid grid-cols-[1fr_16px] items-center gap-x-2.5 rounded-xl px-2 py-[11px] text-sm hover:bg-sunk">
+        <Link href={detailHref(o.approval_id, detailQuery)} className="-mx-2 grid grid-cols-[1fr_16px] items-center gap-x-2.5 rounded-xl px-2 py-[11px] text-sm hover:bg-sunk">
           {body}
           <ChevronRight size={16} aria-hidden="true" className="text-muted" />
         </Link>
@@ -140,10 +143,12 @@ function InFlight({
   strategy,
   submitted,
   onSettled,
+  detailQuery,
 }: {
   strategy: StrategyFilter;
   submitted: Map<number, CommandStatus>;
   onSettled: (id: number) => void;
+  detailQuery: string;
 }) {
   const { loaded, failed, sent } = useSent(strategy, submitted);
   const orders = useWorkingOrders();
@@ -163,7 +168,14 @@ function InFlight({
         {sent.length > 0 && (
           <div className="grid items-start gap-4 lg:grid-cols-2">
             {sent.map((a) => (
-              <SentCard key={a.id} approval={a} command={submitted.get(a.id) ?? null} drainHealthy={drainHealthy} onSettled={onSettled} />
+              <SentCard
+                key={a.id}
+                approval={a}
+                command={submitted.get(a.id) ?? null}
+                drainHealthy={drainHealthy}
+                onSettled={onSettled}
+                detailQuery={detailQuery}
+              />
             ))}
           </div>
         )}
@@ -171,7 +183,7 @@ function InFlight({
           <Card as="div">
             <ul>
               {working.map((o) => (
-                <OrderRow key={o.id} o={o} />
+                <OrderRow key={o.id} o={o} detailQuery={detailQuery} />
               ))}
             </ul>
             <p className="mt-2 text-[0.8125rem] text-muted">
@@ -184,7 +196,7 @@ function InFlight({
   );
 }
 
-function NotTraded({ strategy, day }: { strategy: StrategyFilter; day: string }) {
+function NotTraded({ strategy, day, detailQuery }: { strategy: StrategyFilter; day: string; detailQuery: string }) {
   // The approvals route filters by UTC date; ask for the day either side and keep New York's day.
   const since = shiftDay(day, -1);
   const until = shiftDay(day, 1);
@@ -211,7 +223,7 @@ function NotTraded({ strategy, day }: { strategy: StrategyFilter; day: string })
             {rows.map((r) => (
               <li key={r.id} className="border-t border-border first:border-t-0">
                 <Link
-                  href={`/trades/${r.id}`}
+                  href={detailHref(r.id, detailQuery)}
                   className="-mx-2 grid grid-cols-[1fr_auto_16px] items-center gap-x-2.5 rounded-xl px-2 py-[11px] text-sm hover:bg-sunk"
                 >
                   <div className="min-w-0">
@@ -268,6 +280,8 @@ export function HistoryView({
   onSettled: (id: number) => void;
 }) {
   const isToday = day === today;
+  // A proposal opened from here hands this view back to Back to Trades; today is left out so it stays today.
+  const detailQuery = viewReturnQuery("history", strategy, isToday ? null : day);
   const q = useQuery({
     queryKey: ["pnl", "day", strategy, day],
     queryFn: () => apiFetch<DayTradesResponse>(`/pnl/day?date=${day}&strategy=${strategy}`),
@@ -327,7 +341,7 @@ export function HistoryView({
         </Button>
       </div>
 
-      {isToday && <InFlight strategy={strategy} submitted={submitted} onSettled={onSettled} />}
+      {isToday && <InFlight strategy={strategy} submitted={submitted} onSettled={onSettled} detailQuery={detailQuery} />}
 
       <section aria-labelledby="traded-title">
         <h2 id="traded-title" className={H2}>
@@ -338,7 +352,7 @@ export function HistoryView({
 
       <HeldBack day={day} strategy={strategy} isToday={isToday} />
 
-      <NotTraded strategy={strategy} day={day} />
+      <NotTraded strategy={strategy} day={day} detailQuery={detailQuery} />
 
       {strategy === "all" && (
         <p className="text-[0.8125rem] text-muted">

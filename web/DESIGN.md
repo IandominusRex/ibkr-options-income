@@ -858,6 +858,13 @@ Operate. Dials as the project default. Built in web overhaul Part 2
   banner counts and names them too ("GOOGL buy"); its lime Open goes to Trades only when a wheel proposal
   waits, and a banner of value proposals alone carries the secondary Show. No new token, colour, font, radius or
   elevation.
+- **Unknown is said, and Back remembers (2026-11-05):** History's In flight and Not traded sections say "In-flight
+  orders could not be loaded right now." or "Proposals that did not trade could not be loaded right now." when
+  their read failed, never nothing, and a Not traded read that hit its 200-proposal limit adds "Only the newest 200
+  proposals over these days could be read, so an older one may be missing." A card's Details link carries the view,
+  the day (not today) and the strategy (not All) it was opened from, and Back to Trades on the proposal's page
+  returns to them; opened from Home or a bare link it goes to plain Trades. Credit spreads keeps its day in `?day=`
+  as History does. No new token, colour, font, radius or elevation.
 
 ### Portfolio
 Operate. Dials as the project default. Built in web overhaul Part 3

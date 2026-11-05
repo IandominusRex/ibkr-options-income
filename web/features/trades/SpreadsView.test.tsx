@@ -1,7 +1,51 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetchMock, renderWithQuery } from "@/lib/test-query";
+
+// The day lives in `?day=` (useTradesDay), so the router is a small stateful stand-in: replace() rewrites the
+// query and every subscribed useSearchParams re-reads it, as the app router does.
+const nav = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  const state = { search: "", replace: undefined as unknown as ReturnType<typeof vi.fn> };
+  const set = (url: string) => {
+    state.search = url.includes("?") ? url.slice(url.indexOf("?") + 1) : "";
+    listeners.forEach((l) => l());
+  };
+  state.replace = vi.fn((url: string) => set(url));
+  return { state, listeners, set };
+});
+vi.mock("next/navigation", async () => {
+  const { useSyncExternalStore } = await import("react");
+  const cache = new Map<string, URLSearchParams>();
+  const read = (search: string) => {
+    if (!cache.has(search)) cache.set(search, new URLSearchParams(search));
+    return cache.get(search) as URLSearchParams;
+  };
+  return {
+    useRouter: () => ({ replace: nav.state.replace }),
+    usePathname: () => "/trades",
+    useSearchParams: () =>
+      read(
+        useSyncExternalStore(
+          (l) => {
+            nav.listeners.add(l);
+            return () => nav.listeners.delete(l);
+          },
+          () => nav.state.search,
+          () => nav.state.search,
+        ),
+      ),
+  };
+});
+
 import { SpreadsView } from "./SpreadsView";
+import { todayInNewYork } from "./time";
+
+beforeEach(() => {
+  nav.state.replace.mockClear();
+  (apiFetchMock as unknown as { mockClear: () => void }).mockClear();
+  nav.set("/trades");
+});
 
 const item = (letter: string, position: string, short: number, long: number) => ({
   letter, position, side: "put", short_strike: short, long_strike: long, width: 5, contracts: 21,
@@ -140,6 +184,48 @@ describe("SpreadsView", () => {
     expect(await screen.findByRole("heading", { name: /Fri, Oct 9/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Today" }));
     await waitFor(() => expect(screen.getByRole("heading", { name: /Thu, Oct 15/ })).toBeInTheDocument());
+  });
+
+  it("keeps the day in the URL: Previous writes ?day= and Today clears it", async () => {
+    renderWithQuery(<SpreadsView />, {
+      "/spreads/picks?day=2026-10-09": day({ day: "2026-10-09", previous_day: null, next_day: null, picks: [], positions: [] }),
+      "/spreads/picks": day(),
+    });
+    await screen.findByRole("heading", { name: /Thu, Oct 15/ });
+    fireEvent.click(screen.getByRole("button", { name: "Previous day with spreads activity" }));
+    expect(nav.state.replace).toHaveBeenLastCalledWith("/trades?day=2026-10-09", { scroll: false });
+    expect(await screen.findByRole("heading", { name: /Fri, Oct 9/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Today" }));
+    expect(nav.state.replace).toHaveBeenLastCalledWith("/trades", { scroll: false });
+  });
+
+  it("asks for the day the URL names", async () => {
+    nav.set("/trades?strategy=spread&day=2026-10-09");
+    renderWithQuery(<SpreadsView />, {
+      "/spreads/picks?day=2026-10-09": day({ day: "2026-10-09", previous_day: null, next_day: null, picks: [], positions: [] }),
+      "/spreads/picks": day(),
+    });
+    expect(await screen.findByRole("heading", { name: /Fri, Oct 9/ })).toBeInTheDocument();
+    expect(apiFetchMock.mock.calls.some((c) => c[0] === "/spreads/picks?day=2026-10-09")).toBe(true);
+    expect(apiFetchMock.mock.calls.some((c) => c[0] === "/spreads/picks")).toBe(false);
+  });
+
+  it("an unreadable ?day= is today", async () => {
+    nav.set("/trades?day=yesterday");
+    renderWithQuery(<SpreadsView />, { "/spreads/picks": day() });
+    expect(await screen.findByRole("heading", { name: /Thu, Oct 15 · today/ })).toBeInTheDocument();
+  });
+
+  it("Next onto today clears ?day= rather than pinning today's date", async () => {
+    nav.set("/trades?day=2026-10-09");
+    const today = todayInNewYork();
+    renderWithQuery(<SpreadsView />, {
+      "/spreads/picks?day=2026-10-09": day({ day: "2026-10-09", previous_day: null, next_day: today, picks: [], positions: [] }),
+      "/spreads/picks": day(),
+    });
+    await screen.findByRole("heading", { name: /Fri, Oct 9/ });
+    fireEvent.click(await screen.findByRole("button", { name: "Back to today" }));
+    expect(nav.state.replace).toHaveBeenLastCalledWith("/trades", { scroll: false });
   });
 
   it("sends nothing: no request but reads", async () => {

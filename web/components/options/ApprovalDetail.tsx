@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 import { Card } from "@/components/ui/Card";
 import { StatusWord } from "@/components/ui/StatusWord";
 import { Stub, formatStubValue } from "@/components/ui/Stub";
 import { proposalTitle } from "@/features/home/ProposalCard";
+import { tradesReturnQuery } from "@/features/trades/useTradesView";
 import { decisionWords, proposalSentence, proposalStub, rollSentence, rollStub } from "@/features/home/proposal";
 import { apiFetch } from "@/lib/api";
 import { UNKNOWN, formatDateTime, relativeAge } from "@/lib/format";
@@ -26,16 +28,30 @@ const STATUS_WORD: Record<string, string> = {
   expired: "Expired",
 };
 
-export function BackToTrades() {
+const BACK_CLASS =
+  "inline-flex min-h-11 items-center gap-1 text-[0.8125rem] font-semibold text-muted hover:text-content md:min-h-8";
+
+function BackLink({ href }: { href: string }) {
   return (
-    <Link
-      href="/trades"
-      aria-label="Back to Trades"
-      className="inline-flex min-h-11 items-center gap-1 text-[0.8125rem] font-semibold text-muted hover:text-content md:min-h-8"
-    >
+    <Link href={href} aria-label="Back to Trades" className={BACK_CLASS}>
       <ChevronLeft size={16} aria-hidden="true" />
       Trades
     </Link>
+  );
+}
+
+function BackFromParams() {
+  // The Trades view, day and strategy this page was opened from; none (a bare URL, or Home) is plain Trades.
+  const q = tradesReturnQuery(useSearchParams());
+  return <BackLink href={q ? `/trades?${q}` : "/trades"} />;
+}
+
+/** Back to the Trades view you left. The Suspense keeps a prerender from waiting on the query string. */
+export function BackToTrades() {
+  return (
+    <Suspense fallback={<BackLink href="/trades" />}>
+      <BackFromParams />
+    </Suspense>
   );
 }
 
