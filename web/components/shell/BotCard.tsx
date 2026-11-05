@@ -7,7 +7,7 @@ import type { ControlsResponse } from "@/components/options/types";
 import { BotSheet } from "./BotSheet";
 
 export function useControls() {
-  // Same key as ControlsStrip / ApprovalsList: one request for the whole page.
+  // Same key as AssessedBrowser, ApprovalDetail and useBrokerRefresh: one request for the whole page.
   return useQuery({
     queryKey: ["options", "controls"],
     queryFn: () => apiFetch<ControlsResponse>("/options/controls"),

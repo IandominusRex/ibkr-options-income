@@ -9,7 +9,7 @@ import { ProposalCard } from "./ProposalCard";
 import { ReviewSheet } from "./ReviewSheet";
 
 export function usePendingApprovals(strategy: StrategyFilter) {
-  // Same key as <ApprovalsList status="pending"/>: one request, and DecideControls'
+  // Same key as the Rail's pending count: one request, and DecideControls'
   // invalidation of ["options", "approvals"] refreshes this too.
   const q = useQuery({
     queryKey: ["options", "approvals", "pending"],

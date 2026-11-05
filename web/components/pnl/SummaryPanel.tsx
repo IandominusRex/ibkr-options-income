@@ -24,17 +24,17 @@ import type { PnlLegData, PnlSummaryResponse } from "./types";
 export function SummaryPanel({ book, qsString, onBookChange, onSelectLeg }: {
   book: string;
   /**
-   * The exact query string `PnlShell` composed for the ledger/equity/CSV
+   * The exact query string `useLegFilters` composed for the ledger/equity/CSV
    * export (symbol/strategy/outcome/since/until, `book` already included) —
    * NOT rebuilt here. Regression: this panel used to fetch `?book=${book}`
    * only, ignoring every other filter, so the headline totals stayed
    * unfiltered while the ledger rows below them narrowed — the one thing
-   * `PnlShell`'s own docstring says can never happen ("a second composition
+   * `useLegFilters`'s own docstring says can never happen ("a second composition
    * would let them drift").
    */
   qsString: string;
   onBookChange?: (next: string) => void;
-  /** Jump to this leg in the ledger tab (`PnlShell` switches tab + filters by symbol). */
+  /** Jump to this leg in the ledger tab (`useLegFilters.viewLeg` sets the symbol filter). */
   onSelectLeg?: (leg: PnlLegData) => void;
 }) {
   const { data, isLoading, isError, error } = useQuery({

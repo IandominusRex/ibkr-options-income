@@ -10,7 +10,7 @@ import type { ApprovalListResponse } from "@/components/options/types";
 import { BotCard } from "./BotCard";
 
 export function usePendingCount(): number | null {
-  // Same key and URL as <ApprovalsList status="pending"/>, so react-query dedupes.
+  // Same key and URL as usePendingApprovals (features/home/NeedsYou.tsx), so react-query dedupes.
   const { data } = useQuery({
     queryKey: ["options", "approvals", "pending"],
     queryFn: () => apiFetch<ApprovalListResponse>("/options/approvals?status=pending"),

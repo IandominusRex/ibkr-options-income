@@ -8,8 +8,7 @@ import { apiFetch } from "@/lib/api";
 // components/options/*.test.tsx file before this one duplicated the same three
 // lines inline — a `withClient()` QueryClientProvider wrapper, `vi.mock("@/lib/api")`,
 // and a per-file `apiFetch.mockImplementation((path) => {...})` (see
-// ApprovalDetail.test.tsx:7-15 and ShortsTable.test.tsx:7-19,61-83 for the shape this
-// replaces). Centralising it here means later portfolio test files answer with a
+// ApprovalDetail.test.tsx:7-15 for the shape this replaces). Centralising it here means later portfolio test files answer with a
 // plain path-to-response map instead of reinventing the switch statement.
 //
 // vi.mock is called here, at this file's module scope, not inside renderWithQuery.
@@ -49,7 +48,7 @@ export const apiFetchMock = apiFetch as unknown as ApiFetchMock;
  *
  * Matching: an exact key match wins; otherwise the first key `path` starts with
  * (so "/options/shorts?symbol=NVDA" still resolves against a "/options/shorts"
- * entry, matching the startsWith convention ShortsTable.test.tsx already uses).
+ * entry, matching the startsWith convention the older per-file mocks used).
  * A path with no matching key throws immediately instead of resolving `undefined`,
  * so a missing mock fails loudly at the fetch site, not several assertions later.
  */

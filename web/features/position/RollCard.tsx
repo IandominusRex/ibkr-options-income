@@ -27,7 +27,7 @@ export function RollCard({
   strike: number;
   right: "C" | "P";
 }) {
-  // Same key as the legacy ShortsTable and Home's Roll alert word: one request.
+  // Same key as Home's Roll alert word: one request.
   const shorts = useQuery({
     queryKey: ["options", "shorts"],
     queryFn: () => apiFetch<ShortListResponse>("/options/shorts"),

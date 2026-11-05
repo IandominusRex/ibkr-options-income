@@ -8,7 +8,7 @@ import { useBrokerRefresh } from "./useBrokerRefresh";
 
 /**
  * The page-level manual refresh control (P3-P4 M3 Task 3.5), mounted in
- * `PortfolioShell`'s header so it is visible regardless of which tab is
+ * `features/portfolio/PortfolioPage.tsx`'s header so it is visible regardless of which tab is
  * active. Fires `POST /commands` with `kind: "refresh"` -
  * `src/notify/command_drain.py`'s `_refresh` handler (P3/P4 M1 Task 1.4,
  * documented in `docs/web/commands.md`'s `refresh` entry): captures live

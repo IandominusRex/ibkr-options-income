@@ -13,8 +13,7 @@ import { WatchingPanel } from "./WatchingPanel";
 import { WebLayerPanel } from "./WebLayerPanel";
 
 /**
- * The System Explanation page frame. Plain useState tab switching, same shape as
- * PortfolioShell/PnlShell - no react-query anywhere on this page, because every panel is
+ * The System Explanation page frame. Plain useState tab switching - no react-query anywhere on this page, because every panel is
  * static content describing how the system works rather than a live view of it. Matches
  * the rest of the app's tab-bar convention (border-b-2 on the active tab) so this console
  * feels like one product rather than a bolted-on docs page.
