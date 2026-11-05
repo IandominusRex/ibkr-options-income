@@ -13,6 +13,7 @@ import { StatementsTable } from "@/components/stock/StatementsTable";
 import { SummaryPanel } from "@/components/stock/SummaryPanel";
 import { TechnicalsPanel } from "@/components/stock/TechnicalsPanel";
 import { NameNotes } from "@/features/market/NameNotes";
+import { ValueBlock } from "@/features/stock-value/ValueBlock";
 import { relativeAge } from "@/lib/format";
 
 const PENDING_SECTIONS = ["fundamentals", "technicals", "sentiment", "news", "checks"] as const;
@@ -62,6 +63,7 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
 
       <section className="mb-10">
         <NameNotes symbol={upper} />
+        <ValueBlock symbol={upper} />
       </section>
 
       <SectionShell

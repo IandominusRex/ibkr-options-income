@@ -896,6 +896,35 @@ the figure face.
 ### Research
 Read. Search, watchlist, sectors, the stock page, and Universe. VARIANCE 3, DENSITY 6.
 
+- **Value block (2026-11-05):** a white card on the stock page under the name notes, titled "Value book on
+  GOOGL" with the file's age at the right ("Scorecard of Nov 4, 2026, 1 day old"; "Worked out just now from the
+  latest filings" when the page recomputed it on open; "Fetching the filings" while it is pending, and the page
+  asks again every five seconds). The verdict comes first, one row per list: the list, the state as a neutral
+  status word (Ready, Watch, Wait, No), who decided it in words ("Python's rules decide this." or "Claude's
+  verdict decides this. Python's baseline is Wait."), then "Fair value $215.00 · price $182.40 · margin of
+  safety 15.1%" and, for a held name, one line "Plan: stop $140.00 · sell half at $215.00 · then trail". Under
+  it the spec's three questions as headed sections. "Is the business still doing its job?" lists the quality
+  and health checks, failing ones first, each with a Pass word (a flag word for Fail, a hatched n/a for
+  unknown), what it read and the bar it was held to, then the kill triggers under the label "Kill triggers
+  Claude set, checked by Python" with Far, Near (flag) or Fired (flag) and the room left in words. "What is it
+  worth?" has, per list, Python's methods with the value at the right and a "Median" word on the one the fair
+  value is the median of, then, in a sunk box, "Claude's fair value" with the drivers it chose, what Python
+  held at a bound and the 1.5x cap in a sentence, and Python's baseline and Claude's verdict as two lines when
+  they differ; the reverse-DCF sentence closes it. "How much, and when?" has the holding for a held name, and per
+  list the timing word, the margin of safety the regime asks against the name's own, the entry ceiling and the
+  baseline's reason in words. A held name's re-evaluations follow as a short dated list (date, list, a Major flag
+  word, what fired, the stop before and after). "What Claude wrote" closes the card: one muted line says when
+  Claude read and which scorecard it sits beside ("Read Nov 2, 2026, before the scorecard of Nov 4, 2026" when
+  the scorecard has moved on), then "Claude's thesis", "Claude's bear case" and "Claude's review" each as a
+  bold label with "read Nov 2, 2026" beside it and the text at most 65 characters wide, the quoted filings in a
+  closed Disclosure, and "Run Claude's analysis". That button is secondary, never lime (it asks for a read and
+  changes no order state), has no confirmation, and is followed by the command receipt; "Claude's reads are off
+  in config." answers a `claude_off` reply, and an applied one says the read is queued and that the card looks
+  again for ten minutes. A name the book cannot score says why in one sentence ("The value book does not score
+  GOOGL: ..."); unavailable reads "The value book has not written anything yet."; unknown figures are hatched
+  n/a. The tranche plan and the size tier are not in the API yet, so the card does not show them. No new
+  token, colour, font, radius or elevation.
+
 ### News
 Read. Feed and calendar; ticker briefs. The feed opens with the Market card: regimes, up to six stories
 with each description labelled as Claude's, and one line on the last 7 days of triage (judged as noise,
@@ -983,6 +1012,17 @@ sibling keys; re-run the check after edits.
 
 ## Decision Log
 
+- 2026-11-05: **Value block on the stock page** (value book Part 6, Section G). Added the "Value book on
+  SYMBOL" card under the name notes (Surfaces, Research) in `features/stock-value/`, mounted with one line.
+  The one command it sends, `value_analyse`, lives in `AnalyseButton` (confirm-less, with a receipt), so the
+  `web/features` command grep now names `features/stock-value/AnalyseButton.tsx` and its test beside
+  `features/more/TargetCard.tsx` and its test. "Run Claude's analysis" is a secondary button: it asks for a
+  read and changes no order state, so it does not take lime. No new token, colour, font, radius or elevation.
+  Critique and audit at 1440px and 390px, light and dark, against a mock of `GET /value/GOOGL`, found three
+  things, fixed: Claude's read date was repeated beside every label in full (now said once under the heading,
+  with a short "read Nov 2, 2026" beside each label), Python's baseline and Claude's verdict floated between two
+  lists (now inside Claude's fair value box), and gate ids lost their acronyms ("Fcf positive", now "FCF
+  positive").
 - 2026-11-05: **Value card on Home** (value book Part 6, Section F). Added the "Value book" card after
   Positions (Surfaces, Home) and its decide flow in `components/value/`: a new `ValueDecide` that mirrors the
   protected `DecideControls` shape (confirm first, one command, a receipt, in-flight disable, persistence

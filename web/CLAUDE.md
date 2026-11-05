@@ -787,10 +787,25 @@ components/
                     DecideControls), `types.ts` (aliases over the generated api-types) and
                     `format.ts` (the sentences: the sum, the next exit, the confirm text naming the
                     wheel puts a buy may close, the reason codes in words). The value flow lives here
-                    so `grep -rn "submitCommand\|confirmCommand" web/features` still prints only
-                    features/more/TargetCard. A trim has no web button (plan ruling 10): the card
+                    so `grep -rn "submitCommand\|confirmCommand" web/features` prints only
+                    features/more/TargetCard, features/stock-value/AnalyseButton (Section G) and their
+                    tests. A trim has no web button (plan ruling 10): the card
                     says it is offered in Telegram. Claude's words never sit on a button.
 features/
+  stock-value/      The value book's view of one name on the stock page (value book Part 6, Section G).
+                    ValueBlock (react-query on GET /value/{symbol}, key ["value","ticker",SYMBOL]:
+                    the verdict per list first, then BusinessBlock, WorthBlock and SizeBlock for the spec's
+                    three questions, a held name's re-evaluations, ClaudeBlock; it asks again every 5 s
+                    while `computed` is "pending" and every 15 s for ten minutes after a Claude read is
+                    queued), AnalyseButton ("Run Claude's analysis": a confirm-less one-click
+                    `value_analyse` with a CommandReceipt, persisted under `value-analyse:<SYMBOL>`; the
+                    ONLY command site in this folder, so `grep -rn "submitCommand\|confirmCommand"
+                    web/features` prints `features/more/TargetCard.tsx`, its test, this file and its test),
+                    parts.tsx (Hatched, Segments, ClaudeLabel), `types.ts` (aliases over the generated
+                    api-types) and `format.ts` (sentences and the poll rule `refetchMs`). Every piece of
+                    Claude's text carries a "Claude's ..." label with the date it was read against; a
+                    hatched n/a is an unknown; Claude's words never sit on a button. Mounted by one line in
+                    app/stock/[symbol]/page.tsx after NameNotes.
   home/             Web overhaul Part 1: the Home page. HomePage (strategy switcher with
                     pending counts, then AccountHero, ProposalsBanner below 1024px, PayCard,
                     PositionsCard; the NeedsYou column from 1024px; renders the bare page
