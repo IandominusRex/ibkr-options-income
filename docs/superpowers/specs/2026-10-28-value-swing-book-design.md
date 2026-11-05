@@ -970,7 +970,10 @@ A fast VIX regime is a poor clock for a hold of months. So:
   So a value proposal is a `value.db` row. Its Telegram and web Approve/Reject taps are `app_commands`
   intents (new kinds `value_approve` / `value_reject`) drained by the value service, which re-gates
   and sends. `approval_service` imports nothing from `src.value`; it only forwards the tap as an
-  intent, as the web does.
+  intent, as the web does. Since Part 6 the six value kinds are the frozenset `VALUE_KINDS` in
+  `src/common/value_commands.py`; the trading drain (`command_drain.drain_once`) skips them (its TTL
+  sweep still expires one the value process never picked up) and the value process applies them
+  through `src/value/commands.py` (revision 5).
 - `scripts/run_value.py`: its own process, **no IBKR connection in Stages 1–2**; clientId 31 in Stage 3
   (`ibkr.client_ids.value`, in `config/settings.yaml` and its example); registered in `./ibkr`.
 - Own config `config/value.yaml` (private) and `config/examples/value.yaml` (committed); own database
@@ -1323,3 +1326,37 @@ its rulings set the details below and the operator may overturn any of them.
    claim on excess liquidity and the earmark, not a reservation; the go-live line "the pot cannot be
    funded without lowering the wheel's reserve" (§12) reads "a value buy needed a release that lowered
    the wheel's reserve below its configured floor".
+
+## 22. Revision 5 — 2026-11-04: the operator's Part 6 answers
+
+Plan: `docs/superpowers/plans/2026-10-29-value-book-6-web-telegram.md`. The operator answered three
+questions on 2026-11-04 and accepted the plan writer's defaults on four more; each is binding until the
+operator says otherwise.
+
+**The operator's answers:**
+- **Who drains a value tap (plan ruling 1, §9.7).** The value process drains `value_approve`, `value_reject`,
+  `value_trim`, `value_snapshot`, `value_analyse` and `value_refresh`; the API and `approval_service` only
+  enqueue them, and the trading drain skips `VALUE_KINDS` (`src/common/value_commands.py`).
+- **"Trim to half" (ruling 3, §9.6).** One button on the drawdown's trim card creates a sell proposal for half
+  of every open position's filled shares, already approved, `reason="drawdown_trim"`, each sale still re-gated
+  at send time and capped by the sell cap.
+- **The VALUE NOTE (ruling 9, §8).** The wheel's three review prompts (the scan's trade review, the roll review
+  and `/scan NAME`) carry a compact note of what the value book thinks of each reviewed name, as context only,
+  behind `value.prompt_note.enabled`; it can reach only Claude's reduce-only CSP size cut.
+
+**Defaults the operator accepted:**
+- **`/value NAME` (ruling 12, §10).** The stored ticker file with its age in words, and a `value_refresh`
+  queued when the file is stale; `/value NAME analyse` queues Claude's read at the "request" priority (§8.5).
+- **The digest (ruling 13, §7.1).** One message a night to `TELEGRAM_THREAD_VALUE`, sent only when some part is
+  non-empty, behind `value.telegram.digest_enabled`.
+- **The watchdog (ruling 15, §13).** `value_check` alerts when the newest finished `nightly` run is older than the
+  last weekday close plus `watchdog.value_grace_hours` (26).
+- **The web set (ruling 30, §10).** The Home Value card with the decide flow, the stock page's value block with
+  "Run Claude's analysis", the Research "Top opportunities" strip, and a `value` kind on Home's existing cards,
+  each cuttable and each held to `web/DESIGN.md`.
+
+**Rulings made during the review fix pass (2026-11-05), by the orchestrator, to be flagged to the operator:**
+- A trim tap is refused as `stale_proposal` once the offer is older than 30 hours (`TRIM_TTL_HOURS`) or once the
+  stored drawdown has eased below `book.drawdown_trim_pct`; an unknown number never refuses. Conservative and
+  reversible: the next breach starts a new offer.
+- A repeat tap on a decision already made (approve, reject or trim) is an idempotent success, not a failure.

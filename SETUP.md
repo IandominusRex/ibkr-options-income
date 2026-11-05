@@ -2161,6 +2161,17 @@ adds **re-evaluations** (spec §7.1) and **Stage 1b**, the point-in-time backtes
 12. **The web reads the book** (no setup beyond the API): `GET /value/top`, `/value/book`,
     `/value/positions` and `/value/{symbol}` (`docs/web/api.md`). Opening a ticker file whose research
     inputs moved computes it on the spot from `research.db` and asks the value process to store it.
+13. **The web surfaces (Part 6, no setup).** Home carries a **Value** card (the book's holding, ceiling, breakers
+    and each open proposal with Approve / Reject, which send the same intents as the Telegram buttons) and a
+    **Value** filter on its existing cards (pay stub, positions, Done today, the realised calendar); the stock page
+    shows a value block with **Run Claude's analysis**; Research shows **Top opportunities**. A web tap, like a
+    Telegram one, approves only: the value process sends at its next RTH cycle. The trim button is Telegram only.
+    Restart the trading service before the API after pulling.
+14. **First checks after the restart** (book still off): send `/value`, `/value GOOGL` and `/value GOOGL analyse`
+    and confirm the reply and that the value thread gets the refreshed card. Once the book is on (after Part 5's
+    fault drills), approve one proposal from Telegram and one from the web, confirm the next RTH cycle sends it on
+    clientId 31 and `decided_by` reads `telegram` / `web`, then read the first digest and the watchdog's value line
+    and confirm a stale card's tap answers "out of date".
 
 ### Scripts
 

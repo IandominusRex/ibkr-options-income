@@ -343,10 +343,68 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 | **Live trading for the spreads system; flow-based GEX; spreads web pages** | **Deliberately not built.** `src/spreads/service.py::run()` refuses `LIVE_TRADING=true` (shadow/paper only until a separate live plan exists). Intraday flow-based GEX needs a paid vendor feed — the map uses prior-close open interest. The spreads book has no web pages beyond the ledger's Book filter; `scripts.spreads_report` and the Telegram thread are its read side. |
 | **Trade ledger web dashboard** (`/ledger`, `/ledger/trades`, `/ledger/ticker/[symbol]`, `/ledger/import`) | **Built (Tasks 13-16 of docs/superpowers/plans/2026-10-05-trade-ledger.md, on `feat/trade-ledger`).** Overview (tiles, cumulative-P&L curve, monthly bars, ticker table), the filterable trades table with CSV export and a trade panel that edits annotations (`ledger_annotate`), the per-ticker drill-down (wheel cost-basis walk, lots, dividends, every trade) and the import page (CSV upload via `ledger_import`, feed status, corporate actions with a mark-reviewed button, import history). All reads go through `GET /ledger/*`; all writes through the command queue. See `web/CLAUDE.md`/`ARCHITECTURE.md` `web/`. |
 | **Trade ledger fence test** (`tests/test_web_fence.py::test_the_trading_path_never_imports_the_ledger`, `::test_the_ledger_never_imports_the_enrichment_layer`, `::test_only_the_ledger_package_writes_the_ledger_tables`) | **Built (Task 17 Step 1).** Asserts `engine/`/`execution/`/`strategies/` never import `src.ledger` or `trade_ledger`, `src/ledger/` imports nothing from `src.claude`, and only `src/ledger/` (plus the ORM definitions in `models.py`) constructs the six ledger-table rows. `test_reporting_never_writes_anything` separately covers `trade_ledger.py`'s no-writes rule. |
-| **Value book Part 6** | **Backend built 2026-11-05** (Sections A-E of `docs/superpowers/plans/2026-10-29-value-book-6-web-telegram.md`; the web pieces F-I and the closing docs J come after): the six `value_*` command kinds drained by the value process (approve / reject with the proposal fingerprint, the 25% drawdown's "trim to half" card, snapshot, refresh, analyse), the proposal / trim / re-evaluation / review cards and the nightly digest in `TELEGRAM_THREAD_VALUE`, `/value` (three forms) and the `vbook:` buttons, held-name triggers for names with no shadow entry, `is_fresh` on the cheap parts (`value_ticker_files.freshness_json`), the watchdog's nightly-run check, the VALUE NOTE in the wheel's three review prompts, plain words for the Part 5 reason codes, value fills as their own book in the trade ledger, and the read API (`GET /value/top|book|positions|{symbol}`, `strategy=value` on `/pnl/month|day|calendar`, the on-open recompute). **Not built:** live trading for the value book (a separate live plan after spec §12's review); a web "trim" button (the trim card is Telegram and the Home card only); editing a proposal's size from a tap. **Known limitations:** `/value NAME` in Telegram compares dates only for staleness (the exact fingerprint test is the web's, because `approval_service` may not import `src.value` or open research.db); value.db holds no commissions, so a value sale's commissions are unknown on the pay stub and the calendar (`value_commissions_complete: false`); a stale-file view sends a `value_snapshot` carrying its input set and a fresh-file view sends an empty-fingerprint one (at most one a day per name) that only marks the name viewed; the "What Claude knows" page has no VALUE NOTE chip and the scan's review-reuse fingerprint does not key on the note (a reused review can predate a verdict change inside `claude.review_reuse_minutes`). **Review fix pass (2026-11-05):** a trim card is refused as `stale_proposal` once its offer is older than 30 hours (`TRIM_TTL_HOURS`) or the book's stored drawdown is back under `book.drawdown_trim_pct` (an operator-level ruling, conservative and reversible: a tap on an old card re-offers nothing, the next breach starts a new offer); a re-run of an already-applied approve / reject / trim is an idempotent success; the value process drains taps between the night, the Claude queue and the cycle so a tap does not wait out a slow tick; failed Telegram-asked reads (`claude_off`, `no_data`, `research_unavailable`) now answer in the value thread. **Deferred by the whole-branch review (Progress log, "Review fix pass"):** `/value/positions` matches re-entry windows for display only (orders carry no position id); `vi.load_regime()` opens a read-write session in the API process for a read; `prose_key` ignores the VALUE NOTE (it lives in protected `src/orchestrator/scan.py`); the VALUE NOTE chip is missing from `src/api/claude_calls.py` (the web fixtures pin the block list); the calendar under `all` adds value realised into the daily totals while `MonthPay.net` keeps it out (needs a ruling in Section I); the ticker roll-up's unrealised P&L includes value shares; `send_cards` retries are noisy with no Telegram token or a permanent send error; `book.totals` (Part 5) averages cost over every buy ever made, not over the shares still held, so after a re-entry its cost basis blends the old lot (the API's `read_fills` no longer does); Telegram burst rate limits on trim-created cards; `/value NAME` staleness is date-only.
 Operator to-dos: re-copy `config/examples/value.yaml`'s `telegram:` and `prompt_note:` blocks and `config/examples/settings.yaml`'s `watchdog.value_grace_hours` into the private copies (the defaults load without them), then `./ibkr restart` (trading service before the API). |
 
 ---
+
+## Built (2026-11-05 — value book Part 6: Telegram, the web and the book's surfaces)
+
+Plan: `docs/superpowers/plans/2026-10-29-value-book-6-web-telegram.md`; spec revision 5 (§22). Paper only; the
+book is still off until `value.book.enabled`.
+
+- **Backend (Sections A-E).** The six `value_*` command kinds (`VALUE_KINDS`, `src/common/value_commands.py`),
+  drained by the value process (the trading drain skips them); approve / reject carry the proposal fingerprint;
+  the 25% drawdown's "trim to half" card; proposal, trim, re-evaluation and review cards and the nightly digest in
+  `TELEGRAM_THREAD_VALUE`; `/value` (three forms) and the `vbook:` buttons; held-name triggers for names with no
+  shadow entry; `is_fresh` on the cheap parts (`value_ticker_files.freshness_json`); the watchdog's nightly-run
+  check (`watchdog.value_grace_hours`); the VALUE NOTE in the wheel's three review prompts; plain words for the
+  Part 5 reason codes; value fills as their own book in the trade ledger; the read API (`GET /value/top|book|
+  positions|{symbol}`, `strategy=value` on `/pnl/month|day|calendar`, the on-open recompute). An Opus
+  whole-branch review of A-E found 0 Critical, 5 Important and 8 minors; one fix pass (`8e4003d`) closed them.
+  Review fix pass rulings: a trim card is refused as `stale_proposal` after 30 hours (`TRIM_TTL_HOURS`) or once
+  the stored drawdown is back under `book.drawdown_trim_pct` (the orchestrator's conservative, reversible ruling,
+  to be flagged to the operator); a repeat tap on a decision already made is an idempotent success; the value
+  process drains taps between the night, the Claude queue and the cycle.
+- **Web (Sections F-I, all ran).** F: Home's Value card and the value decide flow (`components/value/`). G: the
+  stock page's value block with "Run Claude's analysis" (`features/stock-value/`). H: Research's "Top
+  opportunities" strip. I: a `value` kind across Home (filter, pay card and stub, positions, Done today, the
+  realised calendar, Needs you). Vitest 1478 passed.
+- **Not built:** live trading for the value book (a separate live plan after spec §12's review); a web "trim"
+  button (the trim button is Telegram only; the Home card shows the trim state); editing a proposal's size from a tap.
+- **Known limitations.** A tap acts at the value process's next RTH cycle (a proposal is approved at once, sent at
+  the next check after a fresh-quote gate). The on-open recompute needs filings in research.db. The VALUE NOTE is
+  prompt text only and never moves the Rules Engine. `/value NAME` in Telegram compares dates only for staleness
+  (the exact fingerprint test is the web's: `approval_service` may not import `src.value`). value.db holds no
+  commissions, so a value sale's commissions are unknown on the pay stub and the calendar
+  (`value_commissions_complete: false`). A stale-file view sends a `value_snapshot` carrying its input set and a
+  fresh-file view sends an empty-fingerprint one (at most one a day per name) that only marks the name viewed.
+  Part 5's still-open list is carried (the fault drills, the first real release close, clientId 31 beside the
+  other daemons, `orderRef` through the live hook and a Flex pull; see the Part 5 entry).
+- **Deferred (backend review and fix pass).** `/value/positions` matches re-entry windows for display only
+  (orders carry no position id); `vi.load_regime()` opens a read-write session in the API process for a read;
+  `prose_key` ignores the VALUE NOTE (it lives in protected `src/orchestrator/scan.py`, so a reused review can
+  predate a verdict change inside `claude.review_reuse_minutes`); the VALUE NOTE chip is missing from
+  `src/api/claude_calls.py` (the web fixtures pin the block list); the ticker roll-up's `_unrealized` includes
+  value shares; `send_cards` retries are noisy with no Telegram token or a permanent send error; `book.totals`
+  (Part 5) averages cost over every buy ever made, not over the shares still held, so after a re-entry its cost
+  basis blends the old lot (the API's `read_fills` no longer does); Telegram burst rate limits on trim-created
+  cards.
+- **Deferred (web, Sections F-I).** Top opportunities has no Claude note field (`ValueTopItem` has none) and its
+  stop is always null today. The stock page shows no tranche plan or size tier (`GET /value/{symbol}` does not
+  expose them). The calendar's value split costs one extra request per month opened (`GET /pnl/calendar?
+  strategy=value`; the cell's figure is still the whole day, and `MonthPay.net` keeps value out). The
+  `value_available=false` flag shows under All on installs that never ran the value process (value.db absent;
+  gate it on `/value/book`'s `enabled` if it is noise). The Home card's `drainHealthy` is always true: no API
+  field says whether the value process is running. A held name's stop reads a hatched "stop n/a" until the half
+  sale. Process gaps: no fresh reviewer-agent step ran for F-I (the da-vinci critique and audit ran in-thread),
+  and dark-mode captures were not taken for several web sections (390px dark only for F; 1440px dark only for G;
+  none for H and I's states).
+- **Needs live verification** (paper): a real Telegram tap on a value card in paper reaches the value process and
+  the next RTH cycle sends; the trim card's button; the digest's first night; the watchdog's value line; and a
+  stale card's tap answering "out of date".
+- **Operator to-dos after the merge:** re-copy the value example's `telegram:` and `prompt_note:` blocks into the
+  private `config/value.yaml` and `watchdog.value_grace_hours` into `config/settings.yaml` (defaults load without
+  them); `./ibkr restart`, the trading service before the API; then the checks in `SETUP.md` §19.
 
 ## Built (2026-10-30 — value book Part 5: money in paper, capital release)
 
