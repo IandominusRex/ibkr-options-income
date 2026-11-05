@@ -1180,7 +1180,8 @@ export interface paths {
          * @description The book's filled orders, newest first (web overhaul Part 3). An older file without the
          *     table answers ``available: true`` with no orders, as `/spreads/picks` does for the picker.
          *     A missing file, or a table that exists but cannot be read, is ``available: false`` and never
-         *     an empty list: "unavailable" is not "none".
+         *     an empty list: "unavailable" is not "none". ``truncated`` says the window held more than
+         *     ``limit`` orders (web overhaul Part 4), so a capped list never reads as the whole record.
          */
         get: operations["spread_orders_spreads_orders_get"];
         put?: never;
@@ -5337,6 +5338,11 @@ export interface components {
             underlying: string;
             /** Orders */
             orders?: components["schemas"]["SpreadOrderOut"][];
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
         };
         /**
          * SpreadPickOut

@@ -680,7 +680,7 @@ fill with no contract says "Contract not on record".
 - An IBKR execution with a commission of 0 reads "none recorded", because the feed cannot tell a free
   execution (an assignment, say) from one whose commission has not arrived.
 - Lists are capped: 200 orders, 500 fills and 200 executions per window. The spread-fills list is capped at
-  200 with no `truncated` flag, so a window with more reads as complete.
+  200; `GET /spreads/orders` has carried a `truncated` flag since Part 4 (Task 13 makes the list say so).
 - Activity has no strategy switcher (P&L and the ledger carry their own filters, and the broker ledger spans
   both books).
 - A working order cannot be cancelled from the web until Part 5 (Order control); Fills and orders says it is

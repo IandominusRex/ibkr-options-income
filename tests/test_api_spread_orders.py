@@ -146,6 +146,9 @@ def test_days_leaves_out_older_orders_and_limit_caps_the_list(client, spreads_fi
     assert len(client.get("/spreads/orders?days=7", headers=OWNER).json()["orders"]) == 2
     assert len(client.get("/spreads/orders?days=60", headers=OWNER).json()["orders"]) == 3
     assert len(client.get("/spreads/orders?days=60&limit=1", headers=OWNER).json()["orders"]) == 1
+    assert client.get("/spreads/orders?days=60&limit=1", headers=OWNER).json()["truncated"] is True
+    assert client.get("/spreads/orders?days=60&limit=3", headers=OWNER).json()["truncated"] is False
+    assert client.get("/spreads/orders?days=60", headers=OWNER).json()["truncated"] is False
     assert client.get("/spreads/orders?days=0", headers=OWNER).status_code == 422
 
 

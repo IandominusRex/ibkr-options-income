@@ -1565,7 +1565,10 @@ API never imports `src.spreads`). Owner-only; writes nothing; never reaches IBKR
 - Each order is joined to its spread: **`mode`, `side`, `expiry`, `short_strike` and `long_strike` are `null`**
   when the spread's position row is missing.
 
-**Response — `SpreadOrdersResponse`:** `{ as_of, available, underlying, orders: SpreadOrderOut[] }`.
+- **`truncated`** (web overhaul Part 4) is `true` when the window held more than `limit` orders, so a capped
+  list never reads as the whole record. It is `false` when `available` is `false`.
+
+**Response — `SpreadOrdersResponse`:** `{ as_of, available, underlying, orders: SpreadOrderOut[], truncated }`.
 
 `SpreadOrderOut`: `{ spread_id, kind: "open" | "close", ib_order_id, perm_id, filled_qty, price, commission,
 reason, created_at, mode, side: "put" | "call", expiry, short_strike, long_strike }`. `price` is per share and

@@ -109,8 +109,9 @@ check's count.
 | **Task 2: the value drain heartbeat** | done | 3ff7463 (`feat(value): the value drain's heartbeat, served on GET /value/book`) | red 3 failed; targeted Step 7 set 124 passed; `py_compile scripts/run_value.py` silent; `test_openapi_current` green; full pytest 5670 passed + 1 skipped (5665 + 2 + 3; the plan's 5669 counted the prototype copy's non-repo quirk); ruff check clean; mypy 361 files clean; vitest 1485 in 152 files (unchanged), tsc and lint clean; G1 empty, G2 the four files | 2026-11-05 | (1) the red reasons differ from Step 2's text: the two API tests fail on `ImportError: VALUE_DRAIN_HEARTBEAT_KEY` (imported before the GET), the structural one on `assert len(beats) == 2`, not `KeyError` (cost: none). (2) `api-types.ts` makes `drain_healthy` a required `boolean` (as Step 8 says), so `tsc` failed on two typed web fixtures, `components/value/useValueBook.test.ts` and `ValueCard.test.tsx` `book()`; each gains `drain_healthy: true, drain_last_seen: "2026-11-05T14:59:30Z"` (a running process, so Section D's `ValueDrainNote` stays silent in the existing cases). The web sections were not prototyped (ruling 31); test files only, no web source changed (cost if wrong: Section D adjusts a fixture). (3) STATUS.md's "Deferred (web, Sections F-I)" item is one paragraph, so the capital-release line is a nested bullet under it (cost: none). Six files outside this task fail `ruff format --check` on main already (not touched). |
 | **Section A exit / early merge** | done (not merged early) | 07cb80a, 3ff7463 | orchestrator re-verified: G1 empty, G2 four files, py_compile silent, 144 targeted passed; implementer's full gates green | 2026-11-05 | Operator replied "continue to the end" to the early-merge question; read as go-ahead for the sections, not for a restart of the live stack, so Section A merges with the rest (cost: the false capital-release sentence stays live until the final merge) |
 | **Section B entry** | pending | | | | |
-| **Task 3: `GET /nav` removed** | done | (this commit; hash in Task 4's row) | red: `test_the_old_nav_manifest_is_gone` failed (200) as planned; `test_api_meta.py` + `test_api_ledger.py` 20 passed; full pytest 5669 passed + 1 skipped (5670 - 1); ruff check clean; mypy 361 files clean; vitest 1485 in 152 files, tsc and lint clean; api-types.ts diff removes only the `/nav` path, `NavResponse`, `NavSection` and `nav_nav_get`; no web reference to them | 2026-11-05 | (1) `docs/web/api.md` has no "meta routes' introduction", so the "`GET /nav` was removed" sentence is a new bullet in its Conventions list (cost: none). (2) The `tests/test_api_meta.py` module docstring still described the nav manifest, so it now says it was removed (cost: none). (3) STATUS.md already says `GET /nav` is removed in Part 4 (lines 1397, 1415), so it needed no edit; line 2998 is a dated history entry and stays (cost: none). |
-| **Task 4: `GET /spreads/orders` says when it is capped** | pending | | | | |
+| **Task 3: `GET /nav` removed** | done | 5c7b88c (`chore(api): remove GET /nav, unread since web overhaul Part 1`) | red: `test_the_old_nav_manifest_is_gone` failed (200) as planned; `test_api_meta.py` + `test_api_ledger.py` 20 passed; full pytest 5669 passed + 1 skipped (5670 - 1); ruff check clean; mypy 361 files clean; vitest 1485 in 152 files, tsc and lint clean; api-types.ts diff removes only the `/nav` path, `NavResponse`, `NavSection` and `nav_nav_get`; no web reference to them | 2026-11-05 | (1) `docs/web/api.md` has no "meta routes' introduction", so the "`GET /nav` was removed" sentence is a new bullet in its Conventions list (cost: none). (2) The `tests/test_api_meta.py` module docstring still described the nav manifest, so it now says it was removed (cost: none). (3) STATUS.md already says `GET /nav` is removed in Part 4 (lines 1397, 1415), so it needed no edit; line 2998 is a dated history entry and stays (cost: none). |
+| **Task 4: `GET /spreads/orders` says when it is capped** | done | (this commit; `feat(api): GET /spreads/orders says when the window held more than it returned`) | red: `KeyError: 'truncated'` as planned; `test_api_spread_orders.py` + `test_web_fence.py` + `test_spreads_fence.py` 44 passed; full pytest 5669 passed + 1 skipped (unchanged); ruff check clean; mypy 361 files clean; vitest 1485 in 152 files, tsc and lint clean (the regenerated `api-types.ts` adds `truncated: boolean` to `SpreadOrdersResponse` and broke no typed fixture); `test_openapi_current` green (in the full run); G1 empty, G2 the four files | 2026-11-05 | (1) `ARCHITECTURE.md`'s `routers/spreads.py` row also names `truncated` (not in the task's file list; CLAUDE.md's doc rule keeps it true; cost: none). (2) STATUS.md's caps line (line 683) now says `GET /spreads/orders` has carried the flag since Part 4 and that Task 13 makes the list say so (the web reads it there, not yet); no `grep truncated` hit said "Part 3 caps" literally, this is the line that said "no `truncated` flag" (cost: none). |
+| **Section B exit** | done | 5c7b88c, Task 4 commit | pytest 5669 passed + 1 skipped (5670 - 1 + 0); `test_openapi_current` green; G1 empty; G2 the four files; `git status --short` clean after the commit | 2026-11-05 | none |
 | **Section C entry** | pending | | | | |
 | **Task 5: `DecideControls.test.tsx`, ported from `ApprovalCard.test.tsx`** | pending | | | | |
 | **Task 6: the roll flow's tests on `RollCard`; `DrainWarning` moves to the shell** | pending | | | | |
@@ -887,7 +888,7 @@ def test_the_old_nav_manifest_is_gone(client) -> None:
 **Files:** Modify `src/api/models/spreads.py`, `src/api/routers/spreads.py`, `tests/test_api_spread_orders.py`,
 the contract, `docs/web/api.md`, `STATUS.md`, this plan.
 
-- [ ] **Step 1: Failing assertions.** In `tests/test_api_spread_orders.py`, replace line 148
+- [x] **Step 1: Failing assertions.** In `tests/test_api_spread_orders.py`, replace line 148
 
 ```python
     assert len(client.get("/spreads/orders?days=60&limit=1", headers=OWNER).json()["orders"]) == 1
@@ -903,14 +904,14 @@ with
 ```
 
   Run: fails (`KeyError: 'truncated'`).
-- [ ] **Step 2: The field.** In `src/api/models/spreads.py`, after line 121
+- [x] **Step 2: The field.** In `src/api/models/spreads.py`, after line 121
   (`    orders: list[SpreadOrderOut] = Field(default_factory=list)`) insert
 
 ```python
     truncated: bool = False  # more filled orders exist in the window than were returned (Part 4)
 ```
 
-- [ ] **Step 3: The route.** In `src/api/routers/spreads.py` `spread_orders`:
+- [x] **Step 3: The route.** In `src/api/routers/spreads.py` `spread_orders`:
   - the docstring's last line `an empty list: "unavailable" is not "none"."""` becomes
 
 ```python
@@ -933,12 +934,12 @@ with
     )
 ```
 
-- [ ] **Step 4: Green, regenerate, docs.** `python -m pytest -q tests/test_api_spread_orders.py tests/test_web_fence.py tests/test_spreads_fence.py`;
+- [x] **Step 4: Green, regenerate, docs.** `python -m pytest -q tests/test_api_spread_orders.py tests/test_web_fence.py tests/test_spreads_fence.py`;
   regenerate the contract (the diff adds `truncated` and the two docstring lines); `docs/web/api.md`
   `/spreads/orders` section: add `truncated` ("true when the window held more than `limit` orders");
   `STATUS.md`: the Part 3 caps line that says the spread-fills list "has no `truncated` flag" now says it has
   one since Part 4 (find it with `grep -n "truncated" STATUS.md`).
-- [ ] **Step 5: Gate and commit.** Python gate (pytest unchanged by this task), web gate. Commit
+- [x] **Step 5: Gate and commit.** Python gate (pytest unchanged by this task), web gate. Commit
   `feat(api): GET /spreads/orders says when the window held more than it returned`.
 
 ---

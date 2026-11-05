@@ -119,3 +119,4 @@ class SpreadOrdersResponse(Envelope):
     available: bool  # False when data/spreads.db does not exist or cannot be read
     underlying: str
     orders: list[SpreadOrderOut] = Field(default_factory=list)
+    truncated: bool = False  # more filled orders exist in the window than were returned (Part 4)

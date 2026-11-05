@@ -174,14 +174,15 @@ def spread_orders(
     """The book's filled orders, newest first (web overhaul Part 3). An older file without the
     table answers ``available: true`` with no orders, as `/spreads/picks` does for the picker.
     A missing file, or a table that exists but cannot be read, is ``available: false`` and never
-    an empty list: "unavailable" is not "none"."""
+    an empty list: "unavailable" is not "none". ``truncated`` says the window held more than
+    ``limit`` orders (web overhaul Part 4), so a capped list never reads as the whole record."""
     now = _now()
     underlying = get_config().spreads.underlying
     with spreads_read_session() as s:
         if s is None:
             return SpreadOrdersResponse(as_of=now, available=False, underlying=underlying)
         rows = try_read_spread_order_rows(
-            s, start=(now - timedelta(days=days)).replace(tzinfo=None), limit=limit
+            s, start=(now - timedelta(days=days)).replace(tzinfo=None), limit=limit + 1
         )
     if rows is None:
         return SpreadOrdersResponse(as_of=now, available=False, underlying=underlying)
@@ -202,6 +203,12 @@ def spread_orders(
             short_strike=r["short_strike"],
             long_strike=r["long_strike"],
         )
-        for r in rows
+        for r in rows[:limit]
     ]
-    return SpreadOrdersResponse(as_of=now, available=True, underlying=underlying, orders=orders)
+    return SpreadOrdersResponse(
+        as_of=now,
+        available=True,
+        underlying=underlying,
+        orders=orders,
+        truncated=len(rows) > limit,
+    )
