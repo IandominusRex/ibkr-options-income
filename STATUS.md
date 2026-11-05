@@ -209,7 +209,7 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
   summed FillRow credits/debits and so read a real drawdown as a *profit* on a day the system sold
   premium (that function and its tests are kept but no longer wired into `process_queued_orders`).
   `drawdown_halt_pct` is enforced by `drawdown_breached`, which trips when net liquidation falls below
-  a trailing high-water mark (`system_settings.get_high_water_mark`/`set_high_water_mark`) — catching a
+  a trailing high-water mark (superseded 2026-11-05: a rolling 3-session high from `portfolio_snapshots`) — catching a
   slow bleed no single day's loss trips. A persisted `/halt` kill switch (auto-engaged on either breach)
   stops all transmission while still allowing profit-take closes. A cross-process scan lease prevents
   concurrent scans from breaching the market-data line cap. Nightly `data/backups/` snapshots protect
@@ -354,8 +354,8 @@ Operator to-dos: re-copy `config/examples/value.yaml`'s `telegram:` and `prompt_
   all-time peak (`nlv_high_water_mark_usd` = $780K, seeded Oct 12) that net liquidation had fallen
   14-17% below, and a `/resume` acknowledgement lapsed at midnight, so a *standing* drawdown
   re-halted new entries each day until a manual tap. The mark is now the highest net liquidation of
-  the last `automation.drawdown_window_days` (3) sessions (`nlv_daily_highs_usd`, per-day highs in
-  `system_settings`), `drawdown_halt_pct` ships at 6.0 (was 10.0; the 3% daily-loss line is the
+  the last `automation.drawdown_window_days` (3) sessions (`portfolio_snapshots.window_high_net_liq`, read from
+  the monitor's 15-minute snapshots, so it is current even on days the breaker never runs), `drawdown_halt_pct` ships at 6.0 (was 10.0; the 3% daily-loss line is the
   one-bad-day trip), and a drawdown `/resume` holds for the window instead of one ET day (a
   daily-loss resume still lapses at its day's end). A slow grind that stays under 6% over three
   sessions no longer stops anything. The all-time-peak row is not migrated: the window re-seeds from
@@ -366,6 +366,13 @@ Operator to-dos: re-copy `config/examples/value.yaml`'s `telegram:` and `prompt_
   all: the first point). `change_today*` keep their strict "today" meaning and the hero stops
   reading them. The caption names the range ("past month") or, on 1d off-hours, "last session
   (Oct 16, 2026)". `n/a` now means only "no earlier value on file".
+- **1m, 3m, YTD and All no longer show the same change.** The journal's USD history starts
+  2026-10-09 (earlier days were written in SGD and dropped), so all four ranges measured from the
+  same day. The SGD days (back to 2026-06-23) are now converted at the stored `fx_rates` SGD rate
+  (it moved ~0.5% over the whole history), and a baseline close more than five days before the
+  window is replaced by the window's first point (the journal has gaps). Only the daily ranges use
+  them; the intraday snapshots and `month_start_value` still treat SGD as unknown. The converted
+  points are approximate (rate on or just before the day), not broker USD figures.
 - **Spreads day card carries the health lines.** The card shows `updated HH:MM ET`, a GEX map line
   (built HH:MM / N builds, or `failing since HH:MM`) and a Trades line (checks assessed, last
   check, what the entry loop is waiting for), re-stamped at least every 5 minutes while the session

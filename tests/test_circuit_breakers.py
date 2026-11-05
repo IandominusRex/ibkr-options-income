@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import date
 from types import SimpleNamespace
 
 import pytest
@@ -289,31 +288,17 @@ def test_mark_based_loss_returns_none_below_the_threshold(tmp_path, monkeypatch)
     assert mark_based_loss(today, net_liquidation=300_000.0) is None
 
 
-def test_drawdown_breaker_tracks_the_high_water_mark(tmp_path, monkeypatch):
+def test_drawdown_breaker_measures_from_the_window_high(tmp_path, monkeypatch):
     from src.execution.circuit_breakers import drawdown_breached
-    from src.storage.system_settings import get_high_water_mark
+    from tests.conftest import seed_net_liq_high
 
     _db_setup(tmp_path, monkeypatch)
-    assert drawdown_breached(300_000.0) is None  # first call seeds the HWM
-    assert get_high_water_mark() == pytest.approx(300_000.0)
-    assert drawdown_breached(310_000.0) is None  # new high
-    assert get_high_water_mark() == pytest.approx(310_000.0)
-    breach = drawdown_breached(270_000.0)  # -12.9% from 310k, cap 10%
+    assert drawdown_breached(270_000.0) is None  # no history yet: nothing to measure from
+    seed_net_liq_high(300_000.0)
+    seed_net_liq_high(310_000.0, days_ago=1)
+    assert drawdown_breached(320_000.0) is None  # a new high is no drawdown
+    breach = drawdown_breached(270_000.0)  # -12.9% from 310k, cap 6%
     assert breach is not None and breach == pytest.approx(40_000.0)
-
-
-def test_a_base_currency_high_water_mark_never_trips_the_usd_breaker(tmp_path, monkeypatch):
-    """2026-10-12: the HWM was stored as S$1,044,124 (SGD base, before 099fd0a made net liq
-    USD); against US$786,836 it read as a 24.6% drawdown and halted every scan all day. The
-    pre-USD key is never read: the breaker re-seeds from the first USD figure."""
-    from src.execution.circuit_breakers import drawdown_breached
-    from src.storage.system_settings import get_high_water_mark, set_setting
-
-    _db_setup(tmp_path, monkeypatch)
-    set_setting("nlv_high_water_mark", "1044124.49")  # the legacy, base-currency row
-    assert drawdown_breached(786_836.0) is None
-    assert get_high_water_mark() == pytest.approx(786_836.0)
-    assert drawdown_breached(700_000.0) == pytest.approx(86_836.0)  # -11% in USD still trips
 
 
 def test_a_halt_records_its_source_and_resume_clears_it(tmp_path, monkeypatch):
@@ -330,24 +315,18 @@ def test_a_halt_records_its_source_and_resume_clears_it(tmp_path, monkeypatch):
 
 def test_the_drawdown_window_forgets_a_peak_older_than_three_sessions(tmp_path, monkeypatch):
     """2026-11-05: an all-time peak left the breaker in breach every morning for two weeks.
-    The drawdown now measures from the highest of the last 3 sessions only."""
+    The drawdown now measures from the highest of the last 3 sessions only, read from the
+    monitor's snapshots (which exist on days the breaker never ran)."""
     from src.execution.circuit_breakers import drawdown_breached
-    from src.storage.system_settings import get_high_water_mark, set_high_water_mark
+    from src.storage.portfolio_snapshots import window_high_net_liq
+    from tests.conftest import seed_net_liq_high
 
     _db_setup(tmp_path, monkeypatch)
-    for day, high in [(1, 800_000.0), (2, 700_000.0), (3, 690_000.0), (4, 680_000.0)]:
-        set_high_water_mark(high, today=date(2026, 11, day))
-    # The 800k peak is 3 sessions back: out of a 3-session window ending Nov 4.
-    assert get_high_water_mark(3, today=date(2026, 11, 4)) == pytest.approx(700_000.0)
-    assert get_high_water_mark(4, today=date(2026, 11, 4)) == pytest.approx(800_000.0)
-    # Standing 5% below the window's high is not a breach at the 6% line.
-    assert drawdown_breached(665_000.0) is None
-
-
-def test_a_lower_print_never_lowers_the_days_high(tmp_path, monkeypatch):
-    from src.storage.system_settings import get_high_water_mark, set_high_water_mark
-
-    _db_setup(tmp_path, monkeypatch)
-    set_high_water_mark(500_000.0, today=date(2026, 11, 2))
-    set_high_water_mark(480_000.0, today=date(2026, 11, 2))
-    assert get_high_water_mark(3, today=date(2026, 11, 2)) == pytest.approx(500_000.0)
+    for days_ago, high in [(5, 800_000.0), (2, 700_000.0), (1, 690_000.0), (0, 680_000.0)]:
+        seed_net_liq_high(high, days_ago=days_ago)
+    # A 5-days-ago peak is outside a 3-session window; the weekend-safe "sessions on file" count
+    # is the last three days that have snapshots, here days 2, 1 and 0.
+    assert window_high_net_liq(3) == pytest.approx(700_000.0)
+    assert window_high_net_liq(4) == pytest.approx(800_000.0)
+    assert drawdown_breached(665_000.0) is None  # 5% under 700k: inside the 6% line
+    assert drawdown_breached(655_000.0) == pytest.approx(45_000.0)  # 6.4%

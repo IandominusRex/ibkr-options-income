@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 
+import pytest
+
 from src.reporting.account_value import account_value_series, month_start_value
 from tests.conftest import _account_dict
 
@@ -226,3 +228,43 @@ def test_the_change_is_unknown_not_zero_with_a_single_value(db) -> None:
     series = account_value_series(db, "3m", now=NOW)
     assert series.latest == 103_000.0
     assert series.change is None and series.change_pct is None and series.change_since is None
+
+
+@pytest.fixture
+def real_usd_cutoff(monkeypatch):
+    """conftest moves the SGD/USD cutoff to the beginning of time; these tests need the real one."""
+    from src.reporting import pnl
+
+    monkeypatch.setattr(pnl, "NET_LIQ_USD_FROM", datetime(2026, 10, 9, 17, 0))
+    monkeypatch.setattr(pnl, "NET_LIQ_USD_FROM_DAY", date(2026, 10, 9))
+
+
+def _sgd_rate(db, day: date, rate: float) -> None:
+    from src.storage.models import FxRateRow
+
+    with db() as s:
+        s.add(FxRateRow(rate_date=day, currency="SGD", usd_rate=rate, source="flex"))
+
+
+def test_the_sgd_era_journal_is_converted_so_the_long_ranges_differ(db, real_usd_cutoff) -> None:
+    """Before 2026-10-09 the journal was written in SGD, which left 1m/3m/ytd/all with the same
+    start. Those days now convert at the stored SGD rate, and a baseline more than five days
+    before the window falls back to the window's first point."""
+    _sgd_rate(db, date(2026, 6, 15), 0.78)
+    _journal(db, date(2026, 6, 23), 1_000_000.0)  # SGD -> 780,000 USD
+    _journal(db, date(2026, 9, 9), 1_000_000.0)  # SGD
+    _journal(db, date(2026, 10, 12), 800_000.0)  # USD
+    now = datetime(2026, 10, 13, 18, 0, tzinfo=UTC)
+    ytd = account_value_series(db, "ytd", now=now)
+    assert ytd.points[0].value == 780_000.0 and ytd.change == 20_000.0
+    three = account_value_series(db, "3m", now=now)  # window starts Jul 13: Jun 23 is too old
+    assert three.change_since == datetime(2026, 9, 9, 20, 0, tzinfo=UTC)
+    assert three.change == 800_000.0 - 780_000.0
+
+
+def test_without_an_sgd_rate_the_sgd_days_stay_unknown(db, real_usd_cutoff) -> None:
+    _journal(db, date(2026, 9, 9), 1_000_000.0)
+    _journal(db, date(2026, 10, 12), 800_000.0)
+    series = account_value_series(db, "all", now=datetime(2026, 10, 13, 18, 0, tzinfo=UTC))
+    assert [p.value for p in series.points] == [800_000.0]
+    assert series.change is None

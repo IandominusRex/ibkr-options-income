@@ -143,9 +143,10 @@ def test_resuming_while_under_the_line_adds_no_head_room() -> None:
 
 def test_the_drawdown_breaker_honours_the_ack_too() -> None:
     from src.execution.circuit_breakers import evaluate_breakers
-    from src.storage.system_settings import set_halted, set_high_water_mark
+    from src.storage.system_settings import set_halted
+    from tests.conftest import seed_net_liq_high
 
-    set_high_water_mark(300_000.0)  # 6% line = $18,000
+    seed_net_liq_high(300_000.0)  # 6% line = $18,000
     reason = evaluate_breakers([], 265_000.0)
     assert reason == "Drawdown $35,000 from the 3-session high"
     set_halted(True, reason, source="breaker")

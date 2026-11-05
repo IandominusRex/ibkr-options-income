@@ -1472,8 +1472,8 @@ async def test_process_queued_orders_auto_trips_halt_on_drawdown(monkeypatch, tm
         get_halt_reason,
         get_halt_source,
         is_halted,
-        set_high_water_mark,
     )
+    from tests.conftest import seed_net_liq_high
 
     mock_cfg = MagicMock()
     mock_cfg.secrets.ibkr_account = ""
@@ -1482,9 +1482,9 @@ async def test_process_queued_orders_auto_trips_halt_on_drawdown(monkeypatch, tm
     monkeypatch.setattr("src.execution.approval.get_config", lambda: mock_cfg)
     monkeypatch.setattr("src.execution.approval.is_rth", lambda: True)
 
-    # Seed a high-water mark of 200k; today's net liq of 170k is a 15% drawdown vs. the real
+    # Seed a window high of 200k; today's net liq of 170k is a 15% drawdown vs. the real
     # config's 10% cap — no single day's mark-to-market delta needs to trip for this to fire.
-    set_high_water_mark(200_000.0)
+    seed_net_liq_high(200_000.0)
     account_snap = AccountSnapshot(
         account="DU1",
         net_liquidation=170_000.0,

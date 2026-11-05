@@ -17,13 +17,19 @@ not interrupt it (mirrors save_position_snapshot's swallow-and-log discipline).
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
+from sqlalchemy import func, select
+
+from src.common.market_hours import today_et
 from src.common.schemas import AccountSnapshot, PortfolioSnapshot, PositionSnapshot
 from src.storage.db import session_scope
 from src.storage.models import PortfolioSnapshotRow
 
 log = logging.getLogger(__name__)
+
+_ET = ZoneInfo("America/New_York")
 
 
 def save_portfolio_snapshot(
@@ -88,6 +94,36 @@ def latest_capture_time() -> datetime | None:
     except Exception:
         log.exception("latest_capture_time failed")
         return None
+
+
+def window_high_net_liq(sessions: int, today: date | None = None) -> float:
+    """Highest net liquidation the monitor recorded across the last ``sessions`` ET days on file
+    (today included); 0.0 when nothing is recorded. The drawdown breaker's reference level: the
+    monitor snapshots all day, so it does not depend on the breaker having run on a quiet day.
+    Never raises."""
+    today = today or today_et()
+    since = datetime.combine(today - timedelta(days=sessions * 3 + 4), datetime.min.time())
+    try:
+        with session_scope() as s:
+            rows = s.execute(
+                select(
+                    PortfolioSnapshotRow.captured_at,
+                    func.json_extract(PortfolioSnapshotRow.account, "$.net_liquidation"),
+                ).where(PortfolioSnapshotRow.captured_at >= since)
+            ).all()
+    except Exception:
+        log.exception("window_high_net_liq failed")
+        return 0.0
+    best: dict[date, float] = {}
+    for at, nlv in rows:
+        captured = _as_utc(at)
+        if captured is None or not nlv or float(nlv) <= 0:
+            continue
+        day = captured.astimezone(_ET).date()
+        if day <= today:
+            best[day] = max(best.get(day, 0.0), float(nlv))
+    days = sorted(best)[-max(sessions, 1) :]
+    return max((best[d] for d in days), default=0.0)
 
 
 def prune_portfolio_snapshots(days: int) -> int:

@@ -1107,3 +1107,22 @@ def _no_real_contract_cache(monkeypatch):
 
     monkeypatch.setattr(cc, "_CACHE", None)
     monkeypatch.setattr(cc, "_CACHE_FAILED", True)
+
+
+def seed_net_liq_high(value: float, days_ago: int = 0) -> None:
+    """One monitor snapshot of ``value`` net liquidation ``days_ago`` days back, the reference
+    the drawdown breaker reads (``portfolio_snapshots.window_high_net_liq``)."""
+    from datetime import UTC, datetime, timedelta
+
+    from src.storage.db import session_scope
+    from src.storage.models import PortfolioSnapshotRow
+
+    with session_scope() as s:
+        s.add(
+            PortfolioSnapshotRow(
+                captured_at=datetime.now(UTC) - timedelta(days=days_ago),
+                source="monitor",
+                account=_account_dict(value, 80_000.0),
+                positions=[],
+            )
+        )

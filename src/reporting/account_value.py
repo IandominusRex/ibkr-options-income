@@ -23,7 +23,7 @@ from src.common.schemas import (
 )
 from src.reporting import pnl
 from src.reporting.pnl import _net_liquidation_from_payload
-from src.storage.models import JournalRow, PortfolioSnapshotRow
+from src.storage.models import FxRateRow, JournalRow, PortfolioSnapshotRow
 
 _ET = ZoneInfo("America/New_York")
 _SessionFactory = Callable[[], AbstractContextManager[Session]]
@@ -46,11 +46,25 @@ def _known(value: float | None) -> float | None:
     return value if value is not None and value > 0 else None
 
 
-def _journal_value(entry_date: date, payload: dict) -> float | None:
-    """A journal day's net liquidation, USD only: earlier days were written in SGD."""
-    if entry_date < pnl.NET_LIQ_USD_FROM_DAY:
+def _usd_per_sgd(rates: list[tuple[date, float]], day: date) -> float | None:
+    """The stored SGD->USD rate on or just before `day` (else the earliest on file)."""
+    if not rates:
         return None
-    return _known(_net_liquidation_from_payload(payload))
+    before = [r for d, r in rates if d <= day]
+    return before[-1] if before else rates[0][1]
+
+
+def _journal_value(
+    entry_date: date, payload: dict, sgd_rates: list[tuple[date, float]] | None = None
+) -> float | None:
+    """A journal day's net liquidation in USD. Days before 2026-10-09 were written in SGD: they
+    are converted at the stored SGD rate when `sgd_rates` is given (the rate moves ~0.5% over the
+    whole history), and unknown otherwise (the month-start stub never plots them)."""
+    value = _known(_net_liquidation_from_payload(payload))
+    if entry_date >= pnl.NET_LIQ_USD_FROM_DAY or value is None:
+        return value
+    rate = _usd_per_sgd(sgd_rates or [], entry_date)
+    return value * rate if rate else None
 
 
 def _snap_value(row: PortfolioSnapshotRow) -> float | None:
@@ -92,7 +106,9 @@ def _change_base(
         else:
             start = now_utc - timedelta(days={"1w": 7, "1m": 31, "3m": 92}[range_key])
         older = [(_close_at(d), v) for d, v in closes if _close_at(d) <= start]
-        if older:
+        # A close far before the window (the journal has gaps) is not "the start": fall back
+        # to the window's first point rather than measure from weeks earlier.
+        if older and start - older[-1][0] <= timedelta(days=5):
             return older[-1]
     if points and points[0].at < latest_at:
         return points[0].at, points[0].value
@@ -117,6 +133,12 @@ def account_value_series(
         latest_snap = next(
             ((row.captured_at, v) for row in recent if (v := _snap_value(row)) is not None), None
         )
+        sgd_rates = [
+            (r.rate_date, r.usd_rate)
+            for r in sess.execute(
+                select(FxRateRow).where(FxRateRow.currency == "SGD").order_by(FxRateRow.rate_date)
+            ).scalars()
+        ]
         snaps: list[PortfolioSnapshotRow] = []
         if range_key in _INTRADAY_DAYS:
             start = _naive_utc(now - timedelta(days=_INTRADAY_DAYS[range_key]))
@@ -128,7 +150,7 @@ def account_value_series(
                 ).scalars()
             )
 
-    daily = [(r.entry_date, _journal_value(r.entry_date, r.payload)) for r in journal]
+    daily = [(r.entry_date, _journal_value(r.entry_date, r.payload, sgd_rates)) for r in journal]
     # A journal day is a close only once its 16:00 ET has passed: a row for today written early
     # is not yet a close, so it neither plots nor competes with a live snapshot.
     closes = [(d, v) for d, v in daily if v is not None and _close_at(d) <= now_utc]
