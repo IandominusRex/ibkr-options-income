@@ -222,6 +222,17 @@ describe("RealisedCalendar", () => {
       expect(await within(dialog).findByText("Value book unavailable")).toBeInTheDocument();
       expect(within(dialog).getByText(/The value book could not be read, so its sales are not counted/)).toBeInTheDocument();
     });
+    it("does not flag a value book that is off and has never written anything", async () => {
+      const dialog = await openIt(
+        serve({
+          "/pnl/calendar?month=2026-10": { ...cal("2026-10", octDays), value_available: false },
+          "/value/book": { as_of: "", available: false, enabled: false, positions: [], proposals: [], funding: [], release_max_closes: 2, drain_healthy: true, drain_last_seen: null },
+        }),
+      );
+      await within(dialog).findByText("Realised in October");
+      await new Promise((r) => setTimeout(r, 20));
+      expect(within(dialog).queryByText("Value book unavailable")).toBeNull();
+    });
     it("states that the value book's sales count on the day they fill", async () => {
       const dialog = await openIt(withValue());
       expect(await within(dialog).findByText(/its sales count on the day they fill/)).toBeInTheDocument();

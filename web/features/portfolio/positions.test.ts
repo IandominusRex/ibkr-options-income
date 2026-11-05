@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { PositionGroupData } from "@/components/portfolio/types";
 import type { SpreadPosition } from "@/features/home/types";
+import { buildValueRows } from "@/features/home/positions";
 import {
+  FILTERS,
   buildNameCards,
   countByFilter,
   legDetail,
@@ -105,8 +107,20 @@ describe("narrow and countByFilter", () => {
   });
   it("counts what each chip would show with the search applied, spreads included", () => {
     const spreads = spreadRows([spread()], TODAY, "SPY");
-    expect(countByFilter(cards, spreads, "")).toEqual({ all: 5, csp: 1, cc: 2, spread: 1, shares: 1 });
-    expect(countByFilter(cards, spreads, "aapl")).toEqual({ all: 3, csp: 1, cc: 1, spread: 0, shares: 1 });
+    expect(countByFilter(cards, spreads, "")).toEqual({ all: 5, csp: 1, cc: 2, spread: 1, value: 0, shares: 1 });
+    expect(countByFilter(cards, spreads, "aapl")).toEqual({ all: 3, csp: 1, cc: 1, spread: 0, value: 0, shares: 1 });
+  });
+  it("counts the value book's shares under All and Value only, apart from the wheel's Shares chip", () => {
+    const book = buildValueRows([
+      { id: 1, symbol: "AAPL", list_name: "deep_value", status: "open", shares: 10, avg_cost: 170, mark: 180 },
+      { id: 2, symbol: "MSFT", list_name: "deep_value", status: "open", shares: 5, avg_cost: 400, mark: 410 },
+    ] as never);
+    const spreads = spreadRows([spread()], TODAY, "SPY");
+    expect(countByFilter(cards, spreads, "", book)).toEqual({ all: 7, csp: 1, cc: 2, spread: 1, value: 2, shares: 1 });
+    expect(countByFilter(cards, spreads, "msft", book)).toEqual({ all: 1, csp: 0, cc: 0, spread: 0, value: 1, shares: 0 });
+  });
+  it("puts the Value chip between Credit spreads and Shares, as Home does", () => {
+    expect(FILTERS).toEqual(["all", "csp", "cc", "spread", "value", "shares"]);
   });
 });
 

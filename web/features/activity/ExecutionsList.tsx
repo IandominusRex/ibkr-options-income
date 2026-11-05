@@ -9,12 +9,13 @@ import { apiFetch } from "@/lib/api";
 import { bookWord, executionTitle, lastWindow, sourceWord } from "./fills";
 import type { LedgerExecutionsResponse } from "./types";
 
-type BookFilter = "all" | "system" | "spreads" | "manual";
+type BookFilter = "all" | "system" | "spreads" | "manual" | "value";
 const BOOKS: { value: BookFilter; label: string }[] = [
   { value: "all", label: "All" },
   { value: "system", label: "System" },
   { value: "spreads", label: "Spreads" },
   { value: "manual", label: "Manual" },
+  { value: "value", label: "Value" },
 ];
 const LIMIT = 200;
 

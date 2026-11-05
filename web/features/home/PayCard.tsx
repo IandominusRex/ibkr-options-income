@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/Card";
 import { Disclosure } from "@/components/ui/Disclosure";
 import { Meter } from "@/components/ui/Meter";
 import { StatusWord } from "@/components/ui/StatusWord";
+import { useValueOut } from "@/components/value/useValueBook";
 import { Stub, formatStubValue, type StubLineData } from "@/components/ui/Stub";
 import { apiFetch } from "@/lib/api";
 import { UNKNOWN } from "@/lib/format";
@@ -98,6 +99,8 @@ export function PayCard({ strategy }: { strategy: StrategyFilter }) {
     queryFn: () => apiFetch<MonthPayResponse>(`/pnl/month?strategy=${strategy}`),
     refetchInterval: 60_000,
   });
+  // Hooks before any early return. A book that is off and never wrote is not flagged (ruling 7).
+  const valueUnread = useValueOut(data?.value_available);
 
   if (isError && !data) {
     return (
@@ -121,7 +124,7 @@ export function PayCard({ strategy }: { strategy: StrategyFilter }) {
   const isValue = pay.strategy === "value";
   // The same rule for the value book: an unread book is not a month of $0, and under All it is
   // flagged without hiding the options income.
-  const valueOut = data.value_available === false && (pay.strategy === "all" || isValue);
+  const valueOut = valueUnread && (pay.strategy === "all" || isValue);
   const wholeUnknown = (spreadsOut && pay.strategy === "spread") || (valueOut && isValue);
   const beside = valueBesideLines(pay, wholeUnknown);
   const net = wholeUnknown ? null : pay.net;

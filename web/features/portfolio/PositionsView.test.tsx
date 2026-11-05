@@ -1,6 +1,6 @@
 import { fireEvent, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { renderWithQuery } from "@/lib/test-query";
+import { apiFetchMock, renderWithQuery } from "@/lib/test-query";
 import { PositionsView } from "./PositionsView";
 
 const now = () => new Date().toISOString();
@@ -18,7 +18,13 @@ const common = {
   "/options/shorts": { as_of: "", shorts: [] },
   "/claude/context": { available: false, dossiers: [] },
 };
-const base = { ...common, "/spreads/positions": spreadsOn };
+const valueOn = (rows: unknown[] = []) => ({ as_of: "", available: true, status: "open", positions: rows });
+const valueOff = { as_of: "", available: false, status: "open", positions: [] };
+const vpos = (over: Record<string, unknown> = {}) => ({
+  id: 1, symbol: "MSFT", list_name: "quality_growth", status: "open", shares: 10, avg_cost: 400, mark: 410,
+  opened_at: "2026-10-01T00:00:00Z", closed_on: null, next_exit: { kind: "sell_half", level: 480 }, realised_usd: null, ...over,
+});
+const base = { ...common, "/spreads/positions": spreadsOn, "/value/positions": valueOn() };
 const aapl = group("AAPL", [leg(), leg({ symbol: "y", right: "C", strike: 200, unrealized_pnl: -12 })], stock);
 const ko = group("KO", [leg({ symbol: "z", right: "C", strike: 72, unrealized_pnl: 30 })]);
 
@@ -172,5 +178,66 @@ describe("PositionsView", () => {
   it("says so in a sentence when positions cannot load", async () => {
     renderWithQuery(<PositionsView />, base);
     expect(await screen.findByText("Positions unavailable right now.")).toBeInTheDocument();
+  });
+
+  describe("the value book", () => {
+    const withBook = (value: unknown, groups: unknown[] = [ko]) => ({
+      ...base, "/portfolio/positions": positions(groups), "/value/positions": value,
+    });
+    it("reads the book's open positions under Home's key", async () => {
+      renderWithQuery(<PositionsView />, withBook(valueOn([vpos()])));
+      await screen.findByText("MSFT · 10 shares");
+      expect(apiFetchMock.mock.calls.some((c) => c[0] === "/value/positions?status=open")).toBe(true);
+    });
+    it("has a Value chip between Credit spreads and Shares, counting the book's open positions", async () => {
+      renderWithQuery(<PositionsView />, withBook(valueOn([vpos(), vpos({ id: 2, symbol: "AAPL" })])));
+      await screen.findByRole("button", { name: "Value 2" });
+      const names = screen.getAllByRole("button").map((b) => b.textContent ?? "");
+      const at = (prefix: string) => names.findIndex((n) => n.startsWith(prefix));
+      expect(at("Credit spreads")).toBeLessThan(at("Value"));
+      expect(at("Value")).toBeLessThan(at("Shares"));
+    });
+    it("lists them in a Value book card under All, each a link to the stock page's value block, apart from the wheel's shares", async () => {
+      renderWithQuery(<PositionsView />, withBook(valueOn([vpos()]), [aapl]));
+      const card = (await screen.findByRole("heading", { name: "Value book" })).closest("article") as HTMLElement;
+      const row = within(card).getByRole("link", { name: /MSFT · 10 shares/ });
+      expect(row).toHaveAttribute("href", "/stock/MSFT#value-block-MSFT");
+      expect(within(card).getByText("+$100.00")).toBeInTheDocument();
+      expect(within(card).queryByText("AAPL · 100 shares")).toBeNull();
+      expect(screen.getByText("AAPL · 100 shares")).toBeInTheDocument();
+    });
+    it("shows a hatched n/a for open P&L it cannot work out, never $0", async () => {
+      renderWithQuery(<PositionsView />, withBook(valueOn([vpos({ mark: null })])));
+      const card = (await screen.findByRole("heading", { name: "Value book" })).closest("article") as HTMLElement;
+      expect(within(card).getByText("n/a")).toHaveClass("hatch");
+    });
+    it("shows only the book under Value, and not under CSPs", async () => {
+      renderWithQuery(<PositionsView />, withBook(valueOn([vpos()])));
+      fireEvent.click(await screen.findByRole("button", { name: "Value 1" }));
+      expect(screen.getByRole("heading", { name: "Value book" })).toBeInTheDocument();
+      expect(screen.queryByText("KO $72 call")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: /^CSPs/ }));
+      expect(screen.queryByRole("heading", { name: "Value book" })).toBeNull();
+    });
+    it("says an unreadable book could not be read, and never that it holds no shares", async () => {
+      renderWithQuery(<PositionsView />, withBook(valueOff));
+      expect(await screen.findByText("The value book could not be read, so its shares are not listed.")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Value" }));
+      expect(screen.getByText("The value book could not be read, so its shares are not listed.")).toBeInTheDocument();
+      expect(screen.queryByText("The value book holds no shares.")).toBeNull();
+    });
+    it("says the book holds no shares when it is readable and empty, under Value", async () => {
+      renderWithQuery(<PositionsView />, withBook(valueOn([])));
+      fireEvent.click(await screen.findByRole("button", { name: "Value 0" }));
+      expect(screen.getByText("The value book holds no shares.")).toBeInTheDocument();
+      expect(screen.queryByText("No portfolio snapshot has been captured yet.")).toBeNull();
+    });
+    it("finds a value share by its ticker in the search", async () => {
+      renderWithQuery(<PositionsView />, withBook(valueOn([vpos(), vpos({ id: 2, symbol: "AAPL" })])));
+      await screen.findByText("MSFT · 10 shares");
+      fireEvent.change(screen.getByLabelText("Search positions"), { target: { value: "msft" } });
+      expect(screen.getByText("MSFT · 10 shares")).toBeInTheDocument();
+      expect(screen.queryByText("AAPL · 10 shares")).toBeNull();
+    });
   });
 });

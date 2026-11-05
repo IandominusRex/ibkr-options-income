@@ -1,5 +1,9 @@
+import { renderHook, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createElement, type ReactNode } from "react";
 import { describe, expect, it } from "vitest";
-import { waitingOnTap, waitingProposals } from "./useValueBook";
+import { apiFetchMock } from "@/lib/test-query";
+import { useValueOut, waitingOnTap, waitingProposals } from "./useValueBook";
 import type { ValueBook, ValueProposal } from "./types";
 
 function proposal(over: Partial<ValueProposal>): ValueProposal {
@@ -58,5 +62,43 @@ describe("waitingProposals", () => {
   it("is null, not an empty list, when the book could not be read", () => {
     expect(waitingProposals(undefined)).toBeNull();
     expect(waitingProposals(book({ available: false }))).toBeNull();
+  });
+});
+
+describe("useValueOut", () => {
+  function run(valueAvailable: boolean | undefined, answer: () => Promise<unknown>) {
+    apiFetchMock.mockImplementation(answer as never);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client: qc }, children);
+    return renderHook(() => useValueOut(valueAvailable), { wrapper });
+  }
+  const settled = () => new Promise((r) => setTimeout(r, 20));
+
+  it("does not flag a book that is off and has never written anything", async () => {
+    const { result } = run(false, async () => book({ enabled: false, available: false }));
+    await waitFor(() => expect(apiFetchMock.mock.calls.length).toBeGreaterThan(0));
+    await waitFor(() => expect(result.current).toBe(false));
+    await settled();
+    expect(result.current).toBe(false);
+  });
+  it("flags a book that is on but cannot be read", async () => {
+    const { result } = run(false, async () => book({ enabled: true, available: false }));
+    await settled();
+    expect(result.current).toBe(true);
+  });
+  it("flags it when the book request fails (unknown is not none)", async () => {
+    const { result } = run(false, async () => {
+      throw new Error("down");
+    });
+    await settled();
+    expect(result.current).toBe(true);
+  });
+  it("flags it while the book is still loading", () => {
+    const { result } = run(false, () => new Promise(() => {}));
+    expect(result.current).toBe(true);
+  });
+  it("never flags a P&L figure whose value book was read or whose availability is not stated", async () => {
+    expect(run(true, async () => book({})).result.current).toBe(false);
+    expect(run(undefined, async () => book({})).result.current).toBe(false);
   });
 });

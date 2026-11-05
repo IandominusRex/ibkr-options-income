@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
+import { useValueOut } from "@/components/value/useValueBook";
 import { apiFetch } from "@/lib/api";
 import type { StrategyFilter } from "@/lib/strategy";
 import { TradeCard } from "./TradeCard";
@@ -35,7 +36,8 @@ export function TodayTrades({ strategy, className }: { strategy: StrategyFilter;
   }));
   const spreadsOut = data?.spreads_available === false && (strategy === "all" || strategy === "spread");
   // An unread value book is not a day without value trades.
-  const valueOut = data?.value_available === false && (strategy === "all" || strategy === "value");
+  const valueUnread = useValueOut(data?.value_available);
+  const valueOut = valueUnread && (strategy === "all" || strategy === "value");
 
   let body: ReactNode;
   if (isError && !data) {

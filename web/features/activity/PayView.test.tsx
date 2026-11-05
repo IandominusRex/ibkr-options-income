@@ -276,6 +276,20 @@ describe("PayView", () => {
     await setSince("2026-09-01");
     expect(screen.getByRole("button", { name: "Previous month" })).toBeDisabled();
   });
+  describe("the value book, when it is off", () => {
+    it("does not flag an unread value book that is off and has never written anything", async () => {
+      renderWithQuery(<PayView />, {
+        "/pnl/month": monthBody({}, { value_available: false }),
+        "/pnl/summary": summary(),
+        "/pnl/equity": equity(),
+        "/pnl/ledger": ledgerBody(),
+        "/value/book": { as_of: "", available: false, enabled: false, positions: [], proposals: [], funding: [], release_max_closes: 2, drain_healthy: true, drain_last_seen: null },
+      });
+      await screen.findByRole("group", { name: /pay stub$/ });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(screen.queryByText("Value book unavailable")).toBeNull();
+    });
+  });
   describe("the value book", () => {
     it("lists the value book's realised result as its own line, beneath the net and apart from it", async () => {
       serve(

@@ -162,7 +162,7 @@ describe("buildValueRows", () => {
   });
   it("builds one value row a position with the open P&L worked from the mark and the average cost", () => {
     const [row] = buildValueRows([vp()]);
-    expect(row).toMatchObject({ kind: "value", underlying: "AAPL", title: "AAPL · 10 shares", value: 100, valueLabel: "open P&L", href: null });
+    expect(row).toMatchObject({ kind: "value", underlying: "AAPL", title: "AAPL · 10 shares", value: 100, valueLabel: "open P&L", href: "/stock/AAPL#value-block-AAPL" });
     expect(row.sub).toBe("Deep value · average cost $170.00 · next exit: stop at $150.00");
     expect(row.status).toBeNull();
   });

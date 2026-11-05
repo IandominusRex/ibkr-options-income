@@ -8,6 +8,7 @@ import { useState } from "react";
 import { Sheet } from "@/components/ui/Sheet";
 import { StatusWord } from "@/components/ui/StatusWord";
 import { formatStubValue } from "@/components/ui/Stub";
+import { useValueOut } from "@/components/value/useValueBook";
 import { apiFetch } from "@/lib/api";
 import { cellFigure, currentMonth, dayLabel, monthTitle, monthWeeks, shiftMonth } from "./calendar";
 import { tradeTitle } from "./trades";
@@ -172,7 +173,7 @@ function CalendarBody({ now, onLeave }: { now?: Date; onLeave: () => void }) {
   });
   const valueCal = valueQ.data?.calendar.strategy === "value" ? valueQ.data.calendar : null;
   const valueByDate = new Map((valueCal?.days ?? []).map((d) => [d.date, d]));
-  const valueOut = data?.value_available === false;
+  const valueOut = useValueOut(data?.value_available);
   const go = (by: number) => {
     setSelected(null);
     setMonth((m) => shiftMonth(m, by));

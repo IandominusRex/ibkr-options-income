@@ -26,6 +26,18 @@ export function waitingOnTap(book: ValueBook | undefined): number | null {
 }
 
 /**
+ * Whether to flag the value book as unavailable beside a P&L figure (web overhaul Part 4, ruling 7). The pay
+ * routes answer `value_available: false` both when value.db cannot be read and when it was never written; a
+ * book that is off and has never written anything has no sales to miss, so it is not flagged. A book read
+ * that failed or is still loading keeps the flag: unknown is not none.
+ */
+export function useValueOut(valueAvailable: boolean | undefined): boolean {
+  const { data } = useValueBook();
+  if (valueAvailable !== false) return false;
+  return !(data !== undefined && data.enabled === false && data.available === false);
+}
+
+/**
  * The book's proposals that wait on a tap, in the book's order (web overhaul Part 4, ruling 15). Null, not an
  * empty list, when the book could not be read: the same rule as `waitingOnTap`.
  */

@@ -2,6 +2,7 @@ import type { StatusTone } from "@/components/ui/StatusWord";
 import type { PositionGroupData } from "@/components/portfolio/types";
 import { formatMoneyCell } from "@/lib/money";
 import { listWords, nextExitWords, sharesWord } from "@/components/value/format";
+import { stockValueHref } from "@/features/research/format";
 import type { ValuePosition } from "@/components/value/types";
 import type { SpreadPosition } from "./types";
 
@@ -158,9 +159,10 @@ export function buildPositionRows(
 /**
  * The value book's open shares as rows of their own (`GET /value/positions`). They are never merged
  * into the wheel's share row on the same name: the wheel's count comes from the ledger and the
- * book's from its own positions, and the two stay apart (spec 9.2). No page opens behind a value
- * row (the stock page is the wheel's), so `href` is null. An average cost, a mark or an exit level
- * the book does not have reads in words or n/a, never $0.
+ * book's from its own positions, and the two stay apart (spec 9.2). A value row opens the stock
+ * page's value block (`stockValueHref`, web overhaul Part 4, ruling 17), where the file behind the
+ * holding is read. An average cost, a mark or an exit level the book does not have reads in words
+ * or n/a, never $0.
  */
 export function buildValueRows(positions: ValuePosition[]): PositionRow[] {
   return positions
@@ -177,7 +179,7 @@ export function buildValueRows(positions: ValuePosition[]): PositionRow[] {
         key: `value:${p.id}`,
         kind: "value" as const,
         underlying: p.symbol,
-        href: null,
+        href: stockValueHref(p.symbol),
         title: `${p.symbol} · ${sharesWord(p.shares)}`,
         // The group heading says "Value book"; a word on every row would say it twice.
         status: null,

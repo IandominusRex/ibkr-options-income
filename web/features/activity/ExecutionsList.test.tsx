@@ -44,6 +44,15 @@ describe("ExecutionsList", () => {
     expect(calls()).toContain("/ledger/executions?days=90&limit=200");
   });
 
+  it("offers a Value chip, asks the API for book=value, and names the book on a value execution", async () => {
+    serve(body([exec({ book: "value", sec_type: "STK", right: null, strike: null, expiry: null, underlying: "GOOGL", quantity: 10, price: 180 })]));
+    const [row] = await screen.findAllByRole("listitem");
+    expect(within(row).getByText("Value book")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Value" }));
+    const calls = () => apiFetchMock.mock.calls.map((c) => String(c[0]));
+    await waitFor(() => expect(calls()).toContain("/ledger/executions?days=30&limit=200&book=value"));
+  });
+
   it("says the list was cut short", async () => {
     serve(body([exec()], { truncated: true }));
     expect(await screen.findByText("Showing the latest 200. Choose a shorter window to see every execution in it.")).toBeInTheDocument();

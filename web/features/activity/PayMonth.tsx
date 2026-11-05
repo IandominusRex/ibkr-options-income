@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/Card";
 import { Meter } from "@/components/ui/Meter";
 import { StatusWord } from "@/components/ui/StatusWord";
+import { useValueOut } from "@/components/value/useValueBook";
 import { Stub, formatStubValue } from "@/components/ui/Stub";
 import { payStubLines, valueBesideLines } from "@/features/home/PayCard";
 import type { MonthPay, MonthPayResponse } from "@/features/home/types";
@@ -62,6 +63,7 @@ export function PayMonth({
     placeholderData: (prev) => prev,
     refetchInterval: 60_000,
   });
+  const valueOut = useValueOut(data?.value_available);
   const pay = data?.pay;
   const isCurrent = month === current;
   const lines = pay
@@ -109,7 +111,7 @@ export function PayMonth({
           {pay.n_opened === 0 && pay.n_closed === 0 && (
             <p className="mt-2 text-[0.8125rem] text-muted">Nothing was opened or closed in {label}.</p>
           )}
-          {data!.value_available === false && (
+          {valueOut && (
             <p className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.8125rem] text-muted">
               <StatusWord tone="flag">Value book unavailable</StatusWord>
               <span>The value book could not be read, so its sales are not counted here.</span>

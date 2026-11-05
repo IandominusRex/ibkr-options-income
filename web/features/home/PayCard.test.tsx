@@ -1,4 +1,4 @@
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { apiFetchMock, renderWithQuery } from "@/lib/test-query";
 import { PayCard } from "./PayCard";
@@ -273,6 +273,24 @@ describe("PayCard", () => {
       const toggle = screen.getByRole("button", { name: /October pay/ });
       expect(within(toggle).getByText("+$1,413.60")).toBeInTheDocument();
       expect(screen.getByText(/so its sales are not counted/)).toBeInTheDocument();
+    });
+    it("does not flag a value book that is off and has never written anything (nothing to miss)", async () => {
+      renderWithQuery(<PayCard strategy="all" />, {
+        "/pnl/month": { ...pay(), value_available: false },
+        "/value/book": { as_of: "", available: false, enabled: false, positions: [], proposals: [], funding: [], release_max_closes: 2, drain_healthy: true, drain_last_seen: null },
+      });
+      const toggle = await screen.findByRole("button", { name: /October pay/ });
+      await waitFor(() => expect(apiFetchMock.mock.calls.some((c) => c[0] === "/value/book")).toBe(true));
+      await new Promise((r) => setTimeout(r, 20));
+      expect(within(toggle).getByText("+$1,413.60")).toBeInTheDocument();
+      expect(screen.queryByText("Value book unavailable")).toBeNull();
+    });
+    it("keeps the flag when the book is on but cannot be read", async () => {
+      renderWithQuery(<PayCard strategy="all" />, {
+        "/pnl/month": { ...pay(), value_available: false },
+        "/value/book": { ...{ as_of: "", available: false, enabled: false, positions: [], proposals: [], funding: [], release_max_closes: 2, drain_healthy: true, drain_last_seen: null }, enabled: true },
+      });
+      expect(await screen.findByText("Value book unavailable")).toBeInTheDocument();
     });
     it("stays quiet about the value book for a wheel strategy", async () => {
       renderWithQuery(<PayCard strategy="csp" />, { "/pnl/month": { ...pay({ strategy: "csp" }), value_available: false } });

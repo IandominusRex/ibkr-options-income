@@ -24,6 +24,7 @@ describe("words", () => {
     expect(bookWord("system")).toBe("System");
     expect(bookWord("spreads")).toBe("Spreads");
     expect(bookWord("manual")).toBe("Manual");
+    expect(bookWord("value")).toBe("Value book");
     expect(bookWord("other")).toBe("other");
     expect(sourceWord("live")).toBe("live feed");
     expect(sourceWord("flex")).toBe("Flex query");

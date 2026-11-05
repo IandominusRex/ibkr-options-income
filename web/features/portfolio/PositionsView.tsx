@@ -11,8 +11,9 @@ import { Card } from "@/components/ui/Card";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { StatusWord } from "@/components/ui/StatusWord";
 import { formatStubValue } from "@/components/ui/Stub";
+import type { ValuePositionsResponse } from "@/components/value/types";
 import { PositionRowItem } from "@/features/home/PositionRowItem";
-import { FRESH_FOR_MINUTES } from "@/features/home/positions";
+import { FRESH_FOR_MINUTES, buildValueRows } from "@/features/home/positions";
 import type { SpreadPositionsResponse } from "@/features/home/types";
 import { NameFlags } from "@/features/market/NameFlags";
 import { todayInNewYork } from "@/features/trades/time";
@@ -153,6 +154,14 @@ export function PositionsView() {
     refetchInterval: 60_000,
   });
 
+  // The value book's shares, a book of their own (GET /value/positions), under Home's key. Never merged into the
+  // wheel's share row on the same name; the broker rows are already the wheel's view, so none is counted twice.
+  const value = useQuery({
+    queryKey: ["value", "positions", "open"],
+    queryFn: () => apiFetch<ValuePositionsResponse>("/value/positions?status=open"),
+    refetchInterval: 60_000,
+  });
+
   const today = todayInNewYork();
   const alerted = new Set(
     (shorts.data?.shorts ?? []).filter((s) => s.alerts.length > 0).map((s) => s.position_symbol),
@@ -160,25 +169,33 @@ export function PositionsView() {
   // Unknown is never none: an unreadable spreads book is not an empty one.
   const spreadsKnown = spreads.data?.available === true;
   const spreadsOut = spreads.isError || spreads.data?.available === false;
+  // The same for the value book: an unreadable book is not an empty one.
+  const valueKnown = value.data?.available === true;
+  const valueOut = value.isError || value.data?.available === false;
   const allCards = positions.data ? buildNameCards(positions.data.groups, today, alerted) : [];
   const allSpreads = spreadsKnown ? spreadRows(spreads.data!.positions, today, spreads.data!.underlying) : [];
+  const allValue = valueKnown ? buildValueRows(value.data!.positions ?? []) : [];
   const cards = narrow(allCards, filter, query);
   const spreadList = narrowRows(allSpreads, filter, query);
-  const counts = countByFilter(allCards, allSpreads, query);
+  const valueList = narrowRows(allValue, filter, query);
+  const counts = countByFilter(allCards, allSpreads, query, allValue);
   const options = FILTERS.map((f) => ({
     value: f,
     label: FILTER_LABEL[f],
-    count: !positions.data || (f === "spread" && !spreadsKnown) ? null : counts[f],
+    count:
+      !positions.data || (f === "spread" && !spreadsKnown) || (f === "value" && !valueKnown) ? null : counts[f],
   }));
   const searching = query.trim() !== "";
 
   let message: string | null = null;
   if (positions.isError && !positions.data) message = "Positions unavailable right now.";
-  else if (positions.data && cards.length === 0 && spreadList.length === 0) {
+  else if (positions.data && cards.length === 0 && spreadList.length === 0 && valueList.length === 0) {
     if (searching) message = `No positions match "${query.trim()}".`;
     else if (filter === "spread" && spreadsOut) message = "Credit spreads are unavailable right now.";
     else if (filter === "spread" && spreads.isPending) message = "Loading credit spreads.";
-    else if (positions.data.source === "none" && filter !== "spread")
+    else if (filter === "value" && valueOut) message = "The value book could not be read, so its shares are not listed.";
+    else if (filter === "value" && value.isPending) message = "Loading the value book.";
+    else if (positions.data.source === "none" && filter !== "spread" && filter !== "value")
       message = "No portfolio snapshot has been captured yet.";
     else message = EMPTY[filter];
   }
@@ -251,7 +268,24 @@ export function PositionsView() {
               </ul>
             </Card>
           )}
+          {valueList.length > 0 && (
+            <Card as="article" aria-labelledby="name-value">
+              <h3 id="name-value" className="text-[1.0625rem] font-bold">
+                Value book
+              </h3>
+              <ul className="mt-1">
+                {valueList.map((r) => (
+                  <PositionRowItem key={r.key} row={r} flags={false} />
+                ))}
+              </ul>
+            </Card>
+          )}
         </div>
+      )}
+      {filter === "all" && valueOut && positions.data && (
+        <p className="border-t border-border pt-2.5 text-[0.8125rem] text-muted">
+          The value book could not be read, so its shares are not listed.
+        </p>
       )}
       {filter === "all" && spreadsOut && positions.data && (
         <p className="border-t border-border pt-2.5 text-[0.8125rem] text-muted">

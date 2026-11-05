@@ -24,7 +24,7 @@ export function executionTitle(
   return e.expiry ? `${base} · ${shortDay(e.expiry)}` : base;
 }
 
-const BOOK: Record<string, string> = { system: "System", spreads: "Spreads", manual: "Manual" };
+const BOOK: Record<string, string> = { system: "System", spreads: "Spreads", manual: "Manual", value: "Value book" };
 const SOURCE: Record<string, string> = { live: "live feed", flex: "Flex query", csv: "statement import" };
 
 export const bookWord = (book: string): string => BOOK[book] ?? book;

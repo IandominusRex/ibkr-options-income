@@ -5,15 +5,16 @@ import { formatMoneyCell } from "@/lib/money";
 import { STRATEGY_LABEL } from "@/lib/strategy";
 import { weekdayDate } from "./format";
 
-export type PositionsFilter = "all" | "csp" | "cc" | "spread" | "shares";
+export type PositionsFilter = "all" | "csp" | "cc" | "spread" | "value" | "shares";
 
-export const FILTERS: PositionsFilter[] = ["all", "csp", "cc", "spread", "shares"];
+export const FILTERS: PositionsFilter[] = ["all", "csp", "cc", "spread", "value", "shares"];
 export const FILTER_LABEL: Record<PositionsFilter, string> = { ...STRATEGY_LABEL, shares: "Shares" };
 export const EMPTY: Record<PositionsFilter, string> = {
   all: "No open positions.",
   csp: "No cash-secured puts open.",
   cc: "No covered calls open.",
   spread: "No credit spreads open.",
+  value: "The value book holds no shares.",
   shares: "No shares held.",
 };
 
@@ -175,13 +176,14 @@ export function narrow(cards: NameCard[], filter: PositionsFilter, query: string
     .filter((c) => c.rows.length > 0);
 }
 
-/** How many rows each chip would show with the search applied. */
+/** How many rows each chip would show with the search applied (the value book's shares count under All and Value). */
 export function countByFilter(
   cards: NameCard[],
   spreads: PositionRow[],
   query: string,
+  value: PositionRow[] = [],
 ): Record<PositionsFilter, number> {
-  const all = [...cards.flatMap((c) => c.rows), ...spreads];
+  const all = [...cards.flatMap((c) => c.rows), ...spreads, ...value];
   return Object.fromEntries(FILTERS.map((f) => [f, narrowRows(all, f, query).length])) as Record<
     PositionsFilter,
     number

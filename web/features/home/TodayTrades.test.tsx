@@ -289,6 +289,15 @@ describe("TodayTrades", () => {
       expect(await screen.findByText("The value book could not be read, so its trades are not listed.")).toBeInTheDocument();
       expect(screen.getByRole("heading", { name: "AAPL · Sold $180 put" })).toBeInTheDocument();
     });
+    it("does not say the book could not be read when it is off and has never written", async () => {
+      renderWithQuery(<TodayTrades strategy="all" />, {
+        "/pnl/day": day([opened], { value_available: false }),
+        "/value/book": { as_of: "", available: false, enabled: false, positions: [], proposals: [], funding: [], release_max_closes: 2, drain_healthy: true, drain_last_seen: null },
+      });
+      expect(await screen.findByRole("heading", { name: "AAPL · Sold $180 put" })).toBeInTheDocument();
+      await new Promise((r) => setTimeout(r, 20));
+      expect(screen.queryByText("The value book could not be read, so its trades are not listed.")).toBeNull();
+    });
     it("stays quiet about the value book for a wheel strategy", async () => {
       renderWithQuery(<TodayTrades strategy="cc" />, { "/pnl/day": day([], { strategy: "cc", value_available: false }) });
       await screen.findByText("Nothing has traded yet today.");

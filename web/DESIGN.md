@@ -877,7 +877,7 @@ Operate. Dials as the project default. Built in web overhaul Part 3
   640px); the view chips (Positions, Campaigns, Calendar); then the view. A phone is one column in
   that order.
 - **FORM:** one page; the view lives in the URL (`?view=campaigns`). Positions: a search field,
-  the type chips (All, CSPs, CCs, Credit spreads, Shares) with counts, then one card per name,
+  the type chips (All, CSPs, CCs, Credit spreads, Value, Shares) with counts, then one card per name,
   two columns from 1024px: the ticker bold with its flag words ("Weak health", "Event <date>")
   and the name's open P&L at the right, then Home's rows (shares, then each option contract, each
   a link to the contract's page) with a muted figure line beneath each option (delta and where it
@@ -892,6 +892,12 @@ Operate. Dials as the project default. Built in web overhaul Part 3
   <date>" words it has on Home. A short option whose name has a verified event date before its
   expiry carries "Event <date> before expiry" on the Calendar. The date is Python's (checked
   against the cited news); the event's title is Claude's and is not shown here.
+- **Value book on Portfolio (2026-11-05):** the Value chip sits between Credit spreads and Shares (Home's order) and
+  counts the book's open positions; under All and Value a "Value book" card sits after the name cards, one row per
+  held name in Home's row (list, average cost, next exit, open P&L or a hatched n/a), each row a link to the stock
+  page's value block. The wheel's own share row on the same name stays a separate row on its own card. An unreadable
+  book says "The value book could not be read, so its shares are not listed."; a readable empty one, "The value book
+  holds no shares." Campaigns and Calendar have no Value tab. Home's value rows link to the same place.
 
 ### Activity
 Operate. Dials as the project default. Built in web overhaul Part 3. Ledger and stub figures use
@@ -921,9 +927,14 @@ the figure face.
   two marks, worded so that a positive number is what the action cost), then the score-vs-outcome
   evidence with its read-only sentences first.
 - **FINISH:** unreviewed and undocumented is unfinished.
+- **Value on At IBKR (2026-11-05):** the book chips on the At IBKR list gain Value (after Manual); a value-book
+  execution carries the word "Value book". The ledger's Trades filter has no Value choice, since its trades are option
+  trades and the book trades shares.
 - **Value book in Pay (2026-11-05):** the month's stub is options income as before; a month in which the value book
   sold shares adds the second "Value book, realised" stub beneath it, and an unread value book is a flag word
-  "Value book unavailable". The meter and the target never take the sale.
+  "Value book unavailable". The meter and the target never take the sale. A value book that is off and has never
+  written anything is not flagged on any of these figures (it has no sales to miss); a book that is on but cannot be read,
+  or whose read has failed or not arrived, still is.
 - **Market and sizing (2026-10-23):** an order in the Orders list says what shaped its size
   ("Claude's cut · Sent 1 of 3 contracts"). System opens with the sizing record, the review the
   live-cutover gate asks for. Claude's cut is labelled as Claude's wherever its reason shows.
@@ -1067,6 +1078,11 @@ sibling keys; re-run the check after edits.
 
 ## Decision Log
 
+- 2026-11-05: **The value book on Portfolio and At IBKR; no flag for a book that never ran** (web overhaul Part 4,
+  Task 10). Added the Value chip and the "Value book" card to Portfolio's Positions, the Value chip to At IBKR, and
+  a link from every value row to the stock page's value block (Surfaces: Portfolio, Activity, Home). The rule that
+  shaped the flag: unknown is never none, so a failed or pending book read keeps "Value book unavailable", and only
+  a book read that says off and never written drops it. No new token, colour, font, radius or elevation.
 - 2026-11-05: **Value taps in Needs you and the phone banner** (web overhaul Part 4, Task 9). Added the value
   rows to "Needs you" and the value count to the proposals banner (Components, Surfaces: Home). The rule that
   shaped it: the lime Review is the only act on a proposal, and a value proposal already has one on the Value
