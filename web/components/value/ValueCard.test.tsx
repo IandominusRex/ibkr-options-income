@@ -27,6 +27,8 @@ function book(over: Partial<ValueBook> = {}): ValueBook {
     funding: [],
     breakers: { trend: false, drawdown: false, drawdown_pct: 4.2, trim_offered: false, trim_episode: null, trimmed: false },
     release_max_closes: 2,
+    drain_healthy: true,
+    drain_last_seen: "2026-11-05T14:59:30Z",
     ...over,
   };
 }

@@ -15303,6 +15303,23 @@
           "release_max_closes": {
             "type": "integer",
             "title": "Release Max Closes"
+          },
+          "drain_healthy": {
+            "type": "boolean",
+            "title": "Drain Healthy",
+            "default": false
+          },
+          "drain_last_seen": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drain Last Seen"
           }
         },
         "type": "object",

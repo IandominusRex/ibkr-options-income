@@ -424,6 +424,42 @@ def test_an_unknown_symbol_is_404(client, vdb_file) -> None:
     assert client.get("/value/NOPE", headers=OWNER).status_code == 404
 
 
+def test_book_says_whether_the_value_drain_is_checking(client, vdb_file, monkeypatch) -> None:
+    """Web overhaul Part 4 (V2): the value process's drain heartbeat. Never run is false with a null
+    time; within five minutes (the floor over twice the 15 s poll) is healthy; older is stale, and
+    its time is still shown so the receipt can say when the process last checked."""
+    import src.api.routers.value as router
+    from src.common.value_commands import VALUE_DRAIN_HEARTBEAT_KEY
+    from src.storage.system_settings import set_setting
+
+    now = NOW.replace(tzinfo=UTC)
+    monkeypatch.setattr(router, "_now", lambda: now)
+    body = client.get("/value/book", headers=OWNER).json()
+    assert body["drain_healthy"] is False and body["drain_last_seen"] is None
+    set_setting(VALUE_DRAIN_HEARTBEAT_KEY, (now - timedelta(seconds=290)).isoformat())
+    body = client.get("/value/book", headers=OWNER).json()
+    assert body["drain_healthy"] is True
+    set_setting(VALUE_DRAIN_HEARTBEAT_KEY, (now - timedelta(seconds=310)).isoformat())
+    body = client.get("/value/book", headers=OWNER).json()
+    assert body["drain_healthy"] is False
+    assert body["drain_last_seen"].startswith("2026-11-02T14:54:50")
+
+
+def test_a_missing_value_db_still_says_whether_the_drain_runs(
+    client, no_vdb_file, monkeypatch
+) -> None:
+    """The heartbeat lives in the trading DB: a book with no value.db yet still reports it."""
+    import src.api.routers.value as router
+    from src.common.value_commands import VALUE_DRAIN_HEARTBEAT_KEY
+    from src.storage.system_settings import set_setting
+
+    now = NOW.replace(tzinfo=UTC)
+    monkeypatch.setattr(router, "_now", lambda: now)
+    set_setting(VALUE_DRAIN_HEARTBEAT_KEY, now.isoformat())
+    body = client.get("/value/book", headers=OWNER).json()
+    assert body["available"] is False and body["drain_healthy"] is True
+
+
 def test_every_value_route_needs_the_owner_token(client, vdb_file) -> None:
     for path in ("/value/top", "/value/book", "/value/positions", "/value/GOOGL"):
         assert client.get(path).status_code == 401

@@ -52,6 +52,12 @@ about (spec §4.2). The drain writes `command_drain_heartbeat` to `system_settin
 at the end of every cycle (after the work, never before), so M2's `/options/controls`
 can tell an operator their click is queued and nothing is picking it up.
 
+The value process (`scripts/run_value.py`) drains the six `value_*` kinds itself (`command_drain` skips them,
+`src/common/value_commands.VALUE_KINDS`) every `value.telegram.commands_poll_seconds` and between its slow
+steps, and writes `value_drain_heartbeat` to `system_settings` after each drain, after the work. `GET
+/value/book` reads it (`drain_healthy`, `drain_last_seen`), so a value tap's receipt can say the value
+process is not checking (web overhaul Part 4).
+
 ## The portfolio snapshot spine (P3–P4)
 
 The **write side** (P3–P4 M1) captures positions and account values into a `portfolio_snapshots`

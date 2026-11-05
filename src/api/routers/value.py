@@ -7,13 +7,14 @@ of a value kind; this module only shows the fingerprint that click must carry ba
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import logging
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 
 from src.api import value_db as vdb
-from src.api.deps import OwnerUser
+from src.api.deps import OwnerUser, TradingDb
 from src.api.models.value import (
     ValueBookResponse,
     ValueBreakersOut,
@@ -38,10 +39,12 @@ from src.api.models.value import (
     ValueTopItem,
     ValueTopResponse,
 )
+from src.api.settings_read import parse_setting_dt, read_setting
 from src.common.config import get_config
-from src.common.value_commands import trim_offer_stale
+from src.common.value_commands import VALUE_DRAIN_HEARTBEAT_KEY, trim_offer_stale
 from src.value.schemas import Check, ListEvaluation, ValueScorecard
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/value", tags=["value"])
 
 _DEEP_FINANCIAL = ("bank", "insurer")
@@ -137,15 +140,42 @@ def _breakers(state: dict[str, dict], now: datetime, trim_pct: float) -> ValueBr
     )
 
 
+# The value drain's slow steps (the night, the RTH cycle) hold the drain for a minute or two; a
+# Claude read drains between items. Five minutes covers them without hiding a dead process long.
+VALUE_DRAIN_FLOOR_SECONDS = 300
+
+
+def _value_drain(db: TradingDb, now: datetime) -> tuple[bool, datetime | None]:
+    """Whether the value process checked for value_* commands recently, and when it last did.
+    Healthy is within twice ``value.telegram.commands_poll_seconds`` or five minutes, whichever is
+    longer. A drain that never ran, or a heartbeat that cannot be read, is not healthy."""
+    try:
+        seen = parse_setting_dt(read_setting(db, VALUE_DRAIN_HEARTBEAT_KEY))
+    except Exception as exc:  # noqa: BLE001 - the book's figures do not depend on the heartbeat
+        log.debug("value book: the drain heartbeat could not be read: %s", exc)
+        return False, None
+    if seen is None:
+        return False, None
+    poll = get_config().value.telegram.commands_poll_seconds
+    window = timedelta(seconds=max(2 * poll, VALUE_DRAIN_FLOOR_SECONDS))
+    return now - seen <= window, seen
+
+
 @router.get("/book", response_model=ValueBookResponse)
-def value_book(user: OwnerUser) -> ValueBookResponse:  # noqa: ARG001
+def value_book(user: OwnerUser, db: TradingDb) -> ValueBookResponse:  # noqa: ARG001
     now = _now()
     cfg = get_config().value
     enabled, release_max = cfg.book.enabled, cfg.book.release.max_closes_per_request
+    drain_healthy, drain_last_seen = _value_drain(db, now)
     with vdb.value_read_session() as s:
         if s is None:
             return ValueBookResponse(
-                as_of=now, available=False, enabled=enabled, release_max_closes=release_max
+                as_of=now,
+                available=False,
+                enabled=enabled,
+                release_max_closes=release_max,
+                drain_healthy=drain_healthy,
+                drain_last_seen=drain_last_seen,
             )
         positions = vdb.read_positions(s, "open") or []
         proposals = vdb.read_proposals(s) or []
@@ -168,6 +198,8 @@ def value_book(user: OwnerUser) -> ValueBookResponse:  # noqa: ARG001
         available=True,
         enabled=enabled,
         release_max_closes=release_max,
+        drain_healthy=drain_healthy,
+        drain_last_seen=drain_last_seen,
         ceiling_usd=ceiling,
         used_usd=used,
         positions=[_position_out(p) for p in positions],

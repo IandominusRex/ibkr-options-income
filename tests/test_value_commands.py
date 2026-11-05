@@ -810,3 +810,32 @@ def test_live_allows_read_kinds(value_book_db, monkeypatch) -> None:
     assert _read_apply("value_analyse", {"symbol": "STDY"}, live=True)["symbol"] == "STDY"
     snap = _read_apply("value_snapshot", {"symbol": "STDY", "fingerprint": {}}, live=True)
     assert snap["symbol"] == "STDY"
+
+
+def test_the_value_drain_beats_after_its_work_on_both_paths() -> None:
+    """Web overhaul Part 4 (V2): `_drain_commands` writes the heartbeat on the empty path and after
+    `vcmd.drain` on the busy one, never before the work, and `_beat` writes the key GET /value/book
+    reads. Structural: the entrypoint is never imported by a test, so its source is read."""
+    import ast
+    from pathlib import Path
+
+    tree = ast.parse(Path("scripts/run_value.py").read_text())
+    fns = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+
+    def calls(node: ast.AST, name: str) -> list[int]:
+        return [
+            n.lineno
+            for n in ast.walk(node)
+            if isinstance(n, ast.Call)
+            and (getattr(n.func, "id", None) == name or getattr(n.func, "attr", None) == name)
+        ]
+
+    drain = fns["_drain_commands"]
+    beats, [work] = calls(drain, "_beat"), calls(drain, "drain")
+    assert len(beats) == 2 and max(beats) > work  # the busy path beats after vcmd.drain
+    [empty] = [
+        n for n in ast.walk(drain) if isinstance(n, ast.If) and ast.unparse(n.test) == "not rows"
+    ]
+    assert calls(empty, "_beat") and any(isinstance(b, ast.Return) for b in empty.body)
+    assert "set_setting(VALUE_DRAIN_HEARTBEAT_KEY" in ast.unparse(fns["_beat"])
+    assert vc.VALUE_DRAIN_HEARTBEAT_KEY == "value_drain_heartbeat"

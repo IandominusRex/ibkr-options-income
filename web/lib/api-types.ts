@@ -5786,6 +5786,13 @@ export interface components {
             breakers?: components["schemas"]["ValueBreakersOut"];
             /** Release Max Closes */
             release_max_closes: number;
+            /**
+             * Drain Healthy
+             * @default false
+             */
+            drain_healthy: boolean;
+            /** Drain Last Seen */
+            drain_last_seen?: string | null;
         };
         /** ValueBreakersOut */
         ValueBreakersOut: {

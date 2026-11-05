@@ -111,6 +111,11 @@ class ValueBookResponse(Envelope):
     funding: list[ValueFundingOut] = Field(default_factory=list)
     breakers: ValueBreakersOut = Field(default_factory=ValueBreakersOut)
     release_max_closes: int  # release.max_closes_per_request: the K in the approval sentence
+    # The value process's command drain (web overhaul Part 4): when it last checked for value_*
+    # commands (system_settings ``value_drain_heartbeat``), and whether that is recent enough for a
+    # pending tap to read as queued. Never-run is false with a null time, never true.
+    drain_healthy: bool = False
+    drain_last_seen: datetime | None = None
 
 
 # --- the ticker file -------------------------------------------------------------------------------

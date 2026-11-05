@@ -227,6 +227,17 @@ def _market_one(symbol: str) -> tuple[MarketFacts, date | None]:
         return facts, None
 
 
+def _beat() -> None:
+    """The value drain's heartbeat (web overhaul Part 4): ``value_drain_heartbeat`` in the trading
+    DB's system_settings, which GET /value/book reads so a web tap's receipt can say the value
+    process is not checking for taps. Called after the drain's work, never before (command_drain's
+    rule): a drain that raises leaves the old time, so a failing drain reads as stale."""
+    from src.common.value_commands import VALUE_DRAIN_HEARTBEAT_KEY
+    from src.storage.system_settings import set_setting
+
+    set_setting(VALUE_DRAIN_HEARTBEAT_KEY, datetime.now(UTC).isoformat())
+
+
 def _drain_commands() -> int:
     """Claim the value kinds from app_commands, apply each in value.db, mark it (spec §9.7, ruling 1). The trading
     DB is imported here only: importing this script loads no wheel layer (the fence's probe)."""
@@ -249,6 +260,7 @@ def _drain_commands() -> int:
         ]
         s.commit()
     if not rows:
+        _beat()
         return 0
     init_value_db()
 
@@ -275,6 +287,7 @@ def _drain_commands() -> int:
             s.commit()
 
     outcomes = vcmd.drain(rows, _apply, _mark)
+    _beat()
     replies = vcmd.replies(outcomes)
     if replies:
         from src.value.notify import send

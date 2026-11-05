@@ -105,8 +105,8 @@ check's count.
 | **Plan written** | done | (plan file only) | Sections A and B prototyped on a code-only copy of `main` at ca14c40 (see Self-review): full pytest 5666 passed + 1 skipped, with 3 failures that need a git checkout (`test_private_config_files_are_gitignored`, `test_a_relative_ai_workdir_stays_gitignored`, `test_spreads_runtime_files_are_gitignored`: the copy is not a repo), so 5669 expected in the worktree (5665 + 5 - 1); ruff check clean; mypy src clean; `test_openapi_current` green after regeneration. Web sections not prototyped (ruling 31) | 2026-11-05 | Written from the HANDOFF section 7.1 brief, re-checked against the code; corrections are rulings 1-9; the HANDOFF's six operator questions take its defaults (ruling 10). |
 | **A0 setup** | done | 20fcd7e (plan + handoff on main) | df 21 GiB free | 2026-11-05 | worktree `.claude/worktrees/web-overhaul-4` on `feat/web-overhaul-4`, .venv and web/node_modules symlinked, init_db run |
 | **Section A entry** | done | | A1 anchors all print; A2 empty; A3 pytest 5665 passed + 1 skipped, ruff clean, mypy 361 files (plan said 360; baseline is what the worktree shows), vitest 1485 in 152 files, tsc and lint clean | 2026-11-05 | mypy baseline is 361 files, not 360 (cost: none) |
-| **Task 1: a capital-release close says why** | done | this commit (`fix(reporting): a capital-release close says why`) | red 2 failed as planned; `test_reporting_day.py` 36 passed; full pytest 5667 passed + 1 skipped (baseline 5665 + 2); ruff clean; mypy 361 files clean | 2026-11-05 | none: every block applied as written (ARCHITECTURE.md anchor is on line 1137 as planned) |
-| **Task 2: the value drain heartbeat** | pending | | | | |
+| **Task 1: a capital-release close says why** | done | 07cb80a | red 2 failed as planned; `test_reporting_day.py` 36 passed; full pytest 5667 passed + 1 skipped (baseline 5665 + 2); ruff clean; mypy 361 files clean | 2026-11-05 | none: every block applied as written (ARCHITECTURE.md anchor is on line 1137 as planned) |
+| **Task 2: the value drain heartbeat** | done | this commit (`feat(value): the value drain's heartbeat, served on GET /value/book`) | red 3 failed; targeted Step 7 set 124 passed; `py_compile scripts/run_value.py` silent; `test_openapi_current` green; full pytest 5670 passed + 1 skipped (5665 + 2 + 3; the plan's 5669 counted the prototype copy's non-repo quirk); ruff check clean; mypy 361 files clean; vitest 1485 in 152 files (unchanged), tsc and lint clean; G1 empty, G2 the four files | 2026-11-05 | (1) the red reasons differ from Step 2's text: the two API tests fail on `ImportError: VALUE_DRAIN_HEARTBEAT_KEY` (imported before the GET), the structural one on `assert len(beats) == 2`, not `KeyError` (cost: none). (2) `api-types.ts` makes `drain_healthy` a required `boolean` (as Step 8 says), so `tsc` failed on two typed web fixtures, `components/value/useValueBook.test.ts` and `ValueCard.test.tsx` `book()`; each gains `drain_healthy: true, drain_last_seen: "2026-11-05T14:59:30Z"` (a running process, so Section D's `ValueDrainNote` stays silent in the existing cases). The web sections were not prototyped (ruling 31); test files only, no web source changed (cost if wrong: Section D adjusts a fixture). (3) STATUS.md's "Deferred (web, Sections F-I)" item is one paragraph, so the capital-release line is a nested bullet under it (cost: none). Six files outside this task fail `ruff format --check` on main already (not touched). |
 | **Section A exit / early merge** | pending | | | | |
 | **Section B entry** | pending | | | | |
 | **Task 3: `GET /nav` removed** | pending | | | | |
@@ -530,7 +530,7 @@ with
 `docs/web/openapi.json`, `web/lib/api-types.ts`, `docs/web/api.md`, `docs/web/architecture.md`,
 `ARCHITECTURE.md`, `STATUS.md`, this plan.
 
-- [ ] **Step 1: Write the failing tests.** In `tests/test_api_value.py`, insert directly above
+- [x] **Step 1: Write the failing tests.** In `tests/test_api_value.py`, insert directly above
   `def test_every_value_route_needs_the_owner_token(client, vdb_file) -> None:` (line 427):
 
 ```python
@@ -610,9 +610,9 @@ def test_the_value_drain_beats_after_its_work_on_both_paths() -> None:
     assert vc.VALUE_DRAIN_HEARTBEAT_KEY == "value_drain_heartbeat"
 ```
 
-- [ ] **Step 2: Run them red.** `python -m pytest -q tests/test_api_value.py tests/test_value_commands.py`
+- [x] **Step 2: Run them red.** `python -m pytest -q tests/test_api_value.py tests/test_value_commands.py`
   → 3 failed (`KeyError: 'drain_healthy'` twice; `KeyError: '_beat'`).
-- [ ] **Step 3: The shared key.** In `src/common/value_commands.py`, replace line 25
+- [x] **Step 3: The shared key.** In `src/common/value_commands.py`, replace line 25
 
 ```python
 VALUE_ORDER_KINDS: frozenset[str] = frozenset({"value_approve", "value_reject", "value_trim"})
@@ -629,7 +629,7 @@ VALUE_ORDER_KINDS: frozenset[str] = frozenset({"value_approve", "value_reject", 
 VALUE_DRAIN_HEARTBEAT_KEY = "value_drain_heartbeat"
 ```
 
-- [ ] **Step 4: The writer.** In `scripts/run_value.py`, insert directly above line 230
+- [x] **Step 4: The writer.** In `scripts/run_value.py`, insert directly above line 230
   (`def _drain_commands() -> int:`):
 
 ```python
@@ -670,7 +670,7 @@ def _beat() -> None:
 
   (`set_setting` logs and swallows its own failure, so a heartbeat write never stops a drain. One small
   `system_settings` write every `commands_poll_seconds`, as the trading drain already does every poll.)
-- [ ] **Step 5: The response fields.** In `src/api/models/value.py`, replace line 113
+- [x] **Step 5: The response fields.** In `src/api/models/value.py`, replace line 113
 
 ```python
     release_max_closes: int  # release.max_closes_per_request: the K in the approval sentence
@@ -687,7 +687,7 @@ with
     drain_last_seen: datetime | None = None
 ```
 
-- [ ] **Step 6: The reader.** In `src/api/routers/value.py`:
+- [x] **Step 6: The reader.** In `src/api/routers/value.py`:
   - replace line 10 (`from datetime import UTC, datetime`) with
 
 ```python
@@ -791,12 +791,12 @@ def value_book(user: OwnerUser, db: TradingDb) -> ValueBookResponse:  # noqa: AR
         ceiling_usd=ceiling,
 ```
 
-- [ ] **Step 7: Green.** `python -m pytest -q tests/test_api_value.py tests/test_value_commands.py tests/test_value_fence.py tests/test_value_final_review.py tests/test_web_fence.py`
+- [x] **Step 7: Green.** `python -m pytest -q tests/test_api_value.py tests/test_value_commands.py tests/test_value_fence.py tests/test_value_final_review.py tests/test_web_fence.py`
   → all pass; `python -m py_compile scripts/run_value.py` silent.
-- [ ] **Step 8: Regenerate the contract** (Global Constraints). The `api-types.ts` diff is exactly the two
+- [x] **Step 8: Regenerate the contract** (Global Constraints). The `api-types.ts` diff is exactly the two
   fields on `ValueBookResponse` (`drain_healthy: boolean` with `@default false`, `drain_last_seen?: string | null`).
   `python -m pytest -q tests/test_openapi_current.py` passes.
-- [ ] **Step 9: Docs.**
+- [x] **Step 9: Docs.**
   - `docs/web/api.md`, `### GET /value/book`: after "`release_max_closes` is ... cash-secured puts")." append:
     "`drain_healthy` / `drain_last_seen` (web overhaul Part 4): the value process's command drain, from
     `system_settings.value_drain_heartbeat` (written by `scripts/run_value.py` after every drain). Healthy is a
@@ -818,7 +818,7 @@ def value_book(user: OwnerUser, db: TradingDb) -> ValueBookResponse:  # noqa: AR
     Section A (`GET /value/book` `drain_healthy`); the web says it from Part 4 Section D." Add one bullet at the
     end of the same "Deferred (web, Sections F-I)" list: "A capital-release close read "the reason was not
     recorded" on Done today, History and the position page until web overhaul Part 4 Section A (fixed)."
-- [ ] **Step 10: Gate and commit.** `ruff format` the six Python files; `python -m pytest -q && ruff check . && mypy src`
+- [x] **Step 10: Gate and commit.** `ruff format` the six Python files; `python -m pytest -q && ruff check . && mypy src`
   (pytest = Task 1's + 3); `cd web && npx vitest run && npx tsc --noEmit && npm run lint` (unchanged counts).
   Fill the row; commit `feat(value): the value drain's heartbeat, served on GET /value/book`.
 

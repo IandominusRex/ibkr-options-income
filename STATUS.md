@@ -404,11 +404,13 @@ book is still off until `value.book.enabled`.
   expose them). The calendar's value split costs one extra request per month opened (`GET /pnl/calendar?
   strategy=value`; the cell's figure is still the whole day, and `MonthPay.net` keeps value out). The
   `value_available=false` flag shows under All on installs that never ran the value process (value.db absent;
-  gate it on `/value/book`'s `enabled` if it is noise). The Home card's `drainHealthy` is always true: no API
-  field says whether the value process is running. A held name's stop reads a hatched "stop n/a" until the half
+  gate it on `/value/book`'s `enabled` if it is noise). The value process's drain heartbeat is served since web
+  overhaul Part 4 Section A (`GET /value/book` `drain_healthy`); the web says it from Part 4 Section D. A held name's stop reads a hatched "stop n/a" until the half
   sale. Process gaps: no fresh reviewer-agent step ran for F-I (the da-vinci critique and audit ran in-thread),
   and dark-mode captures were not taken for several web sections (390px dark only for F; 1440px dark only for G;
   none for H and I's states).
+  - A capital-release close read "the reason was not recorded" on Done today, History and the position page
+    until web overhaul Part 4 Section A (fixed).
 - **Needs live verification** (paper): a real Telegram tap on a value card in paper reaches the value process and
   the next RTH cycle sends; the trim card's button; the digest's first night; the watchdog's value line; and a
   stale card's tap answering "out of date".

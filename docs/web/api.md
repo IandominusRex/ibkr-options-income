@@ -1635,7 +1635,11 @@ a `value_approve` / `value_reject` command must carry back** (`value_commands.pr
 tap on an old view cannot decide a different trade. `ValueBreakersOut`: `{ trend, drawdown, drawdown_pct,
 trim_offered, trim_episode (the id a `value_trim` command carries), trimmed }` (`null` where the value process
 has not written the state yet). `release_max_closes` is `value.book.release.max_closes_per_request`, the K in
-the approval sentence ("it may close up to K of your wheel's cash-secured puts").
+the approval sentence ("it may close up to K of your wheel's cash-secured puts"). `drain_healthy` /
+`drain_last_seen` (web overhaul Part 4): the value process's command drain, from
+`system_settings.value_drain_heartbeat` (written by `scripts/run_value.py` after every drain). Healthy is a
+heartbeat within `max(2 x value.telegram.commands_poll_seconds, 300 s)`; never-run is `false` with `null`.
+Present on the `available: false` answer too (the heartbeat is in the trading DB).
 
 ### `GET /value/positions?status=open|closed`
 

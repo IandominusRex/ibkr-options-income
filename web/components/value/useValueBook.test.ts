@@ -15,7 +15,7 @@ function book(over: Partial<ValueBook>): ValueBook {
     as_of: "2026-11-05T15:00:00Z", available: true, enabled: true, ceiling_usd: 30000, used_usd: 0,
     positions: [], proposals: [], funding: [],
     breakers: { trend: false, drawdown: false, drawdown_pct: 0, trim_offered: false, trim_episode: null, trimmed: false },
-    release_max_closes: 2, ...over,
+    release_max_closes: 2, drain_healthy: true, drain_last_seen: "2026-11-05T14:59:30Z", ...over,
   };
 }
 

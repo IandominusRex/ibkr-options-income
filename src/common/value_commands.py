@@ -23,6 +23,11 @@ VALUE_KINDS: frozenset[str] = frozenset(
 )
 # Kinds that change order state; the value process refuses them under LIVE_TRADING=true.
 VALUE_ORDER_KINDS: frozenset[str] = frozenset({"value_approve", "value_reject", "value_trim"})
+# The value process's drain heartbeat (web overhaul Part 4): a system_settings key in the trading
+# DB, written by scripts/run_value.py after every drain of the kinds above (after the work, never
+# before, as command_drain does) and read by GET /value/book, so a web tap's receipt can say the
+# value process is not checking for taps rather than wait in silence.
+VALUE_DRAIN_HEARTBEAT_KEY = "value_drain_heartbeat"
 
 Action = Literal["approve", "reject", "trim"]
 _CODE: dict[str, str] = {"approve": "a", "reject": "r", "trim": "t"}
