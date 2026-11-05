@@ -71,4 +71,12 @@ describe("ExecutionsList", () => {
     renderWithQuery(<ExecutionsList days={30} />, {});
     expect(await screen.findByText("Could not load IBKR's executions.")).toBeInTheDocument();
   });
+
+  it("keeps the price column from shrinking, so its words never stack on a narrow screen", async () => {
+    serve(body([exec()]));
+    const [row] = await screen.findAllByRole("listitem");
+    const price = within(row).getByText("$2.35");
+    expect(price).toHaveClass("shrink-0");
+    expect(within(row).getByText("a share")).toHaveClass("whitespace-nowrap");
+  });
 });

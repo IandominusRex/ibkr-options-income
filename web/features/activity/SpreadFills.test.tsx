@@ -56,4 +56,11 @@ describe("SpreadFills", () => {
     serve(body([]));
     expect(await screen.findByText("No credit spread orders in the last 30 days.")).toBeInTheDocument();
   });
+
+  it("keeps the price and its words on one line, so a long title cannot stack them", async () => {
+    serve(body([order()]));
+    const price = (await screen.findByText("$0.05")).closest("div");
+    expect(price).toHaveClass("shrink-0");
+    expect(screen.getByText("a share")).toHaveClass("whitespace-nowrap");
+  });
 });

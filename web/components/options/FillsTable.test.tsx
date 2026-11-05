@@ -64,4 +64,11 @@ describe("FillsTable", () => {
     serve([fill({ right: "C", strategy: "covered_call" })]);
     expect(await screen.findByText("AAPL $185 call")).toBeInTheDocument();
   });
+
+  it("keeps the price column from shrinking, so its words never stack on a narrow screen", async () => {
+    serve([fill()]);
+    const col = (await screen.findByText("$3.10")).parentElement;
+    expect(col).toHaveClass("shrink-0");
+    expect(screen.getByText("a share")).toHaveClass("whitespace-nowrap");
+  });
 });

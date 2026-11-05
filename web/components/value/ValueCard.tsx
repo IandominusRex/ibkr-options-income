@@ -172,7 +172,9 @@ function Loaded() {
   if (!data) {
     return isError ? (
       <Card as="div">
-        <p className="text-sm text-muted">The value book could not be loaded. It is asked for again every minute.</p>
+        <p className="text-sm text-muted">
+          The value book could not be loaded, so a value proposal may be waiting. It is asked for again every minute.
+        </p>
       </Card>
     ) : (
       <div role="status" aria-busy="true" aria-label="Loading the value book" className="h-28 rounded-[18px] bg-surface" />
@@ -198,6 +200,9 @@ function Loaded() {
       </div>
       {data.available ? (
         <Body book={data} />
+      ) : data.enabled ? (
+        // On but unreadable may hide a proposal: the same sentence Needs you carries (Part 4, Task 9).
+        <p className="mt-2 text-sm">The value book could not be read, so a value proposal may be waiting.</p>
       ) : (
         <p className="mt-2 text-sm">The value book has not written anything yet.</p>
       )}

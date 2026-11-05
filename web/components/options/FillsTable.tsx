@@ -59,12 +59,12 @@ export function FillsTable({ days = 7 }: { days?: number } = {}) {
                   )}
                 </div>
               </div>
-              <div className="tabular text-right font-mono font-semibold">
+              <div className="tabular shrink-0 text-right font-mono font-semibold">
                 <span>
                   {f.action} {f.filled_qty.toFixed(0)}
                 </span>
                 <div>{`$${f.avg_price.toFixed(2)}`}</div>
-                <div className="font-sans text-[0.8125rem] font-normal text-muted">a share</div>
+                <div className="whitespace-nowrap font-sans text-[0.8125rem] font-normal text-muted">a share</div>
               </div>
             </div>
           </li>

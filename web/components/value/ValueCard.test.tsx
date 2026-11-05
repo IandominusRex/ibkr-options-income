@@ -49,10 +49,17 @@ describe("ValueCard", () => {
     expect(screen.getByText(/sell half at \$180\.00/)).toBeInTheDocument();
     expect(screen.getByText("Buy 20 AAPL")).toBeInTheDocument();
   });
-  it("says the book has not written anything, never none, when value.db is missing", async () => {
-    show(book({ available: false, ceiling_usd: null, used_usd: null, positions: [], proposals: [] }));
+  it("says the book has not written anything, never none, when it is off and value.db is missing", async () => {
+    show(book({ enabled: false, available: false, ceiling_usd: null, used_usd: null, positions: [], proposals: [] }));
     expect(await screen.findByText("The value book has not written anything yet.")).toBeInTheDocument();
     expect(screen.queryByText(/none/i)).toBeNull();
+  });
+  it("says a proposal may be waiting when the book is on but cannot be read, as Needs you does", async () => {
+    show(book({ available: false, ceiling_usd: null, used_usd: null, positions: [], proposals: [] }));
+    expect(
+      await screen.findByText("The value book could not be read, so a value proposal may be waiting."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/has not written anything/)).toBeNull();
   });
   it("says the book is off in words", async () => {
     show(book({ enabled: false, positions: [], proposals: [] }));
@@ -138,6 +145,8 @@ describe("ValueCard", () => {
   it("says it could not load, in words, when the request fails", async () => {
     renderWithQuery(<ValueCard strategy="all" />, {});
     expect(await screen.findByText(/The value book could not be loaded/)).toBeInTheDocument();
+    // A failed read may hide a proposal, so the card says so, in the words Needs you uses.
+    expect(screen.getByText(/so a value proposal may be waiting/)).toBeInTheDocument();
   });
   it("shows the card under the Value filter too, with the same book", async () => {
     renderWithQuery(<ValueCard strategy="value" />, { "/value/book": book() });
