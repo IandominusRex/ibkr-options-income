@@ -94,6 +94,22 @@ app/                App Router pages and the root layout
                     <HaltedBanner/> and <main/>, and <TabBar/> (phones). The root row
                     is `h-dvh overflow-hidden`: Rail and `<main/>` each own their own
                     scroll, so the rail stays pinned while a page scrolls.
+                    Its `metadata.title` is `{ default: "IBKR Income", template: "%s · IBKR Income" }`
+                    (web overhaul Part 4), so a route sets only its own name.
+  not-found.tsx     The root not-found page (web overhaul Part 4): one Card, "This page does not
+                    exist", one secondary "Go to Home" link, `metadata.title` "Not found".
+  error.tsx         The root error page (client component): one Card, "This page could not be
+                    shown", the error's `digest` as "Reference <digest>" in the stub face when it has
+                    one (the error's own message is never printed), and one secondary "Try again"
+                    that calls `reset`. No `loading.tsx` (every page draws its own `role="status"`
+                    skeleton) and no `global-error.tsx` (the root layout renders no data). Both are
+                    pinned by `boundaries.test.tsx`.
+  titles            Every route has its own title (`titles.test.ts` pins them): a server page exports
+                    `metadata`; a client page gets a sibling server `layout.tsx` that renders
+                    `children` and exports `metadata`, or `generateMetadata` for a dynamic segment
+                    (`more`, `more/claude`, `research`, `research/universe`, `stock/[symbol]`,
+                    `news/[symbol]`, `ledger/ticker/[symbol]`, `positions/[underlying]/[slug]`,
+                    `trades/[approvalId]`). Home keeps the default.
   page.tsx          Home (web overhaul Part 1): <HomePage/> (features/home/) inside a
                     Suspense boundary (the strategy switcher reads `?strategy=` through
                     useSearchParams). The old landing page moved to research/.
@@ -111,9 +127,9 @@ app/                App Router pages and the root layout
                     New York day in `?day=` (Today sits left of the previous and next arrows so they
                     never move; next from a past day goes to the following day with trades, or back
                     to today when none is left), and the "not draining commands" warning
-                    (<DrainWarning/>) above the view. The old tab bar, <ControlsStrip/>,
+                    (<DrainWarning/>) above the view. The old tab bar, the controls strip,
                     <TickerPillBar/>, the Working and Decided tabs and the Shorts tab are
-                    gone: halt, resume, the autonomy rung and roll mode live in the bot
+                    gone (the strip's file was deleted in Part 4): halt, resume, the autonomy rung and roll mode live in the bot
                     card, Propose a roll on the short option's position page.
   activity/         Activity (web overhaul Part 3; `/pnl` redirects here). `page.tsx` mounts
                     <ActivityPage/> (features/activity/) inside a Suspense boundary: the view chips
@@ -190,7 +206,7 @@ app/                App Router pages and the root layout
                     `?view=positions|campaigns|calendar` (default Positions; a junk value is
                     Positions). Positions groups the book by name over Home's rows, Campaigns keeps
                     its Status and Symbol filters in the request, Calendar its horizon. The old
-                    PortfolioShell page frame is no longer mounted (see components/portfolio/).
+                    portfolio page frame was deleted in Part 4 (see components/portfolio/).
   ledger/           The ledger's own routes. `/ledger` has no page: next.config.ts redirects it (307)
                     to `/activity?view=ledger`. `ledger/trades`, `ledger/ticker/[symbol]` and
                     `ledger/import` keep their routes, sit in <LedgerShell/> (components/ledger/),
@@ -215,13 +231,15 @@ app/                App Router pages and the root layout
                     stage" section, so
                     a non-technical reader can visualise the system without reading the
                     .md files directly. <ExplainShell/> owns one `useState<TabKey>` (same
-                    shape as PortfolioShell/PnlShell's tab bar) across eight subtabs -
+                    shape as the old Portfolio and P&L tab bars, since deleted) across eight subtabs -
                     Overview, Data In, Finding Trades, The Risk Gate, Claude's Role,
                     Approval & Execution, Watching & Adjusting, This Dashboard - mapped
                     1:1 to `TabKey`/`TAB_META`/`TAB_ORDER` in `components/explain/types.ts`,
                     the one place every other piece (tab bar, pipeline map, ties-into
                     chips) reads labels from so they can't drift apart.
-components/
+components/          Where new code goes (web overhaul Part 4, HANDOFF D4): `features/`. `components/`
+                    keeps `ui`, `shell`, the protected `options` controls, `value` and the survivors
+                    below; the earlier idea of folding the domain folders into `features/` was cut.
   ui/               Web overhaul Part 1: the data-free payslip primitives (web/DESIGN.md
                     Components). Button (primary lime / secondary / quiet, fully round,
                     17px/700, 0.98 press only under motion-safe), Card (white on paper, no
@@ -252,7 +270,9 @@ components/
                     current), BotCard (running or halted in words, mode, rung, the
                     not-draining line; aria-haspopup; a loading block) and BotSheet (the
                     unchanged HaltControl and AutonomyControl, with the DrainWarning above
-                    them), HaltedBanner (global; wheel-scoped wording), ThemeToggle. And
+                    them), DrainWarning (the "trading service is not draining commands" line,
+                    moved here unchanged from the deleted controls strip in Part 4, with its own
+                    2-case test; BotSheet and TradesPage import it), HaltedBanner (global; wheel-scoped wording), ThemeToggle. And
                     RefreshButton (2026-10-28: the refresh icon, quiet and round, 44px on a phone,
                     spinning while it works. `scope="broker"` on Home's hero and a position's
                     page sends the `refresh` command through portfolio/useBrokerRefresh, then asks
@@ -338,36 +358,12 @@ components/
                     age, sentiment chip is label+tint not colour-only), SentimentPanel
                     (composite score + per-source sample count; a source with no
                     tracked count renders "n/a samples", never a fabricated "0")
-  options/          ApprovalsList (react-query on GET /options/approvals?status=,
-                    `status` prop is `"pending"` (default) or `"all"` — the latter is
-                    how the Decided tab reaches decided approvals, since the
-                    default query never returns them; renders ApprovalCard per row;
-                    empty state is one line of text, customisable via `emptyText`; an
-                    optional `filter` predicate narrows the one query client-side —
-                    Approvals/Submitted each pass a complementary filter over
-                    `submitted` (plus the page's `symbolFilter` on Approvals) rather
-                    than issuing more fetches, and Decided filters `status`
-                    itself (`!== "pending"`) since `status="all"` alone isn't narrow
-                    enough; `initialCommands` (id → CommandStatus) and the
-                    `onApprovalSubmitted`/`onApprovalSettled` callbacks pass straight
-                    through to each card),
-                    ApprovalCard (contract label, contracts, premium per share
-                    and total, score, DTE, order state, the exact raise date/time via
-                    `formatDateTime(approval.created_at)` — never a relative age, which
-                    would read "just now" forever since `as_of` is a per-request
-                    freshness stamp, not when the approval was raised; a why/risks
-                    preview from `approval.review` when non-null, so triage from the
-                    list needs no click-through to the detail page for the two most
-                    load-bearing review fields; links to the detail page; mounts
-                    DecideControls, forwarding `initialCommand`/
-                    `onApprovalSubmitted`/`onApprovalSettled`), ControlsStrip (react-query on GET /options/controls,
-                    read-only mode/drain pills; since M6 also hosts the live controls -
-                    <HaltControl/> and <AutonomyControl/> - plus the halted banner
-                    rendered above the strip when halted is true, with the reason and
-                    time as text, fill and text never colour alone, and a
-                    "the trading service is not draining commands" line beside the
-                    controls whenever drain_healthy is false),
-                    HaltControl (M6: halt is ONE CLICK, no dialog - speed is the
+  options/          Web overhaul Part 4 deleted the unmounted ApprovalsList, ApprovalCard, ShortsTable,
+                    ShortsRow and ControlsStrip (their live coverage moved first: the decide flow's cases
+                    to DecideControls.test.tsx, the roll flow's to RollCard.test.tsx, the drain line's to
+                    components/shell/DrainWarning.test.tsx). The halt and resume, autonomy and roll-mode
+                    controls live in the bot card's sheet (components/shell/BotSheet), and the halted
+                    banner is components/shell/HaltedBanner. What stays here:                     HaltControl (M6: halt is ONE CLICK, no dialog - speed is the
                     feature, a test name says so; resume requires the typed word
                     RESUME through ConfirmAction and stays disabled until it matches
                     exactly; the deliberate M6 asymmetry, and the test names state
@@ -421,7 +417,7 @@ components/
                     just once a command id exists to poll) and the same
                     localStorage persistence (lib/commands.ts), keyed by
                     `promote:{candidate_id}` — namespaced so it never collides
-                    with a DecideControls approval id or a ShortsRow
+                    with a DecideControls approval id or a RollProposal
                     `short:{position_symbol}` entry, restored on a mount-only
                     effect so a page reload during a pending or
                     needs-confirmation promote does not silently drop it back
@@ -438,18 +434,7 @@ components/
                     colour alone, null avg_fill_price renders "n/a" never "$0.00", a
                     Detail column renders `o.detail` (humanised, never a raw reason
                     code or Python list repr) or "n/a"),
-                    FillsTable (recent fills with relative age), ShortsTable (open
-                    short option positions, delta renders its source, snapshot age as
-                    text not a dot, fired roll alerts render as text on the row with
-                    the humanised trigger label + age + Claude's view labelled
-                    "Model opinion (Claude)"; since M5 Task 5.2 each row carries a
-                    "Propose a roll" control through <ShortsRow/> - the same
-                    confirm-then-receipt shape AssessedRow uses for promote,
-                    including the same liveStep-in-`inFlight` fix and the same
-                    localStorage persistence keyed by `short:{position_symbol}`,
-                    no_qualifying_roll renders as a plain answer not red chrome,
-                    roll_already_working links to the in-flight approval, live-mode
-                    second confirmation wired), ApprovalDetailCard (five review fields as a
+                    FillsTable (recent fills with relative age), ApprovalDetailCard (five review fields as a
                     two-column grid of tagged cards via ReviewPanel, IdealZoneBar with lo/hi/
                     min_credit markers, AlternativesTable, a Fills section rendered
                     only when `detail.fills` is non-empty (the approval-to-order-to-
@@ -472,8 +457,10 @@ components/
                     box), IdealZoneBar (bar with premium marked
                     against lo/hi/min_credit, numbers visible, no fabricated
                     precision), AlternativesTable (other contracts assessed on the
-                    same run), DecideControls (the shared decide flow for the card
-                    and the detail page: Approve/Reject open ConfirmAction before
+                    same run), DecideControls (the shared decide flow for Home's review sheet
+                    and the detail page; its own suite is DecideControls.test.tsx, ported in Part 4
+                    from the deleted ApprovalCard.test.tsx, with one known gap: no case pins that a
+                    pending command is saved to storage, only restored and cleared: Approve/Reject open ConfirmAction before
                     any request, one POST /commands, the returned id drives a
                     CommandReceipt; controls disabled while in flight; a decided
                     approval renders its decision, not controls; 403 renders a
@@ -523,61 +510,44 @@ components/
                     stalled stated in words with no spinner, intent id always
                     visible, failed renders the humanised reason plus detail codes)
                     Web overhaul Part 2 (2026-10-19): RollProposal.tsx holds the roll-proposal
-                    flow lifted out of ShortsRow (`useRollProposal`: the confirm, the one
+                    flow lifted out of the Shorts table's row (`useRollProposal`: the confirm, the one
                     `roll_request` command, the live second confirmation, the receipt and the
                     `short:{position_symbol}` persistence; `RollReceipt`; `RollDialogs`), used by
-                    features/position/RollCard.tsx and, thinly, by ShortsRow. AssessedBrowser (a
+                    features/position/RollCard.tsx; the roll flow's cases are on RollCard.test.tsx
+                    (Part 4 ported them there; they too leave the save side unpinned).
+                    AssessedBrowser (a
                     `strategy` prop), AssessedRow (markup only), StageBadge (a StatusWord;
                     `STAGE_LABEL` exported), ReviewPanel, IdealZoneBar, AlternativesTable,
                     RationaleTags and ApprovalDetail are restyled on the payslip tokens under
-                    their existing tests. ControlsStrip changed only in DrainWarning's classes
-                    (the strip is no longer mounted; the component goes in Part 4). OrdersTable
+                    their existing tests. OrdersTable
                     and FillsTable are mounted on Activity (Part 3, Fills and orders), restyled in
                     place under their tests: OrdersTable keeps its Working / All / Rejected filter
                     and takes a `days` window and an order's sizing words ("Claude's cut", "Sent 1
-                    of 3 contracts"), FillsTable names each fill's contract. ApprovalsList, ApprovalCard,
-                    ShortsTable and ShortsRow are no longer mounted and stay for their tests
-                    until Part 4 (those tests are DecideControls' and the roll flow's only
-                    coverage). TickerPillBar is deleted. DecideControls, ConfirmAction,
-                    CommandReceipt, HaltControl, AutonomyControl and RollModeControl are
-                    unchanged.
+                    of 3 contracts"), FillsTable names each fill's contract. TickerPillBar is
+                    deleted. DecideControls, ConfirmAction, CommandReceipt, HaltControl,
+                    AutonomyControl and RollModeControl are unchanged (protected: they stay
+                    byte-identical to main, and a few of their comments still name the deleted
+                    ControlsStrip and ApprovalCard.test.tsx).
   portfolio/        Money (null/NaN renders "n/a" with `.hatch` texture never "$0.00",
                     genuine zero renders "$0", colour never alone, `kind` renders as
                     word), FreshnessLabel (renders age in words - null says "not
                     captured", stale (>freshForMinutes) says "stale", never a dot),
-                    PortfolioShell (mounts SummaryPanel once above tabs, swaps
-                    Positions/Campaigns/Calendar tab content without remounting,
-                    RefreshControl in header stays visible across tabs),
-                    SummaryPanel (fetches GET /portfolio/summary, renders page-level
-                    freshness and degraded notice once, empty-state renders one line
-                    of text not decorative elements), DegradedNotice (renders note
-                    verbatim, no paraphrase, styled as notice not error),
-                    PositionsPanel (fetches GET /portfolio/positions, renders
-                    freshness label unconditionally above content even when empty,
-                    empty state distinguishes "no snapshot" from "no positions"),
-                    PositionGroup (pure, prop-driven, renders ticker once above stock
-                    and option legs), StockLegRow (shows shares, avg_cost always,
-                    adjusted cost only when non-null with label in words),
-                    OptionLegRow (direction/DTE/moneyness render as word or "n/a"
-                    never implied or zeroed, delta renders with source, unknown state
-                    renders "Assignment risk" in words), CampaignsPanel (fetches
-                    GET /portfolio/campaigns, status/symbol filters flow into URL and
-                    query key for real backend refetch not client-side .filter()),
-                    CampaignThread (pure, renders symbol + rolled-up financials),
-                    CalendarPanel (fetches GET /portfolio/calendar, renders freshness
-                    and expiry grid with consequence text per entry, "unknown"
-                    consequence is a named state), useBrokerRefresh (2026-10-28: the refresh
-                    command's flow, extracted so the Portfolio button and the refresh icon share
-                    it) and RefreshControl (one click no dialog,
-                    fires POST /commands kind "refresh", invalidates portfolio queries
-                    on terminal, `broker_unavailable` renders as plain answer through
-                    `CommandReceipt`'s `plainReasons` prop not red failed chrome,
-                    reuses submitCommand/useCommandStatus/CommandReceipt).
-                    Web overhaul Part 3: PortfolioShell, SummaryPanel, PositionsPanel,
-                    PositionGroup, StockLegRow, OptionLegRow, CampaignsPanel, CampaignThread and
-                    CalendarPanel are no longer mounted and stay for their tests until Part 4;
-                    RefreshControl, DegradedNotice and Money are restyled in place under their tests
-                    (classes only), and FreshnessLabel stays mounted unchanged.
+                    DegradedNotice (renders note verbatim, no paraphrase, styled as notice
+                    not error), useBrokerRefresh (2026-10-28: the refresh command's flow,
+                    shared by the Portfolio button and the refresh icon) and RefreshControl
+                    (one click no dialog, fires POST /commands kind "refresh", invalidates
+                    portfolio queries on terminal, `broker_unavailable` renders as plain answer
+                    through `CommandReceipt`'s `plainReasons` prop not red failed chrome, reuses
+                    submitCommand/useCommandStatus/CommandReceipt). Money, DegradedNotice and
+                    RefreshControl are restyled in place under their tests (classes only), and
+                    FreshnessLabel stays mounted unchanged. Web overhaul Part 4 deleted the
+                    legacy panels Part 3 had unmounted (PortfolioShell, SummaryPanel,
+                    PositionsPanel, PositionGroup, StockLegRow, OptionLegRow, CampaignsPanel,
+                    CampaignThread, CalendarPanel); their live replacements are
+                    features/portfolio/ (PortfolioPage, SummaryCard, PositionsView,
+                    CampaignsView, CalendarView), and the rules they carried (n/a never "$0.00",
+                    the degraded note verbatim, filters in the request, an unknown consequence
+                    named) are those views' tests.
   universe/         M7 Task 7.5. UniverseList (one GET /universe section: heading with
                     entry count, a row per entry with sector tag, strike-band
                     override, and, for would_own only, a wheeling/dip-watch tag; a
@@ -595,25 +565,22 @@ components/
                     with no dialog). AddSymbol and UniverseList route mutations
                     through submitUniverseCommand (lib/commands.ts) and render a
                     CommandReceipt.
-  pnl/              P4 M5 Tasks 5.4-5.6; P3-P4 M6 Task 6.2 adds System. PnlShell
-                    (the /pnl page frame - one filter state composed into one
-                    query string for the ledger, summary, equity and CSV
-                    export; a second, independent since/until window state for
-                    the System tab's own GET /pnl/system fetch; SummaryPanel
-                    mounts above the tab bar and never remounts, matching
-                    PortfolioShell's convention - the tab bar swaps
-                    Ledger/Equity curve/System below it), SummaryPanel
+  pnl/              P4 M5 Tasks 5.4-5.6; P3-P4 M6 Task 6.2 adds System. The old /pnl
+                    page frame, PnlShell, was deleted in Part 4; its job is features/activity/
+                    now: useLegFilters composes one filter state into one query string for the
+                    ledger, summary, equity and CSV export, and SystemView owns the System
+                    tab's own since/until window and GET /pnl/system fetch. SummaryPanel
                     (react-query on GET /pnl/summary - the pnl one; fetches
-                    `?${qsString}`, the exact query string the shell passes in
+                    `?${qsString}`, the exact query string the page passes in
                     as a prop, NOT its own `?book=${book}` composition - that
                     used to be the bug: every filter except book was silently
                     ignored, so the headline totals never matched a filtered
                     ledger; headline
                     figures, by-strategy/by-symbol breakdowns, best/worst legs
-                    each rendered as a button that jumps the shell to the
-                    Ledger tab filtered to that leg's symbol - the ledger has
-                    no per-candidate filter, so symbol is the closest real
-                    cross-reference; renders as plain text instead when no
+                    each rendered as a button that sets the page's symbol
+                    filter to that leg's symbol (`onSelectLeg`, useLegFilters'
+                    `viewLeg`) - the ledger has no per-candidate filter, so
+                    symbol is the closest real cross-reference; renders as plain text instead when no
                     `onSelectLeg` is wired;
                     `win_rate: null` renders n/a never "0%"; a 422 mixed_book
                     renders a labelled book-choice group and an explanation in
@@ -653,19 +620,19 @@ components/
                     `useState` per field, seeded once from the `filters` prop
                     via a lazy initializer - NOT a live-sync effect, which
                     would risk a slightly-stale response clobbering a value
-                    mid-typed. `filters` is `PnlShell`'s own live filter draft,
+                    mid-typed. `filters` is `useLegFilters`' own live filter draft,
                     not the backend's echoed response (`LedgerTable` renders
                     that echo separately) - seeding from an echo would lag the
                     fields one round trip behind every edit. The one thing
                     that needs the inputs to change without a keystroke of
                     their own - `SummaryPanel`'s "view in ledger" link setting
-                    `symbol` externally - works by `PnlShell` remounting this
-                    component with a fresh `key` (bumped only on that jump),
+                    `symbol` externally - works by features/activity/Legs.tsx remounting this
+                    component with a fresh `key` (`formKey`, bumped only on that jump),
                     not a sync effect),
                     SystemPanel (P3-P4 M6 Task 6.2: presentational - takes
                     `data: SystemPerformanceResponse` as a prop like
                     EquityChart, not self-fetching like SummaryPanel, since
-                    PnlShell owns the GET /pnl/system query and the
+                    features/activity/SystemView owns the GET /pnl/system query and the
                     since/until window state; renders every note in
                     report.notes in full and in order - the read-only
                     "re-derive scoring_weights.yaml by hand" sentence is why
@@ -685,13 +652,15 @@ components/
                     fabricated correlation or average). No second Money
                     component here - pnl/ reuses portfolio/Money, adding a
                     prop if a variant is needed.
-                    Web overhaul Part 3: PnlShell is no longer mounted (it has no test of its own and
-                    goes in Part 4). SummaryPanel, BreakdownTable, EquityChart, CampaignRow, LegRow,
+                    Web overhaul Part 3: SummaryPanel, BreakdownTable, EquityChart, CampaignRow, LegRow,
                     LedgerFilters, SystemPanel, ScoreBucketTable and CorrelationTable are restyled in
                     place under their existing tests (same text and test ids) and mounted by
                     features/activity/: SystemPanel takes `windowControls={false}` and a
                     `WindowControls` export, so System owns its window. A table that scrolls on a
-                    phone says "Scroll sideways to see every column.".
+                    phone says "Scroll sideways to see every column.". Part 4: BreakdownTable takes an
+                    optional `labelOf`, and Pay's by-strategy table passes `strategyWord` (SummaryPanel.tsx:
+                    "Cash-secured puts", "Covered calls"; any other label passes through as the API names
+                    it); the by-symbol table is unchanged.
   ledger/           The broker-truth ledger in the figure face (web overhaul Part 3): LedgerOverview (the
                     Ledger view on Activity: Totals as figure lines, the two charts, the buckets by
                     strategy and by book, the ticker table and the upcoming expiries, with links to
@@ -703,7 +672,7 @@ components/
                     opens in the Sheet, with the unchanged `ledger_annotate` flow), TickerView,
                     ImportView (the unchanged `ledger_import` and `ledger_ca_reviewed` flows),
                     LedgerShell (the page frame of the three routes) and BackToLedger (the link back
-                    to Activity, Ledger). LedgerNav is no longer mounted and stays until Part 4. Every
+                    to Activity, Ledger). The old LedgerNav tab strip was deleted in Part 4. Every
                     view root is one `grid-cols-1` column: a page-level grid with no column template
                     is sized by its widest table and would clip the page on a phone.
   news/             NewsCard (title, SGT+ET time, headline line with up to 3 inline
@@ -792,7 +761,14 @@ components/
                     through lib/commands.ts's helpers, the live second confirmation handled like
                     DecideControls), `types.ts` (aliases over the generated api-types) and
                     `format.ts` (the sentences: the sum, the next exit, the confirm text naming the
-                    wheel puts a buy may close, the reason codes in words). The value flow lives here
+                    wheel puts a buy may close, the reason codes in words), and (web overhaul Part 4)
+                    ValueDrainNote (under a value tap's receipt, only while the command is pending: when
+                    `GET /value/book` says the value process's drain is stale it shows a "Not checking"
+                    word and when the process last checked, or that it has not yet; nothing when the
+                    drain is healthy or the book has not been read. `ValueDecide` and
+                    features/stock-value/AnalyseButton always give the protected CommandReceipt a
+                    healthy drain, because it would name "the trading service", the wrong process for a
+                    value tap, and render this line instead). The value flow lives here
                     so `grep -rn "submitCommand\|confirmCommand" web/features` prints only
                     features/more/TargetCard, features/stock-value/AnalyseButton (Section G) and their
                     tests. A trim has no web button (plan ruling 10): the card
@@ -875,6 +851,15 @@ features/
                     Web overhaul Part 3: PositionRowItem (the position row, extracted from
                     PositionsCard so Home and Portfolio draw one row; `flags` and `detail` are the
                     Portfolio additions).
+                    Web overhaul Part 4: ValueWaiting (the value proposals that wait on a tap, as
+                    compact rows in NeedsYou under All and Value: the eyebrow "Value book", the trade,
+                    cost, time left and a secondary "Review in the Value book" link that jumps to the
+                    Value card, which keeps the one decide flow and its one lime Review; an
+                    unreadable book is said, an off book that never wrote says nothing; ProposalsBanner
+                    counts and names the same proposals through `waitingProposals`, with a secondary
+                    Show when only value proposals wait). A value position row now links to the stock
+                    page's value block, and the "Value book unavailable" flag hides only when
+                    `GET /value/book` says `enabled: false` and `available: false`.
 features/position/  PositionPage (GET /portfolio/positions/{underlying}/{slug}: title and status
                     words, then one grid whose DOM order is the phone order, chart, the trade,
                     headlines), UnderlyingChart (the close as an ink line, a dashed rule at the
@@ -903,7 +888,12 @@ features/trades/    Web overhaul Part 2: TradesPage (the strategy switcher with 
                     clock times, day labels and shifts; `whenET` writes "Wed, Oct 28 · 2:46 AM ET"
                     for the Activity lists), SpreadsView + spreads.ts (GET
                     /spreads/picks: the day's books, the menu Claude saw, Other picks), types.ts
-                    (hand-written mirrors of the spreads-picks models). Assessed is
+                    (hand-written mirrors of the spreads-picks models). Part 4: a card's Details link carries the Trades view, day (not today)
+                    and strategy (not All), and BackToTrades returns to them
+                    (`viewReturnQuery`, `tradesReturnQuery`, `detailHref` in
+                    useTradesView.ts); SpreadsView keeps its day in `?day=` through useTradesDay;
+                    HistoryView says "could not be loaded right now" for a failed In flight or Not
+                    traded read, and when a read hit the 200-proposal limit. Assessed is
                     components/options/AssessedBrowser. Nothing here reaches `submitCommand` or
                     `confirmCommand`: an order intent goes through DecideControls inside the review
                     sheet, a promote through AssessedRow, a roll through RollCard.
@@ -957,7 +947,10 @@ features/portfolio/ Web overhaul Part 3: the Portfolio page. PortfolioPage (the 
                     and realised stock P&L; a pruned leg is "Leg unavailable"), CalendarView +
                     calendar.ts (the horizon, 14 to 180 days, in the request; one card per expiry day;
                     `consequenceSentence` names an unknown consequence as one; `eventBefore` puts
-                    "Event <date> before expiry" on a short with a verified date). Nothing here reaches
+                    "Event <date> before expiry" on a short with a verified date). Part 4: a Value chip
+                    (between Credit spreads and Shares) and a "Value book" card after the spreads card,
+                    rows through PositionRowItem with `flags={false}` and a link to the stock page's value
+                    block (`useValueOut`, `countByFilter`'s optional fourth argument). Nothing here reaches
                     `submitCommand`.
 features/activity/  Web overhaul Part 3: the Activity page. ActivityPage + views.ts (the four views in
                     `?view=`). Pay: PayView, month.ts and useMonthParam (New York months in `?month=`;
@@ -972,7 +965,10 @@ features/activity/  Web overhaul Part 3: the Activity page. ActivityPage + views
                     "unavailable" is not "none"). System: SystemView (one window over both),
                     SizingRecord + sizing.ts (`GET /pnl/sizing`: kinds, counts and the two marks in
                     words; Claude's cut as applied or recorded only, from `GET /claude/context`).
-                    Ledger is components/ledger/LedgerOverview. Nothing here sends a command.
+                    Ledger is components/ledger/LedgerOverview. Part 4: a month before the record's first opens the first month; Pay's by-strategy
+                    table says words; SpreadFills says "Only the newest 200 are listed." when
+                    `truncated`; ExecutionsList gains a Value chip and "Value book" on a row; History and
+                    Fills and orders end with a link to each other. Nothing here sends a command.
 features/more/      TargetCard + target.ts (the income-target form's rules: text in, a validated
                     `set_income_target` payload out, mirroring `IncomeTarget` and its bounds).
 lib/
@@ -985,7 +981,7 @@ lib/
                     per-subject in-flight command to localStorage (key prefix
                     `ibkr-options:command:`) so every one of the three
                     confirm-then-receipt decide flows (DecideControls — the
-                    approval card and the detail page; ShortsRow's roll
+                    review sheet and the detail page; RollProposal's roll
                     proposal; AssessedRow's promote) survives a full page
                     reload, not just a tab-switch remount. `subject` is a bare
                     approval id (number) for DecideControls, or a namespaced

@@ -508,7 +508,7 @@ state word (Queued, Submitted; Partial is the one flag word), then one line in t
 the limit price, the filled count, the time it was sent (New York) and paper or live, with n/a
 hatched where a price is unknown. The humanised detail sits beneath when there is one. A row with
 an approval is a link to it (a muted chevron says so). Under the list, one sentence says a working
-order is cancelled in IBKR for now, because the web cannot cancel one until Part 5 (Order control).
+order is cancelled in IBKR for now, because the web cannot cancel one until order control is built (its own track, after Part 4).
 No lime, no button.
 
 **Not-traded row** (Trades, History): the Position row's anatomy. The whole row opens the approval's
@@ -1116,6 +1116,18 @@ sibling keys; re-run the check after edits.
   card, so Needs you carries a secondary link that jumps there instead of a second Review (and a second decide
   flow polling the same command). No new token, colour, font, radius or elevation. Not changed: a banner with
   both kinds keeps its lime Open for Trades; the value ones are decided from the card below.
+- 2026-11-05: **Honest words, Back remembers, a title on every route** (web overhaul Part 4, Tasks 11-14). The
+  Surfaces bullets "Unknown is said, and Back remembers" (Trades) and "Honest words and the cross-links"
+  (Activity) record the edits; every route now has its own tab title (no visual change). The rule that shaped
+  them: unknown is never none, so a failed read says so in a sentence, and a link back returns you to where you
+  were. No new token, colour, font, radius or elevation.
+- 2026-11-05: **A value tap says when the value process is not checking** (web overhaul Part 4, Task 8). Added a
+  note under a value tap's receipt while the command is pending: a flag-toned "Not checking" word and one
+  sentence with when the value process last checked (or that it has not yet), shown only when the drain is stale.
+  The rule that shaped it: the protected receipt names "the trading service" when a drain is stale, which is the
+  wrong process for a value tap, so the value controls give the receipt a healthy drain and say the true thing
+  themselves. Unknown (the book not read yet) is silent, not stalled. Composed from `StatusWord` and the muted
+  caption size: no new token, colour, font, radius or elevation.
 - 2026-11-05: **The value kind across Home** (value book Part 6, Section I). Added Value to the strategy
   switcher and taught the pay card, the Positions card, Done today and the realised calendar (and Activity's
   pay stub) to carry it (Components, Surfaces: Home and Activity). No new token, colour, font, radius or

@@ -80,14 +80,14 @@ returns a `PortfolioReading` with `source` and an optional plain-words `note`, s
 render each rung distinctly — a monitored/refreshed account (fresh or stale), an EOD fallback
 (daily snapshot), or "nothing captured yet" (brand new, no data at all). All values carry an
 `as_of` timestamp derived from the row's capture time, never the request time, so the UI states
-how old the data is. P3 M3 wires the four routes into the `/portfolio` console — `PortfolioShell`
-mounts `SummaryPanel` once at the top (stays mounted across tab changes), and three tabs
-(`PositionsPanel`, `CampaignsPanel`, `CalendarPanel`) each self-fetch their own route rather than
-inheriting a page-level assumption. What each panel reads from its response differs, though:
-`SummaryPanel` reads both `source` and `degraded`; `PositionsPanel`/`CalendarPanel` read `source`
-only (for empty-state wording); `CampaignsResponse` carries neither field (`{as_of, campaigns}`
-only — campaigns come from a live SQL read, not the snapshot freshness spine the other three
-share), so `CampaignsPanel` reads neither.
+how old the data is. P3 M3 wired the four routes into the `/portfolio` console, and web overhaul Part 3 rebuilt it as
+`features/portfolio/` (Part 4 deleted the first version's unmounted panels): `PortfolioPage` mounts `SummaryCard`
+once at the top (it stays mounted across view changes, so a view change never refetches it), and three views
+(`PositionsView`, `CampaignsView`, `CalendarView`) each self-fetch their own route rather than inheriting a
+page-level assumption. What each reads from its response differs, though: `SummaryCard`, `PositionsView` and `CalendarView` read `source`
+and `degraded` (and `SummaryCard` shows the API's `note` verbatim); `CampaignsResponse` carries neither field
+(`{as_of, campaigns}` only — campaigns come from a live SQL read, not the snapshot freshness spine the other three
+share), so `CampaignsView` reads neither.
 
 ## The API proxy
 

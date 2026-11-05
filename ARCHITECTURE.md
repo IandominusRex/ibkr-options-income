@@ -1568,10 +1568,13 @@ reskinned without an edit. The structure it added:
   approved it from `decided_by`) and Not traded (approvals raised that day that ended without a fill);
   Assessed is the restyled `components/options/AssessedBrowser`; `SpreadsView` is the day's spreads by
   book with the menu Claude saw kept under each paper spread (`GET /spreads/picks`). Rolls name both
-  legs everywhere (`ApprovalSummary.roll_from`). The controls strip left the page: the bot card holds
+  legs everywhere (`ApprovalSummary.roll_from`). Part 4: a card's Details link carries the Trades `view`, `day` (not
+  today) and `strategy` (not All), and `BackToTrades` on `/trades/[approvalId]` returns to them (`useTradesView.ts`:
+  `viewReturnQuery`, `tradesReturnQuery`, `detailHref`); the Spreads day lives in `?day=` through `useTradesDay`, as
+  History's does; History says "could not be loaded right now" for a failed read instead of showing nothing. The controls strip left the page: the bot card holds
   Halt, Resume, the autonomy rung and roll mode, and only the not-draining warning stays above the
   view. `features/position/RollCard` carries Propose a roll (the alerts on that contract, then the
-  unchanged confirm-then-receipt flow, lifted out of `ShortsRow` into `useRollProposal`), and a Roll
+  unchanged confirm-then-receipt flow, `useRollProposal`, lifted out of the Shorts table's row, which Part 4 deleted), and a Roll
   alert word marks Home's position rows. Every order intent still goes through `DecideControls` →
   `ConfirmAction`; nothing under `features/` calls `submitCommand` or `confirmCommand` apart from the
   income-target form on More.
@@ -1593,9 +1596,40 @@ reskinned without an edit. The structure it added:
   Activity, Ledger, and `/ledger` itself redirects there). `next.config.ts` redirects the old URLs with a 307: `/options` →
   `/trades`, `/options/:id` → `/trades/:id`, `/pnl` → `/activity`, `/ledger` → `/activity?view=ledger`, `/universe` →
   `/research/universe`. The rail and tab bar come from
-  `lib/nav.ts`; `GET /nav` is no longer read (removed in Part 4). Part 2 recomposed Trades (above) and Part 3
-  Portfolio and Activity; Part 4 recomposes Research/News/More, deletes the legacy files Part 3 left unmounted and folds the
-  remaining `components/<domain>` folders into `features/`.
+  `lib/nav.ts`; `GET /nav` was removed in Part 4. Part 2 recomposed Trades (above) and Part 3 Portfolio and
+  Activity. **Part 4 (2026-11-05, `docs/superpowers/plans/2026-11-05-web-overhaul-4-cleanup-honesty-value-gaps.md`)
+  deleted the legacy files Parts 2 and 3 left unmounted** (sixteen files and their nine tests: the old options
+  list, card, Shorts table and row and controls strip; the old portfolio shell, summary, positions, group, leg,
+  campaigns, campaign and calendar panels; the P&L shell; the ledger tab strip), removed `GET /nav`, and kept
+  `components/<domain>` where it is (the "fold into `features/`" idea was cut). **The rule for new code: it goes in
+  `features/`; `components/` keeps `ui`, `shell`, the protected `options` controls, `value` and the survivors.**
+  Parts 5-8 (the stock page; Research, Universe and search; News, More and How it works; the value record) and
+  order control have no plan yet.
+- **`app/` boundaries and titles** — web overhaul Part 4: the root `layout.tsx` sets `metadata.title` to
+  `{ default: "IBKR Income", template: "%s · IBKR Income" }`; each server page exports its own `metadata`, and a
+  client page gets a sibling server `layout.tsx` that exports `metadata` (or `generateMetadata` for a dynamic
+  segment): `more`, `more/claude`, `research`, `research/universe`, `stock/[symbol]`, `news/[symbol]`,
+  `ledger/ticker/[symbol]`, `positions/[underlying]/[slug]` and `trades/[approvalId]`. `app/titles.test.ts` pins
+  every route's title. `app/not-found.tsx` and `app/error.tsx` are the console's two boundaries (one Card each, one
+  secondary action each: Go to Home on the not-found page, Try again calling `reset` on the error page; the error page shows `error.digest` as a
+  reference and never the error's own message); `app/boundaries.test.tsx` pins them. There is no `loading.tsx`
+  (every page draws its own `role="status"` skeleton) and no `global-error.tsx`.
+- **`components/shell/DrainWarning.tsx`** — the "trading service is not draining commands" line, moved out of the
+  deleted controls strip unchanged and used by `BotSheet` and `TradesPage`.
+- **`components/value/`** — the value book's Home card and decide flow (value book Part 6): `ValueCard` (over
+  `GET /value/book`), `ValueProposalRow`, `ValueDecide` (the approve and reject flow, a new component that mirrors the
+  protected `DecideControls` without editing it), `useValueBook` (the shared query and `waitingOnTap`), `format.ts`
+  and `types.ts`. Web overhaul Part 4 added **`ValueDrainNote`**, shown under a value tap's receipt while the command
+  is pending: when `GET /value/book` says the value process's drain is stale it says "Not checking" and when it last
+  checked, because the protected `CommandReceipt` would name the trading service, the wrong process for a value tap.
+- **`features/home/ValueWaiting.tsx`** — web overhaul Part 4: the value proposals that wait on a tap, as rows in
+  "Needs you" (a secondary **Review in the Value book** that jumps to the Value card, which keeps the one decide
+  flow) and as the phone banner's value count. It reads the same `useValueBook` query and says an unreadable book in
+  a sentence; `NeedsYou` mounts it, and `ProposalsBanner` counts and names the same proposals through
+  `waitingProposals`. The Value book also appears on Portfolio (a chip and a card in `features/portfolio/`) and on
+  Activity's At IBKR list (a Value chip in `ExecutionsList`); every value position row links to the stock page's
+  value block, and the "Value book unavailable" flag on Home and Activity is hidden only when the book is off and has
+  never written.
 
 The paragraphs below describe the pages as they were built; their file paths moved with the routes
 above (`app/page.tsx` → `app/research/page.tsx`, `app/universe/` → `app/research/universe/`,
@@ -1640,7 +1674,7 @@ colour secondary — and `TradePanel`, the note/tag/outcome-override editor subm
 dividends, and a `TradesView` pinned to the symbol) and `import/page.tsx` (`ImportView` — CSV file
 picker submitting `ledger_import`, feed status incl. the Google Sheet mirror line, corporate
 actions with a mark-reviewed button submitting `ledger_ca_reviewed`, import history).
-`LedgerNav` is the shared tab strip; `format.ts`/`types.ts` hold display helpers and response types.
+`BackToLedger` is the way back (the old `LedgerNav` tab strip was deleted in Part 4); `format.ts`/`types.ts` hold display helpers and response types.
 
 `app/news/` + `components/news/` is the News console (reads `GET /news/*`): `page.tsx` is the feed
 (`NewsFeed` with group chips and a symbol filter, each post a `NewsCard` rendered from the stored
