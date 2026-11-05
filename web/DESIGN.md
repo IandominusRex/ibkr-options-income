@@ -664,6 +664,15 @@ that is wider than a phone scrolls inside its own card and says "Scroll sideways
 phone, and a chart names each series in words. The pages lead back to Activity, Ledger with a back link in
 place of a sub-navigation.
 
+**Not-found and error pages** (the whole console, web overhaul Part 4): one `not-found.tsx` and one `error.tsx` at
+the root, each a single Card on the 720px page frame. The words are fixed. Not found: "This page does not exist",
+"The address may be old or mistyped. Nothing was changed.", and one secondary pill link to Home. Error: "This page
+could not be shown", "Nothing was changed. The rest of the console still works.", a "Reference <digest>" line in
+the stub face when the error carries one, and one secondary "Try again" button that calls `reset`. One action
+each, never lime: neither repeats nor starts an act on the account, and the error's own message stays in the
+console, never on the screen. There is no loading boundary, because every page draws its own `role="status"`
+skeleton, and no global error page, because the root layout renders no data.
+
 ## Do's and Don'ts
 
 - Do end every trade and every income figure in a stub or a sentence; never a bare percentage.
@@ -1092,6 +1101,10 @@ sibling keys; re-run the check after edits.
 
 ## Decision Log
 
+- 2026-11-05: **Not-found and error pages** (web overhaul Part 4, Task 15). Added the paragraph under
+  Components and the two root boundaries (`app/not-found.tsx`, `app/error.tsx`). The rule that shaped them: a
+  page that failed to draw is not a place to act, so each has one secondary action and no lime. No new token,
+  colour, font, radius or elevation.
 - 2026-11-05: **The value book on Portfolio and At IBKR; no flag for a book that never ran** (web overhaul Part 4,
   Task 10). Added the Value chip and the "Value book" card to Portfolio's Positions, the Value chip to At IBKR, and
   a link from every value row to the stock page's value block (Surfaces: Portfolio, Activity, Home). The rule that
