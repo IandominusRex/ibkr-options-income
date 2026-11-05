@@ -21,7 +21,16 @@ function standing(p: ValueProposal): { word: string; text: string } | null {
 }
 
 /** One of the book's open proposals: the trade, why, and Review when it waits on you. */
-export function ValueProposalRow({ proposal: p, releaseMaxCloses }: { proposal: ValueProposal; releaseMaxCloses: number }) {
+export function ValueProposalRow({
+  proposal: p,
+  releaseMaxCloses,
+  lead = true,
+}: {
+  proposal: ValueProposal;
+  releaseMaxCloses: number;
+  /** Only the card's first waiting proposal carries the one lime control; the rest are secondary. */
+  lead?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const state = standing(p);
   const title = proposalTitle(p);
@@ -56,7 +65,7 @@ export function ValueProposalRow({ proposal: p, releaseMaxCloses }: { proposal: 
           </>
         ) : (
           <>
-            <Button variant="primary" aria-haspopup="dialog" onClick={() => setOpen(true)}>
+            <Button variant={lead ? "primary" : "secondary"} aria-haspopup="dialog" onClick={() => setOpen(true)}>
               Review
             </Button>
             <span className="text-[0.8125rem] text-muted">{expiresWords(p.expires_at)}</span>

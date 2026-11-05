@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from src.common.config import get_config
 from src.common.value_commands import proposal_fingerprint
+from src.common.value_cost import RunningCost
 from src.reporting.day import ValueDayInput
 from src.reporting.pay import ValuePayInput
 
@@ -207,7 +208,7 @@ def _orders(session: Session) -> list[dict] | None:
     return _rows(
         session,
         "SELECT symbol, list_name, side, shares, filled, avg_price, limit_price, status, "
-        "created_at FROM value_orders",
+        "created_at FROM value_orders ORDER BY created_at, id",
     )
 
 
@@ -218,26 +219,27 @@ def book_state(session: Session) -> dict[str, dict]:
 
 
 def used_usd(orders: list[dict]) -> float:
-    """What the book holds and is buying, in dollars: each name's filled shares at their average
-    cost, plus the unfilled remainder of its working buys at their limits (the book's ``totals``)."""
-    names: dict[str, dict[str, float]] = {}
+    """What the book holds and is buying, in dollars: each name's filled shares at their running
+    average cost, plus the unfilled remainder of its working buys at their limits (the book's
+    ``totals``, which folds the same orders through the same ``RunningCost``, oldest first)."""
+    names: dict[str, tuple[RunningCost, list[float]]] = {}  # symbol -> (cost, [net, working])
     for o in orders:
-        n = names.setdefault(str(o["symbol"]), {"q": 0.0, "c": 0.0, "net": 0.0, "work": 0.0})
+        rc, acc = names.setdefault(str(o["symbol"]), (RunningCost(), [0.0, 0.0]))
         filled = float(o["filled"] or 0.0)
         if o["side"] == "buy":
-            n["q"] += filled
-            n["c"] += filled * float(o["avg_price"] or 0.0)
-            n["net"] += filled
+            rc.buy(filled, float(o["avg_price"] or 0.0))
+            acc[0] += filled
             if o["status"] in _WORKING:
-                n["work"] += max(0.0, float(o["shares"] or 0.0) - filled) * float(
+                acc[1] += max(0.0, float(o["shares"] or 0.0) - filled) * float(
                     o["limit_price"] or 0.0
                 )
         else:
-            n["net"] -= filled
+            rc.sell(filled)
+            acc[0] -= filled
     total = 0.0
-    for n in names.values():
-        held = max(0.0, n["net"])
-        total += (held * (n["c"] / n["q"]) if n["q"] else 0.0) + n["work"]
+    for rc, (net, work) in names.values():
+        avg = rc.avg
+        total += (max(0.0, net) * avg if avg is not None else 0.0) + work
     return total
 
 
@@ -263,7 +265,10 @@ def read_positions(session: Session, status: str) -> list[dict] | None:
         opened, closed = day(p["opened_on"]), day(p["closed_on"])
         lo = datetime.combine(opened, datetime.min.time()) - timedelta(days=1) if opened else None
         hi = datetime.combine(closed, datetime.min.time()) + timedelta(days=2) if closed else None
-        bought = spent = sold = proceeds = 0.0
+        rc = RunningCost()
+        bought = sold = 0.0
+        realised: float | None = 0.0
+        last_avg: float | None = None
         for o in orders:
             if o["symbol"] != p["symbol"] or o["list_name"] != p["list_name"]:
                 continue
@@ -271,13 +276,21 @@ def read_positions(session: Session, status: str) -> list[dict] | None:
             if at is None or (lo is not None and at < lo) or (hi is not None and at >= hi):
                 continue
             filled = float(o["filled"] or 0.0)
+            price = float(o["avg_price"] or 0.0)
             if o["side"] == "buy":
                 bought += filled
-                spent += filled * float(o["avg_price"] or 0.0)
+                rc.buy(filled, price)
+                last_avg = rc.avg
             else:
                 sold += filled
-                proceeds += filled * float(o["avg_price"] or 0.0)
-        avg = spent / bought if bought else None
+                held = rc.qty
+                avg = rc.sell(filled)
+                if avg is None or realised is None:
+                    realised = None  # a sale with no cost behind it: unknown, never 0
+                else:
+                    realised += min(filled, held) * (price - avg)  # never more than was held
+                last_avg = avg if avg is not None else last_avg
+        avg_cost = rc.avg if rc.qty > 0 else last_avg
         out.append(
             {
                 "id": int(p["id"]),
@@ -287,10 +300,10 @@ def read_positions(session: Session, status: str) -> list[dict] | None:
                 "opened_on": opened,
                 "closed_on": closed,
                 "shares": max(0.0, bought - sold),
-                "avg_cost": avg,
+                "avg_cost": avg_cost,
                 "mark": marks.get(str(p["symbol"]).upper()),
                 "next_exit": next_exit(p["plan_json"]) if p["status"] == "open" else None,
-                "realised_usd": (proceeds - sold * avg) if sold > 0 and avg is not None else None,
+                "realised_usd": realised if sold > 0 else None,
                 "decided_by": str(p["decided_by"] or "python"),
                 "plan_json": p["plan_json"],
             }
@@ -471,7 +484,7 @@ def read_fills(session: Session) -> list[dict] | None:
     if rows is None:
         return None
     out: list[dict] = []
-    held: dict[tuple[str, str], tuple[float, float]] = {}  # (symbol, list) -> (bought, spent)
+    held: dict[tuple[str, str], RunningCost] = {}  # (symbol, list) -> the running average cost
     for r in rows:
         key = (str(r["symbol"]), str(r["list_name"]))
         filled, price = float(r["filled"]), float(r["avg_price"])
@@ -479,14 +492,14 @@ def read_fills(session: Session) -> list[dict] | None:
         if at is None:
             continue
         realised: float | None = None
-        bought, spent = held.get(key, (0.0, 0.0))
+        rc = held.setdefault(key, RunningCost())
         if r["side"] == "buy":
-            held[key] = (bought + filled, spent + filled * price)
-        elif bought > 0:
-            realised = filled * (price - spent / bought)
-            # the shares sold leave the running average (a re-entry starts it afresh)
-            left = max(0.0, bought - filled)
-            held[key] = (left, 0.0 if left == 0.0 else spent * left / bought)
+            rc.buy(filled, price)
+        else:
+            on_hand = rc.qty
+            avg = rc.sell(filled)  # the shares sold leave the average (a re-entry starts afresh)
+            if avg is not None:
+                realised = min(filled, on_hand) * (price - avg)  # never more than was held
         out.append(
             {
                 "at": at,

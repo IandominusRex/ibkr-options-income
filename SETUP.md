@@ -2144,7 +2144,10 @@ adds **re-evaluations** (spec §7.1) and **Stage 1b**, the point-in-time backtes
     `book.release.max_closes_per_request` of its cash-secured puts at breakeven or better to fund it,
     and those closes need no further tap. When the book falls `book.drawdown_trim_pct` (25%) from its
     high, **one trim card** per drawdown episode offers to trim every holding to half (a tap creates
-    approved half-size sells, each still re-gated and capped at send time);
+    approved half-size sells, each still re-gated and capped at send time). The card stops working after
+    30 hours or as soon as the drawdown eases back under 25% (a tap then says the card is out of date, and
+    Home stops saying "Trim offered"); if nothing was trimmed, the next breach opens a new offer with a
+    new card;
     `python -m scripts.value_book --reset-drawdown` ends the episode. A **Major** re-evaluation of a held
     name posts a card the same day; after each night one **digest** message lists the Minor
     re-evaluations since the last, review cards (a kill trigger fired; held `telegram.no_progress_months`

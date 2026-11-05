@@ -148,7 +148,7 @@ describe("TopOpportunities", () => {
     const card = await screen.findByRole("article", { name: /GOOGL/ });
     await waitFor(() => expect(paths().some((p) => p.startsWith("/options/assessed"))).toBe(true));
     expect(within(card).queryByRole("link", { name: /Sell a put/ })).toBeNull();
-    expect(within(card).getByRole("link", { name: "Buy shares" })).toBeTruthy();
+    expect(within(card).getByRole("link", { name: "See the value file" })).toBeTruthy();
   });
 
   it("sends no command and shows no button but the two tabs", async () => {

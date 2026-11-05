@@ -105,9 +105,11 @@ def _decision(vs: Session, payload: dict, by: str, now: datetime, *, approve: bo
         raise ValueCommandFailed("stale_proposal")
     status = decide(vs, pid, approve=approve, now=now, by=by)
     asked = "approved" if approve else "rejected"
-    if status == f"already_{asked}":
+    moved_on = approve and status in ("already_funding", "already_sent", "already_filled")
+    if status == f"already_{asked}" or moved_on:
         # The decision this command asks for is already applied (a crash between the commit and
-        # the mark, a re-run, a double tap): idempotent success. A different state still fails.
+        # the mark, a re-run, a double tap, or an approval the cycle has since moved on to funding,
+        # sending or a fill): idempotent success with no side effect. A different state still fails.
         return {
             "proposal_id": pid,
             "decision": asked,

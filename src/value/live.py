@@ -33,7 +33,7 @@ from sqlalchemy.orm import Session
 
 from src.common.books import is_spreads_underlying, value_sell_cap
 from src.common.config import ValueCfg
-from src.common.value_commands import trim_episode
+from src.common.value_commands import trim_episode, trim_offer_stale
 from src.common.value_types import DayBar, FilingEvent, NewsVolume
 from src.value import reevaluate, sizing
 from src.value.book import (
@@ -547,9 +547,19 @@ def _high_water(vs: Session, snap: Snapshot, cfg: ValueCfg, now: datetime) -> st
     """The book's value (filled shares at their marks) against its high: the drawdown breaker
     (spec §9.6) stops entries past ``drawdown_stop_pct``; a human resets it. At
     ``drawdown_trim_pct`` the trim to half is offered once per episode (Part 6, ruling 11): the
-    new episode's id is returned the first time, and ``None`` after (and until a reset)."""
+    new episode's id is returned the first time, and ``None`` after (and until a reset).
+
+    Unknown is not zero (final review I-B): a held name with no positive mark this cycle makes the
+    whole reading unknown, and nothing is updated. An offer that has gone stale (older than
+    ``TRIM_TTL_HOURS``, or the drawdown eased below ``drawdown_trim_pct``) with nothing trimmed
+    ends its episode, so the next breach opens a new offer with a new id (spec §22, final review
+    I-A); a trimmed episode stays until a human reset."""
     t = totals(vs)
-    value = sum(n.filled * snap.marks.get(s, 0.0) for s, n in t.names.items())
+    held = {s: n.filled for s, n in t.names.items() if n.filled > 0}
+    if any(snap.marks.get(s, 0.0) <= 0.0 for s in held):
+        log.warning("value book: a held name has no mark; the drawdown reading waits")
+        return None
+    value = sum(q * snap.marks[s] for s, q in held.items())
     state = book_state(vs, "high_water") or {"high": 0.0, "stop": False}
     high = max(float(state.get("high", 0.0)), value)
     stop = bool(state.get("stop")) or (
@@ -557,6 +567,14 @@ def _high_water(vs: Session, snap: Snapshot, cfg: ValueCfg, now: datetime) -> st
     )
     trim = high > 0 and (high - value) / high * 100.0 >= cfg.book.drawdown_trim_pct
     episode = {k: state[k] for k in TRIM_STATE_KEYS if k in state}
+    if (
+        episode.get("trim_offered_at")
+        and not episode.get("trimmed")
+        and trim_offer_stale(
+            {**state, "high": high, "value": value}, cfg.book.drawdown_trim_pct, now
+        )
+    ):
+        episode = {}  # the old card is dead; the high, the stop latch and `trimmed` are untouched
     offered: str | None = None
     if trim and not episode.get("trim_offered_at"):
         offered = trim_episode(high, now)

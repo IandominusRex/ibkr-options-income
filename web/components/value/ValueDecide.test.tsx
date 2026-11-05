@@ -45,7 +45,7 @@ describe("ValueDecide", () => {
     expect(submitCommand).not.toHaveBeenCalled();
     const summary = screen.getByTestId("confirm-summary");
     expect(summary.textContent).toContain(
-      "Approving lets the system buy 20 shares of AAPL at up to $182.40 at its next check. " +
+      "Approving lets the system buy 20 shares of AAPL at its next check, sized at the close of $182.40, at the mid of a fresh quote. " +
         "If cash is short it may close up to 2 of your wheel's cash-secured puts at breakeven or better to fund it.",
     );
   });
@@ -124,6 +124,30 @@ describe("ValueDecide", () => {
     expect(live).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Release value_approve intent" }));
     await waitFor(() => expect(confirmCommand).toHaveBeenCalledWith(9, "tok"));
+  });
+  it("keeps the live second confirmation across a reload (the held intent is restored)", async () => {
+    submitCommand.mockResolvedValue(cmd({ needs_confirmation: true, confirm_token: "tok" }));
+    const first = show();
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Approve" }));
+    await screen.findByText(/Confirm LIVE value_approve/);
+    await waitFor(() => expect(loadPersistedCommand("value:5")?.confirm_token).toBe("tok"));
+    first.unmount();
+    show();
+    expect(await screen.findByText(/Confirm LIVE value_approve/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Release value_approve intent" })).toBeInTheDocument();
+    expect(confirmCommand).not.toHaveBeenCalled();
+  });
+  it("cancelling the live step keeps the receipt for the held intent and releases nothing", async () => {
+    submitCommand.mockResolvedValue(cmd({ needs_confirmation: true, confirm_token: "tok" }));
+    show();
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Approve" }));
+    await screen.findByText(/Confirm LIVE value_approve/);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText(/Confirm LIVE value_approve/)).toBeNull();
+    expect(await screen.findByTestId("command-receipt")).toHaveTextContent("intent 9");
+    expect(confirmCommand).not.toHaveBeenCalled();
   });
   it("shows the decision, not the buttons, once the proposal is no longer pending", () => {
     show({ ...buy, status: "approved" });

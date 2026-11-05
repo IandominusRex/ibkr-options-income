@@ -368,7 +368,17 @@ book is still off until `value.book.enabled`.
 - **Web (Sections F-I, all ran).** F: Home's Value card and the value decide flow (`components/value/`). G: the
   stock page's value block with "Run Claude's analysis" (`features/stock-value/`). H: Research's "Top
   opportunities" strip. I: a `value` kind across Home (filter, pay card and stub, positions, Done today, the
-  realised calendar, Needs you). Vitest 1478 passed.
+  realised calendar, Needs you). Vitest 1478 passed (1485 after the final fix pass).
+- **Final whole-branch review (Opus, 0 Critical) and fix pass.** Fixed: a stale untrimmed trim offer ends its
+  episode so a later breach is offered again (spec §22); one missing mark no longer fakes a drawdown (the reading
+  waits); `totals`, `used_usd`, `read_positions` and `read_fills` share one running-average cost, so a re-entry's
+  entry price and catastrophe floor are its own; the buy-confirm sentence no longer says "at up to" (the limit is
+  the mid of a fresh quote); Home's `trim_offered` follows the same staleness rule as the tap; the value drain skips
+  commands past the approval TTL and `mark_applied`/`mark_failed` only touch pending rows; an approve on a proposal
+  the cycle already moved on is an idempotent success; one lime Review per card. **Still deferred:** `dedupe_key_seen`
+  scans the command table (fine at today's volumes; add an index on `dedupe_key` if it grows); a value sale whose
+  realised P&L is unknown is left out of the month sum with no "incomplete" flag on `MonthPay` (only commissions have
+  one); a naive-clock assumption in `trim_offer_stale` (all stored times are naive UTC).
 - **Not built:** live trading for the value book (a separate live plan after spec §12's review); a web "trim"
   button (the trim button is Telegram only; the Home card shows the trim state); editing a proposal's size from a tap.
 - **Known limitations.** A tap acts at the value process's next RTH cycle (a proposal is approved at once, sent at
@@ -385,10 +395,10 @@ book is still off until `value.book.enabled`.
   `prose_key` ignores the VALUE NOTE (it lives in protected `src/orchestrator/scan.py`, so a reused review can
   predate a verdict change inside `claude.review_reuse_minutes`); the VALUE NOTE chip is missing from
   `src/api/claude_calls.py` (the web fixtures pin the block list); the ticker roll-up's `_unrealized` includes
-  value shares; `send_cards` retries are noisy with no Telegram token or a permanent send error; `book.totals`
-  (Part 5) averages cost over every buy ever made, not over the shares still held, so after a re-entry its cost
-  basis blends the old lot (the API's `read_fills` no longer does); Telegram burst rate limits on trim-created
-  cards.
+  value shares; `send_cards` retries are noisy with no Telegram token or a permanent send error; Telegram burst rate limits on trim-created
+  cards. (Fixed in the final fix pass, no longer deferred: `book.totals` now carries a running average cost shared
+  with the API through `src/common/value_cost.py`, and a trim offer that went stale is no longer the end of the
+  episode.)
 - **Deferred (web, Sections F-I).** Top opportunities has no Claude note field (`ValueTopItem` has none) and its
   stop is always null today. The stock page shows no tranche plan or size tier (`GET /value/{symbol}` does not
   expose them). The calendar's value split costs one extra request per month opened (`GET /pnl/calendar?

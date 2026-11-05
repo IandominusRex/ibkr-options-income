@@ -782,7 +782,7 @@ components/
                     count; the Home cards read the value book through `strategy=value` on `/pnl/*` and
                     `GET /value/positions`, show "Value book, realised" apart from the options net, and say
                     an unread book in words); `available: false` and `enabled: false` each read as a
-                    sentence, an unknown figure is a hatched n/a), ValueProposalRow (Review, lime,
+                    sentence, an unknown figure is a hatched n/a), ValueProposalRow (Review, lime on the first waiting one only,
                     only while a proposal waits on a tap, opening the sheet), ValueDecide (the
                     approve and reject flow, a NEW component that mirrors the shape of the protected
                     options/DecideControls and does not edit it: ConfirmAction first, one
@@ -821,7 +821,7 @@ features/
                     links), PriceBar (one static bar: price, entry ceiling, fair value with the half sale, the stop
                     when the API has one; labels in rows so none overlaps; unknown levels are not drawn), `format.ts`
                     (`readyFirst`, `layoutBar`, `reasonSentence`, `sellPutAvailable`, the two hrefs) and `types.ts`
-                    (aliases over the generated api-types). Reads and links only: "Buy shares" is a link to
+                    (aliases over the generated api-types). Reads and links only: "See the value file" is a link to
                     `/stock/SYM#value-block-SYM`, "Sell a put up to $C" a link to `/trades?view=assessed&strategy=
                     csp&symbol=SYM` shown only when a passed CSP candidate at or under the ceiling is in the latest
                     scan. The strip never reaches `submitCommand` or `confirmCommand`. `?symbol=` is read by

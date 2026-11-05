@@ -103,6 +103,7 @@ function PositionRow({ p }: { p: ValuePosition }) {
 function Body({ book }: { book: ValueBook }) {
   const positions = book.positions ?? [];
   const proposals = book.proposals ?? [];
+  const firstWaiting = proposals.find((p) => p.needs_tap && p.status === "pending");
   const funding = book.funding ?? [];
   const room =
     book.ceiling_usd == null || book.used_usd == null ? null : Math.max(0, book.ceiling_usd - book.used_usd);
@@ -150,7 +151,12 @@ function Body({ book }: { book: ValueBook }) {
               <h3 className="text-xs font-semibold tracking-[0.04em] text-muted">Proposals</h3>
               <ul>
                 {proposals.map((p) => (
-                  <ValueProposalRow key={p.id} proposal={p} releaseMaxCloses={book.release_max_closes} />
+                  <ValueProposalRow
+                    key={p.id}
+                    proposal={p}
+                    releaseMaxCloses={book.release_max_closes}
+                    lead={p.id === firstWaiting?.id}
+                  />
                 ))}
               </ul>
             </div>

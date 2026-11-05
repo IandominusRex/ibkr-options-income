@@ -1,0 +1,40 @@
+import { describe, expect, it } from "vitest";
+import { waitingOnTap } from "./useValueBook";
+import type { ValueBook, ValueProposal } from "./types";
+
+function proposal(over: Partial<ValueProposal>): ValueProposal {
+  return {
+    id: 1, kind: "buy", symbol: "AAPL", list_name: "deep_value", shares: 20, price: 182.4, cost_usd: 3648,
+    reason: "tranche 1", cause: "python", needs_tap: true, status: "pending",
+    created_at: "2026-11-05T14:00:00Z", expires_at: "2099-01-01T00:00:00Z", fingerprint: "abc123def0", ...over,
+  };
+}
+
+function book(over: Partial<ValueBook>): ValueBook {
+  return {
+    as_of: "2026-11-05T15:00:00Z", available: true, enabled: true, ceiling_usd: 30000, used_usd: 0,
+    positions: [], proposals: [], funding: [],
+    breakers: { trend: false, drawdown: false, drawdown_pct: 0, trim_offered: false, trim_episode: null, trimmed: false },
+    release_max_closes: 2, ...over,
+  };
+}
+
+describe("waitingOnTap", () => {
+  it("counts only proposals that need a tap and are still pending", () => {
+    const b = book({
+      proposals: [
+        proposal({ id: 1 }),
+        proposal({ id: 2, status: "approved" }), // approved by a tap: no longer waiting
+        proposal({ id: 3, needs_tap: false, status: "approved" }),
+        proposal({ id: 4, status: "funding" }),
+        proposal({ id: 5, status: "sent" }),
+        proposal({ id: 6, needs_tap: false }),
+      ],
+    });
+    expect(waitingOnTap(b)).toBe(1);
+  });
+  it("is null, not zero, when the book could not be read", () => {
+    expect(waitingOnTap(undefined)).toBeNull();
+    expect(waitingOnTap(book({ available: false }))).toBeNull();
+  });
+});

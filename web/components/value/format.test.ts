@@ -27,13 +27,14 @@ describe("value format", () => {
   });
   it("names what approving a buy may cause, including the wheel's puts it may close", () => {
     expect(approveSentence(buy, 2)).toContain(
-      "Approving lets the system buy 20 shares of AAPL at up to $182.40 at its next check. " +
+      "Approving lets the system buy 20 shares of AAPL at its next check, sized at the close of $182.40, at the mid of a fresh quote. " +
         "If cash is short it may close up to 2 of your wheel's cash-secured puts at breakeven or better to fund it.",
     );
   });
   it("does not invent a price for a buy that has none, and says nothing of puts for a sale", () => {
     const noPrice = approveSentence({ ...buy, price: null }, 2);
-    expect(noPrice).toContain("buy 20 shares of AAPL at its next check");
+    expect(noPrice).toContain("buy 20 shares of AAPL at its next check, at the mid of a fresh quote.");
+    expect(noPrice).not.toContain("sized at");
     expect(noPrice).not.toContain("up to $");
     const sell = approveSentence({ ...buy, kind: "sell", shares: 10, price: null }, 2);
     expect(sell).toContain("sell 10 shares of AAPL at its next check");

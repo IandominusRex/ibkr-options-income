@@ -237,10 +237,15 @@ def _drain_commands() -> int:
     from src.value.store import init_value_db, value_session
 
     cfg = get_config()
+    # a command older than the approval TTL is the trading drain's sweep to expire, never ours to
+    # apply: the state it meant to change has moved on (final review M2)
+    cutoff = datetime.now(UTC) - timedelta(minutes=cfg.approval.ttl_minutes)
     with session_scope() as s:
         rows: list[vcmd.CommandTuple] = [
             (c.id, c.kind, dict(c.payload or {}), c.requested_by or "web", c.confirm_token)
             for c in pending_commands(s, only_kinds=VALUE_KINDS)
+            if (c.created_at.replace(tzinfo=UTC) if c.created_at.tzinfo is None else c.created_at)
+            >= cutoff
         ]
         s.commit()
     if not rows:

@@ -26,6 +26,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.common.config import ValueCfg
+from src.common.value_commands import TRIM_TTL_HOURS, trim_offer_stale
+from src.common.value_cost import RunningCost
 from src.common.value_types import DayBar
 from src.value.exits import DayFacts, LegState, open_leg, step
 from src.value.store import (
@@ -39,7 +41,6 @@ from src.value.store import (
 
 WORKING = ("pending", "submitted", "partial")
 PYTHON_SELLS = ("stop", "trail", "peak", "thesis", "remark_below", "catastrophe", "time")
-TRIM_TTL_HOURS = 30.0  # a trim's approved sells: the same horizon as a funding request
 # the drawdown trim's episode in the high_water state (Part 6, ruling 11); a reset drops them
 TRIM_STATE_KEYS = ("trim_offered_at", "episode", "trimmed", "trimmed_at", "trim_posted")
 
@@ -80,22 +81,26 @@ class BookTotals:
 
 
 def totals(vs: Session) -> BookTotals:
+    """What the book holds, from its orders oldest first. A name's cost is its filled shares at the
+    running average (``RunningCost``): a sale takes its shares out at the current average and a full
+    exit resets it, so a re-entry's cost is the re-entry's own (final review I-C)."""
     out = BookTotals()
-    bought: dict[str, tuple[float, float]] = {}
-    for o in vs.scalars(select(ValueOrderRow)):
+    running: dict[str, RunningCost] = {}
+    for o in vs.scalars(select(ValueOrderRow).order_by(ValueOrderRow.created_at, ValueOrderRow.id)):
         n = out.names.setdefault(o.symbol, NameTotals(list_name=o.list_name))
+        rc = running.setdefault(o.symbol, RunningCost())
         if o.side == "buy":
-            q, c = bought.get(o.symbol, (0.0, 0.0))
-            bought[o.symbol] = (q + o.filled, c + o.filled * (o.avg_price or 0.0))
+            rc.buy(o.filled, o.avg_price or 0.0)
             n.filled += o.filled
             if o.status in WORKING:
                 n.working_buy_cost += (o.shares - o.filled) * (o.limit_price or 0.0)
         else:
+            rc.sell(o.filled)
             n.filled -= o.filled
     for symbol, n in out.names.items():
-        q, c = bought.get(symbol, (0.0, 0.0))
         n.filled = max(0.0, n.filled)
-        n.cost = n.filled * (c / q) if q else 0.0
+        avg = running[symbol].avg
+        n.cost = n.filled * avg if avg is not None else 0.0
     return out
 
 
@@ -391,24 +396,6 @@ def sell_shares(held: float, fraction: float) -> int:
     return max(0, math.floor(held * min(1.0, fraction) + 1e-9))
 
 
-def _trim_card_stale(state: dict, trim_pct: float | None, now: datetime) -> bool:
-    """Review I5 (orchestrator ruling, conservative and reversible): the trim card stays
-    actionable only while the offer is at most ``TRIM_TTL_HOURS`` old and the book is still down
-    by ``trim_pct`` from its high. An unknown (missing or unreadable) number never refuses."""
-    offered = state.get("trim_offered_at")
-    if offered:
-        try:
-            if now - datetime.fromisoformat(str(offered)) > timedelta(hours=TRIM_TTL_HOURS):
-                return True
-        except ValueError:
-            pass
-    high, value = state.get("high"), state.get("value")
-    if trim_pct is not None and isinstance(high, int | float) and isinstance(value, int | float):
-        if high > 0 and (high - value) / high * 100.0 < trim_pct:
-            return True
-    return False
-
-
 def trim_to_half(
     vs: Session, *, episode: str, by: str, now: datetime, trim_pct: float | None = None
 ) -> list[int]:
@@ -423,7 +410,7 @@ def trim_to_half(
         raise BookRefused("stale_proposal")
     if state.get("trimmed"):
         raise BookRefused("already_trimmed")
-    if _trim_card_stale(state, trim_pct, now):
+    if trim_offer_stale(state, trim_pct, now):
         raise BookRefused("stale_proposal")
     held_now = totals(vs).names
     made: list[int] = []

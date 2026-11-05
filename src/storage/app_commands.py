@@ -87,6 +87,7 @@ def mark_applied(session: Session, command_id: int, result: dict) -> None:
     session.execute(
         update(AppCommandRow)
         .where(AppCommandRow.id == command_id)
+        .where(AppCommandRow.status == "pending")  # a command the TTL sweep expired stays expired
         .values(status="applied", result=result, applied_at=datetime.now(UTC))
     )
 
@@ -101,6 +102,7 @@ def mark_failed(
     session.execute(
         update(AppCommandRow)
         .where(AppCommandRow.id == command_id)
+        .where(AppCommandRow.status == "pending")  # a command the TTL sweep expired stays expired
         .values(
             status="failed",
             result={"reason": reason, "detail": detail or {}},

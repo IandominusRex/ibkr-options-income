@@ -68,6 +68,15 @@ describe("ValueCard", () => {
     const review = await screen.findByRole("button", { name: "Review" });
     expect(review).toHaveAttribute("data-variant", "primary");
   });
+  it("puts lime on the first waiting proposal's Review only (one lime control per card)", async () => {
+    show(book({ proposals: [proposal({ id: 5 }), proposal({ id: 6, symbol: "MSFT" })] }));
+    const reviews = await screen.findAllByRole("button", { name: "Review" });
+    expect(reviews.map((r) => r.getAttribute("data-variant"))).toEqual(["primary", "secondary"]);
+  });
+  it("does not spend the lime on an auto-approved proposal ahead of a waiting one", async () => {
+    show(book({ proposals: [proposal({ id: 4, needs_tap: false, status: "approved" }), proposal({ id: 5 })] }));
+    expect(await screen.findByRole("button", { name: "Review" })).toHaveAttribute("data-variant", "primary");
+  });
   it("shows an auto-approved proposal as approved by the system, with no Review", async () => {
     show(book({ proposals: [proposal({ needs_tap: false, status: "approved" })] }));
     expect(await screen.findByText("Approved by the system")).toBeInTheDocument();

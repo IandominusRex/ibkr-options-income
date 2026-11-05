@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
 VALUE_KINDS: frozenset[str] = frozenset(
@@ -45,6 +45,29 @@ def proposal_fingerprint(
 def trim_episode(high: float, offered_at: datetime) -> str:
     """One drawdown episode's id: a trim tap after ``--reset-drawdown`` no longer matches."""
     return _hash(f"trim|{high:.2f}|{offered_at:%Y-%m-%dT%H:%M:%S}")
+
+
+TRIM_TTL_HOURS = 30.0  # a trim's approved sells: the same horizon as a funding request
+
+
+def trim_offer_stale(state: dict, trim_pct: float | None, now: datetime) -> bool:
+    """Whether the stored trim offer can no longer be tapped (review I5, orchestrator ruling,
+    conservative and reversible): the offer is more than ``TRIM_TTL_HOURS`` old, or (given
+    *trim_pct*, ``book.drawdown_trim_pct``) the book is no longer down by that much from its high.
+    An unknown (missing or unreadable) number never reads as stale. The book refuses the tap on
+    this rule and the API reads the same rule for Home, so the two cannot disagree."""
+    offered = state.get("trim_offered_at")
+    if offered:
+        try:
+            if now - datetime.fromisoformat(str(offered)) > timedelta(hours=TRIM_TTL_HOURS):
+                return True
+        except (ValueError, TypeError):  # unreadable, or a naive/aware clock mismatch
+            pass
+    high, value = state.get("high"), state.get("value")
+    if trim_pct is not None and isinstance(high, int | float) and isinstance(value, int | float):
+        if high > 0 and (high - value) / high * 100.0 < trim_pct:
+            return True
+    return False
 
 
 def is_fingerprint(text: str) -> bool:

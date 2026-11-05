@@ -82,14 +82,14 @@ describe("OpportunityCard", () => {
     expect(screen.getByText("The price, $195.00, is above the entry ceiling, $190.00.")).toBeTruthy();
   });
 
-  it("offers Buy shares only on a READY name, and only as a link to the value block", () => {
+  it("offers See the value file only on a READY name, and only as a link to the value block", () => {
     render(<OpportunityCard item={item()} canSellPut={false} />);
-    const buy = screen.getByRole("link", { name: "Buy shares" });
+    const buy = screen.getByRole("link", { name: "See the value file" });
     expect(buy.getAttribute("href")).toBe("/stock/GOOGL#value-block-GOOGL");
     expect(screen.queryAllByRole("button")).toHaveLength(0);
     cleanup();
     render(<OpportunityCard item={item({ verdict: "WATCH" })} canSellPut={false} />);
-    expect(screen.queryByRole("link", { name: "Buy shares" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "See the value file" })).toBeNull();
   });
 
   it("offers the put link only when the parent found a passing CSP", () => {

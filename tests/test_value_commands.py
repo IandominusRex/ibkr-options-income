@@ -344,6 +344,13 @@ def test_the_entrypoint_drains_between_the_slow_steps() -> None:
         if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "run_queue"
     ]
     assert run_queue_calls and any(k.arg == "between" for k in run_queue_calls[0].keywords)
+    # the helper itself drains (final review M6): a `_between` that forgot the drain would pass
+    # every check above and still leave taps waiting out the night
+    between = next(
+        n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_between"
+    )
+    called = {getattr(n.func, "id", "") for n in ast.walk(between) if isinstance(n, ast.Call)}
+    assert {"_drain_commands", "_post_outbox"} <= called
 
 
 def test_drain_skips_a_command_awaiting_confirmation(value_book_db) -> None:

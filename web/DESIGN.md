@@ -768,13 +768,13 @@ Operate. Dials as the project default.
   shares, average cost, the next exit as words, "sell half at $180.00"; a hatched n/a after the plain label
   "Next exit:" when none is set) with its value at the right; "Proposals" lists each open proposal (the
   trade, list and reason in words, who proposed it, the cost of a buy). A proposal that waits on a tap carries
-  the card's one lime control, Review, and how long it has left; one that does not reads "Approved by the
+  the card's one lime control, Review (on the first waiting proposal only; any further waiting one has a secondary Review), and how long it has left; one that does not reads "Approved by the
   system" (or "Approved by your tap") with a neutral word for where it stands (Approved, Waiting for cash,
   Order sent). Review opens the sheet with the trade in a sentence, who proposed it (Claude's number is named
   as Claude's), why, and Approve and Reject as the sheet's secondary and quiet buttons, never lime and never
   carrying Claude's words. Approve opens the confirm dialog first, whose sentence says what the tap may cause
-  ("Approving lets the system buy 20 shares of AAPL at up to $182.40 at its next check. If cash is short it
-  may close up to 2 of your wheel's cash-secured puts at breakeven or better to fund it."; for a sale that
+  ("Approving lets the system buy 20 shares of AAPL at its next check, sized at the close of $182.40, at the mid of
+  a fresh quote. If cash is short it may close up to 2 of your wheel's cash-secured puts at breakeven or better to fund it."; for a sale that
   only Claude's number makes, it opens with "Only Claude's number makes this sale."). A receipt follows the
   command; an approved one says nothing has been sent yet, because the order goes out at the next check; a
   stale card reads "This card is out of date; refresh it." Unavailable reads "The value book has not written
@@ -929,7 +929,7 @@ Read. Search, watchlist, sectors, the stock page, and Universe. VARIANCE 3, DENS
   stop is unknown for every name today). Then the margin of safety as a figure line (hatched n/a when unknown),
   "Python's reasons" (up to three plain sentences from the baseline's reason codes), and the file's age ("Scorecard
   1 day old"; a hatched n/a when unknown). The two links are secondary pills, never lime, because they act on
-  nothing: "Buy shares" (READY only) goes to the stock page's value block, where the book's own decide flow lives;
+  nothing: "See the value file" (READY only) goes to the stock page's value block, which reads the file (the book's decide flow lives on Home's Value card, not here);
   "Sell a put up to $190.00" appears only when the book has a put ceiling and the latest scan has a passed
   cash-secured put at or under it, and opens Trades, Assessed on that name. The strip sends no command and has no
   button but the two tabs. Claude's one-line note is not shown, because the API does not carry one. Unavailable

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithQuery } from "@/lib/test-query";
 import { loadPersistedCommand } from "@/lib/commands";
@@ -36,6 +36,17 @@ describe("AnalyseButton", () => {
     expect(submitCommand).toHaveBeenCalledWith("value_analyse", { symbol: "GOOGL" });
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(await screen.findByTestId("command-receipt")).toBeInTheDocument();
+  });
+
+  it("sends exactly once, even after the receipt has settled", async () => {
+    submitCommand.mockResolvedValue(cmd());
+    showButton();
+    fireEvent.click(await screen.findByRole("button", { name: "Run Claude's analysis" }));
+    await screen.findByTestId("command-receipt");
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(submitCommand).toHaveBeenCalledTimes(1);
   });
 
   it("disables the button while the command is in flight and keeps it across a reload", async () => {

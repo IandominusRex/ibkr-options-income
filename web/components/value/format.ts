@@ -99,7 +99,8 @@ export function causeWords(p: Pick<ValueProposalLike, "kind" | "cause">): string
 
 /**
  * What a tap on Approve may cause, said before it is made (plan ruling 31). The price is the close
- * the proposal was sized at; the limit goes out at the mid of a fresh quote at the next check.
+ * the proposal was sized at, never a cap: the limit goes out at the mid of a fresh quote at the
+ * next check (final review I-D).
  */
 export function approveSentence(p: ValueProposalLike, releaseMaxCloses: number): string {
   const lead = p.cause === "claude" && p.kind === "sell" ? "Only Claude's number makes this sale. " : "";
@@ -107,9 +108,10 @@ export function approveSentence(p: ValueProposalLike, releaseMaxCloses: number):
   if (p.kind === "sell") {
     return `${lead}Approving lets the system sell ${sharesWord(p.shares)} of ${p.symbol} at its next check.${recheck}`;
   }
-  const at = p.price === null || p.price === undefined ? "" : ` at up to ${price(p.price)}`;
+  const sized = p.price === null || p.price === undefined ? "" : `, sized at the close of ${price(p.price)}`;
   return (
-    `Approving lets the system buy ${sharesWord(p.shares)} of ${p.symbol}${at} at its next check. ` +
+    `Approving lets the system buy ${sharesWord(p.shares)} of ${p.symbol} at its next check${sized}, ` +
+    `at the mid of a fresh quote. ` +
     `If cash is short it may close up to ${releaseMaxCloses} of your wheel's cash-secured puts ` +
     `at breakeven or better to fund it.${recheck}`
   );

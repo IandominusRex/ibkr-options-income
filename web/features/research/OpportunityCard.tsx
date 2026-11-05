@@ -12,7 +12,7 @@ const LINK =
   "inline-flex min-h-11 items-center justify-center rounded-full bg-sunk px-[18px] text-[0.9375rem] font-bold text-content hover:bg-sunk-deep";
 
 /**
- * One name on a Top opportunities list. It reads and links; it sends nothing. "Buy shares" goes to
+ * One name on a Top opportunities list. It reads and links; it sends nothing. "See the value file" goes to
  * the stock page's value block, where the book's own decide flow lives; the put link goes to the
  * name's passed cash-secured puts in Trades, and exists only when the parent found one.
  */
@@ -68,7 +68,7 @@ export function OpportunityCard({ item, canSellPut }: { item: TopItem; canSellPu
         <div className="mt-4 flex flex-wrap gap-2">
           {ready && (
             <Link href={stockValueHref(item.symbol)} className={LINK}>
-              Buy shares
+              See the value file
             </Link>
           )}
           {showPut && (

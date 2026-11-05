@@ -8,7 +8,7 @@ value.db with the store's own ORM (test files are not fenced).
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -161,7 +161,10 @@ def test_top_orders_ready_then_watch_then_wait_by_rank(client, vdb_file) -> None
     assert client.get("/value/top?list=quality_growth", headers=OWNER).json()["items"] == []
 
 
-def test_book_carries_the_proposal_fingerprint_and_the_state(client, vdb_file) -> None:
+def test_book_carries_the_proposal_fingerprint_and_the_state(client, vdb_file, monkeypatch) -> None:
+    import src.api.routers.value as router
+
+    monkeypatch.setattr(router, "_now", lambda: NOW.replace(tzinfo=UTC) + timedelta(hours=1))
     created = NOW - timedelta(hours=1)
     with value_session() as s:
         s.add(
@@ -238,6 +241,33 @@ def test_book_carries_the_proposal_fingerprint_and_the_state(client, vdb_file) -
     b = body["breakers"]
     assert b["trend"] is True and b["drawdown"] is True and b["trim_offered"] is True
     assert b["trim_episode"] == "abc1234567" and b["drawdown_pct"] == pytest.approx(30.0)
+
+
+def test_home_does_not_say_trim_offered_over_a_stale_card(client, vdb_file, monkeypatch) -> None:
+    import src.api.routers.value as router
+
+    with value_session() as s:
+        s.add(
+            ValueBookStateRow(
+                key="high_water",
+                value=json.dumps(
+                    {
+                        "high": 2000.0,
+                        "value": 1400.0,
+                        "stop": True,
+                        "episode": "abc1234567",
+                        "trim_offered_at": NOW.isoformat(),
+                    }
+                ),
+                updated_at=NOW,
+            )
+        )
+    for hours, offered in ((1, True), (40, False)):  # the card is good for 30 hours
+        monkeypatch.setattr(
+            router, "_now", lambda h=hours: NOW.replace(tzinfo=UTC) + timedelta(hours=h)
+        )
+        body = client.get("/value/book", headers=OWNER).json()
+        assert body["breakers"]["trim_offered"] is offered
 
 
 def _seed_position(symbol: str, *, status: str, sells: bool) -> None:

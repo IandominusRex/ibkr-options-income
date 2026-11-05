@@ -39,6 +39,7 @@ from src.api.models.value import (
     ValueTopResponse,
 )
 from src.common.config import get_config
+from src.common.value_commands import trim_offer_stale
 from src.value.schemas import Check, ListEvaluation, ValueScorecard
 
 router = APIRouter(prefix="/value", tags=["value"])
@@ -114,7 +115,7 @@ def value_top(
 # --- book --------------------------------------------------------------------------------------------
 
 
-def _breakers(state: dict[str, dict]) -> ValueBreakersOut:
+def _breakers(state: dict[str, dict], now: datetime, trim_pct: float) -> ValueBreakersOut:
     trend = state.get("trend")
     hw = state.get("high_water") or {}
     high, value = hw.get("high"), hw.get("value")
@@ -127,7 +128,10 @@ def _breakers(state: dict[str, dict]) -> ValueBreakersOut:
         trend=None if not trend else bool(trend.get("brake", False)),
         drawdown=bool(hw["stop"]) if "stop" in hw else None,
         drawdown_pct=pct,
-        trim_offered=bool(hw.get("trim_offered_at")),
+        # offered AND still tappable: the book's own staleness rule (a tap on a stale card is
+        # refused), so Home never says "Trim offered" over a card that no longer works
+        trim_offered=bool(hw.get("trim_offered_at"))
+        and not trim_offer_stale(hw, trim_pct, now.replace(tzinfo=None)),
         trim_episode=hw.get("episode") or None,
         trimmed=bool(hw.get("trimmed")),
     )
@@ -197,7 +201,7 @@ def value_book(user: OwnerUser) -> ValueBookResponse:  # noqa: ARG001
             )
             for f in funding
         ],
-        breakers=_breakers(state),
+        breakers=_breakers(state, now, cfg.book.drawdown_trim_pct),
     )
 
 
