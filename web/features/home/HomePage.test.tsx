@@ -18,7 +18,7 @@ import { HomePage } from "./HomePage";
 const responses = {
   "/portfolio/value": {
     as_of: "",
-    series: { range: "1m", points: [], latest: 248310.42, latest_at: null, previous_close: null, change_today: null, change_today_pct: null },
+    series: { range: "1m", points: [], latest: 248310.42, latest_at: null, previous_close: null, change_today: null, change_today_pct: null, change: null, change_pct: null, change_since: null },
   },
   "/pnl/month": {
     as_of: "",

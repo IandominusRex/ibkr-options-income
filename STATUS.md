@@ -347,6 +347,39 @@ Operator to-dos: re-copy `config/examples/value.yaml`'s `telegram:` and `prompt_
 
 ---
 
+## Built (2026-11-05 — drawdown window, hero change per range, spreads card health)
+
+- **The drawdown breaker no longer halts every morning.** The log showed `Drawdown $108-123K from
+  high-water mark` tripping on the first cycle of every ET day since ~Oct 20: the mark was an
+  all-time peak (`nlv_high_water_mark_usd` = $780K, seeded Oct 12) that net liquidation had fallen
+  14-17% below, and a `/resume` acknowledgement lapsed at midnight, so a *standing* drawdown
+  re-halted new entries each day until a manual tap. The mark is now the highest net liquidation of
+  the last `automation.drawdown_window_days` (3) sessions (`nlv_daily_highs_usd`, per-day highs in
+  `system_settings`), `drawdown_halt_pct` ships at 6.0 (was 10.0; the 3% daily-loss line is the
+  one-bad-day trip), and a drawdown `/resume` holds for the window instead of one ET day (a
+  daily-loss resume still lapses at its day's end). A slow grind that stays under 6% over three
+  sessions no longer stops anything. The all-time-peak row is not migrated: the window re-seeds from
+  the first cycle after the restart. Tests: `tests/test_circuit_breakers.py`, `test_breaker_ack.py`.
+- **Home hero change follows the range chip.** `AccountValueSeries` gains `change`, `change_pct`,
+  `change_since` (1d: since the previous close, so a weekend shows the last session's move instead
+  of `n/a`; 1w/1m/3m/ytd: since the last close at or before the window start, else the first point;
+  all: the first point). `change_today*` keep their strict "today" meaning and the hero stops
+  reading them. The caption names the range ("past month") or, on 1d off-hours, "last session
+  (Oct 16, 2026)". `n/a` now means only "no earlier value on file".
+- **Spreads day card carries the health lines.** The card shows `updated HH:MM ET`, a GEX map line
+  (built HH:MM / N builds, or `failing since HH:MM`) and a Trades line (checks assessed, last
+  check, what the entry loop is waiting for), re-stamped at least every 5 minutes while the session
+  is live (`SpreadsService._heartbeat`). The separate "could not build the GEX map" and "GEX map is
+  back" posts are gone (the card is the one message). Reversible: restore the two `notifier.send`
+  calls in `_build_map` if the lack of a push on an outage matters.
+- **Log sweep (Nov 3-5), CSP/CC/spreads: no code defects beyond the breaker.** The `No CSP/CC
+  candidates passed filters` warnings are the filters working (SOXL CSPs `no_headroom` on cash,
+  CCs `strike_below_basis` while under water; `delta_missing` on thin leveraged-ETF strikes). The
+  `Can't find EId` / `cancelMktData: No reqId` errors are harmless duplicate cancels. Open and
+  environmental, not fixed here: the competing-live-session block (error 10197), `Paper trading
+  disclaimer must first be accepted` and refused connects around Gateway restarts (all services
+  reconnect), and the Telegram `Updater` polling errors.
+
 ## Built (2026-11-05 — web overhaul Part 4: cleanup, honesty and the value gaps)
 
 Plan: `docs/superpowers/plans/2026-11-05-web-overhaul-4-cleanup-honesty-value-gaps.md` (branch
@@ -1143,7 +1176,7 @@ trials (an immediate retry worked both times) — the same retry covers it.
 - **A map outage alerts once and announces its end** (`src/spreads/service.py`): the "could not
   build the GEX map" alert used to fire once a day with no all-clear, so it read as still broken
   after the 5-minute retry had already built the map. It now fires once per outage (and names
-  the retry interval) and a `✅ GEX map is back (built HH:MM ET)` notice closes it
+  the retry interval) and a `✅ GEX map is back (built HH:MM ET)` notice closes it (superseded 2026-11-05: both now live on the day card)
   (`notify.fmt_recovered`); a second outage the same day alerts again.
 - **Phantom ERROR lines** (`src/common/logging.py`): the noise filter's *"(suppressed N further
   repeats)"* line took the level of the record that ended the run, so a run of INFO lines (the

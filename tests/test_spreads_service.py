@@ -780,38 +780,47 @@ async def test_a_failed_map_rebuild_drops_the_old_map(tmp_path, spreads_db, monk
     assert svc.levels is None and svc.map_failed_at == clock[0]
 
 
-# 2026-10-21 — the "could not build the GEX map" alert fired once a day and recovery was silent, so
-# it read as still broken after the 5-minute retry had already built the map. It now fires once
-# per outage and a "back" notice closes it.
-async def test_a_map_outage_alerts_once_and_announces_the_recovery(tmp_path, spreads_db) -> None:
+# 2026-11-05 — a map outage and its recovery used to be two extra posts (13 in ten days). They now
+# live on the day card, the thread's one message, which is edited in place with a timestamp.
+async def test_a_map_outage_and_recovery_edit_the_one_day_card(tmp_path, spreads_db) -> None:
     clock = [T0945]
     svc, broker, notifier = make(tmp_path, clock, ONE_A_DAY)
 
-    def count(text: str) -> int:
-        return sum(text in m for m in notifier.sent)
-
     broker.spx_down = True
     await svc.tick()
-    assert svc.levels is None and count("could not build the GEX map") == 1
-    assert "retrying every 5 min" in next(m for m in notifier.sent if "could not build" in m)
+    assert svc.levels is None and len(notifier.sent) == 1  # the card, nothing else
+    card = notifier.messages[1]
+    assert "GEX map</b> ⚠️ failing since 09:45 ET" in card and "retrying every 5 min" in card
+    assert "updated 09:45 ET" in card
+
     clock[0] = T0945 + timedelta(minutes=5)
-    await svc.tick()  # the retry fails too: still one alert, no "back"
-    assert count("could not build the GEX map") == 1 and count("GEX map is back") == 0
+    await svc.tick()  # the retry fails too: the same card, still failing since 09:45
+    assert len(notifier.sent) == 1
+    assert "failing since 09:45 ET" in notifier.messages[1]
 
     broker.spx_down = False
     clock[0] += timedelta(minutes=5)
     await svc.tick()
-    assert svc.levels is not None and count("GEX map is back") == 1
-    assert "built 09:55 ET" in next(m for m in notifier.sent if "GEX map is back" in m)
+    assert svc.levels is not None and len(notifier.sent) == 1
+    assert "GEX map</b> ✅ built 09:55 ET · 1 build today" in notifier.messages[1]
+    assert "failing" not in notifier.messages[1]
 
-    broker.spx_down = True  # a second outage, at the next hourly refresh, is news again
-    clock[0] += timedelta(minutes=60)
+
+async def test_the_card_clock_moves_while_waiting_for_the_trigger(tmp_path, spreads_db) -> None:
+    """A quiet tape must not look like a dead process: the card is re-stamped every few minutes
+    and says what the entry loop is waiting for."""
+    clock = [T0945]
+    svc, _broker, notifier = make(tmp_path, clock, ONE_A_DAY)
+    await svc.tick()  # builds the map: the card is posted
+    first = notifier.messages[1]
+    assert "Trades</b> 0 assessed" in first
+    clock[0] += timedelta(minutes=2)
     await svc.tick()
-    assert count("could not build the GEX map") == 2
-    broker.spx_down = False
-    clock[0] += timedelta(minutes=5)
+    assert notifier.messages[1] == first  # inside the 5-minute beat: no edit
+    clock[0] += timedelta(minutes=4)
     await svc.tick()
-    assert count("GEX map is back") == 2
+    assert len(notifier.sent) == 1 and notifier.messages[1] != first
+    assert "updated 09:51 ET" in notifier.messages[1]
 
 
 T1550 = datetime(2026, 10, 7, 19, 50, tzinfo=UTC)

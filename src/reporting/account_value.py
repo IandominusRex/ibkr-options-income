@@ -67,6 +67,38 @@ def _close_at(day: date) -> datetime:
     return datetime.combine(day, time(16, 0), tzinfo=_ET).astimezone(UTC)
 
 
+def _change_base(
+    range_key: AccountValueRange,
+    closes: list[tuple[date, float]],
+    points: list[AccountValuePoint],
+    latest_at: datetime | None,
+    now_utc: datetime,
+    previous_close: float | None,
+    latest_day: date | None,
+) -> tuple[datetime | None, float | None]:
+    """The value the selected range's change is measured from, and when it was struck.
+
+    Not tied to "today": on a weekend or before the day's first snapshot the headline is the
+    last session's, and its change is that session's. Falls back to the window's first point
+    when no close predates the window, and to None when nothing earlier than `latest` exists."""
+    if latest_at is None:
+        return None, None
+    if range_key == "1d" and previous_close is not None and latest_day is not None:
+        prior = [d for d, _ in closes if d < latest_day]
+        return _close_at(prior[-1]), previous_close
+    if range_key != "1d" and range_key != "all":
+        if range_key == "ytd":
+            start = datetime(now_utc.astimezone(_ET).year, 1, 1, tzinfo=_ET).astimezone(UTC)
+        else:
+            start = now_utc - timedelta(days={"1w": 7, "1m": 31, "3m": 92}[range_key])
+        older = [(_close_at(d), v) for d, v in closes if _close_at(d) <= start]
+        if older:
+            return older[-1]
+    if points and points[0].at < latest_at:
+        return points[0].at, points[0].value
+    return None, None
+
+
 def account_value_series(
     session: _SessionFactory, range_key: AccountValueRange, *, now: datetime
 ) -> AccountValueSeries:
@@ -153,6 +185,11 @@ def account_value_series(
     )
     change_pct = change / previous_close * 100 if change is not None and previous_close else None
 
+    base_at, base = _change_base(
+        range_key, closes, points, latest_at, now_utc, previous_close, latest_day
+    )
+    range_change = latest - base if latest is not None and base is not None else None
+
     return AccountValueSeries(
         range=range_key,
         points=points,
@@ -161,6 +198,9 @@ def account_value_series(
         previous_close=previous_close,
         change_today=change,
         change_today_pct=change_pct,
+        change=range_change,
+        change_pct=range_change / base * 100 if range_change is not None and base else None,
+        change_since=base_at if range_change is not None else None,
     )
 
 

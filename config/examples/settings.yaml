@@ -414,7 +414,10 @@ automation:
   max_auto_trades_per_day: 10
   # Mark-to-market, not fill cashflow. See config.py AutomationCfg.
   daily_loss_halt_pct: 3.0
-  drawdown_halt_pct: 10.0
+  # Drawdown from the highest net liq of the last N sessions (rolling; NOT an all-time peak, so a
+  # standing drawdown does not re-halt every morning). The 3% daily line above covers one bad day.
+  drawdown_halt_pct: 6.0
+  drawdown_window_days: 3
   # Loss line: cost-to-close reaching this multiple of the entry credit. 0 disables.
   # Leveraged ETFs (universe.yaml → leveraged_etfs): at the line a roll is tried first and the
   # short is bought back only when no roll qualifies (2026-10-14). Every other short (a name

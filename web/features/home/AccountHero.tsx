@@ -61,10 +61,10 @@ export function AccountHero({ now }: { now?: Date } = {}) {
   }
 
   const series = data.series;
-  const f = heroFigures(series, hover);
+  const f = heroFigures(series, hover, now ?? new Date());
   const flat = f.delta === null || f.delta === 0;
-  // The day's change is null when the headline value is not from today (weekend, before the
-  // first snapshot): keep the value, say so, and name the day the value is from.
+  // The range's change is null only when there is no earlier known value: keep the value, say
+  // so, and name the day the value is from.
   const lastValueFrom =
     f.value !== null && f.delta === null && hover === null && series.latest_at
       ? ` · last value ${formatDay(series.latest_at)}`

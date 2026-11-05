@@ -1519,7 +1519,7 @@ async def test_process_queued_orders_auto_trips_halt_on_drawdown(monkeypatch, tm
 
     assert executed == []
     assert is_halted()
-    assert "high-water mark" in get_halt_reason()
+    assert "3-session high" in get_halt_reason()
     assert get_halt_source() == "breaker"
     # 2026-10-12: the alert went only to the main chat and was missed; the scan thread, where
     # the skipped cycles show, gets it too.

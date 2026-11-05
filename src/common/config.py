@@ -703,9 +703,11 @@ class AutomationCfg(BaseModel):
     # an income desk always has positive cashflow on a day it sells premium, so the old
     # cashflow-based measure read a drawdown as a profit.
     daily_loss_halt_pct: float = 3.0
-    # Auto-trip when net liquidation falls this % below its trailing high-water mark. Catches
-    # the slow bleed that no single day trips. 0 disables.
-    drawdown_halt_pct: float = 10.0
+    # Auto-trip when net liquidation falls this % below its highest level of the last
+    # `drawdown_window_days` sessions (a rolling window, not an all-time peak: a standing
+    # drawdown must not halt every morning). Catches the slow bleed no single day trips. 0 disables.
+    drawdown_halt_pct: float = 6.0
+    drawdown_window_days: int = 3
     # Buy to close when cost-to-close reaches this multiple of the entry credit. 0 disables.
     max_loss_multiple: float = 2.0
     # Risk-REDUCING actions run on this switch, independent of the autonomy level — that

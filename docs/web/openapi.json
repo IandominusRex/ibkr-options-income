@@ -4319,6 +4319,40 @@
               }
             ],
             "title": "Change Today Pct"
+          },
+          "change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change"
+          },
+          "change_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Pct"
+          },
+          "change_since": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Since"
           }
         },
         "type": "object",
@@ -4326,7 +4360,7 @@
           "range"
         ],
         "title": "AccountValueSeries",
-        "description": "Account value (net liquidation) over a range, for the Home hero chart.\n\n1d/1w plot the intraday portfolio snapshots inside the window (retention:\n`storage.portfolio_snapshot_retention_days`); 1m/3m/ytd/all plot one point per EOD journal\nclose, at that day's 16:00 ET. `latest` is the newer of the newest known snapshot and the\nnewest close, compared as instants (a journal day is a close only once its 16:00 ET has\npassed), so it can be a close. 1m/3m/ytd/all end on `latest` when it is newer than their\nlast close; 1d/1w end on it only when `latest_at` falls inside the window. Points ascend in\ntime but not strictly: snapshot rows sharing a `captured_at` both appear.\n`previous_close` is the close before the New York day `latest` belongs to; `change_today`\nis None unless that day is today (weekends, before the day's first snapshot). A net\nliquidation of 0 or less is unknown. Every figure is None when unknown - never 0.0."
+        "description": "Account value (net liquidation) over a range, for the Home hero chart.\n\n1d/1w plot the intraday portfolio snapshots inside the window (retention:\n`storage.portfolio_snapshot_retention_days`); 1m/3m/ytd/all plot one point per EOD journal\nclose, at that day's 16:00 ET. `latest` is the newer of the newest known snapshot and the\nnewest close, compared as instants (a journal day is a close only once its 16:00 ET has\npassed), so it can be a close. 1m/3m/ytd/all end on `latest` when it is newer than their\nlast close; 1d/1w end on it only when `latest_at` falls inside the window. Points ascend in\ntime but not strictly: snapshot rows sharing a `captured_at` both appear.\n`previous_close` is the close before the New York day `latest` belongs to; `change_today`\nis None unless that day is today (weekends, before the day's first snapshot).\n`change`/`change_pct` are the headline's move over the *selected range* from `change_since`\n(1d: the previous close, so a weekend still shows Friday's move; 1w/1m/3m/ytd: the last close\nat or before the window start, else the window's first point; all: the first point). They\nare None only when there is no earlier known value. A net liquidation of 0 or less is\nunknown. Every figure is None when unknown - never 0.0."
       },
       "AlternativeStrike": {
         "properties": {

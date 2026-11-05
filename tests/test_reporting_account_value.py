@@ -202,3 +202,27 @@ def test_month_start_value_is_the_last_close_before_the_month(db) -> None:
     _journal(db, date(2026, 10, 1), 99_500.0)
     assert month_start_value(db, date(2026, 10, 1)) == 99_000.0
     assert month_start_value(db, date(2026, 9, 1)) is None
+
+
+def test_the_change_follows_the_selected_range_and_survives_a_weekend(db) -> None:
+    """The Home hero's % was n/a on every weekend and ignored the chip. It now reads the last
+    reflected move over the chosen range: 1d is the last session's, longer ranges run from the
+    last close before the window, or the window's first point when none predates it."""
+    _journal(db, date(2026, 10, 8), 100_000.0)
+    _journal(db, date(2026, 10, 9), 101_000.0)
+    _journal(db, date(2026, 10, 12), 103_000.0)
+    day = account_value_series(db, "1d", now=SAT_NOON_ET)  # Saturday: latest is Friday's close
+    assert day.change_today is None
+    assert day.change == 1_000.0 and round(day.change_pct or 0, 4) == round(1000 / 100_000 * 100, 4)
+    assert day.change_since is not None
+    month = account_value_series(db, "1m", now=NOW)
+    assert month.change == 3_000.0  # 100k first point (no close predates the window) -> 103k
+    assert round(month.change_pct or 0, 4) == 3.0
+    assert month.change_since == datetime(2026, 10, 8, 20, 0, tzinfo=UTC)
+
+
+def test_the_change_is_unknown_not_zero_with_a_single_value(db) -> None:
+    _journal(db, date(2026, 10, 12), 103_000.0)
+    series = account_value_series(db, "3m", now=NOW)
+    assert series.latest == 103_000.0
+    assert series.change is None and series.change_pct is None and series.change_since is None

@@ -90,11 +90,49 @@ class DayCard:
     checks: int = 0  # armed entry checks that found nothing to sell
     trades: list[str] = field(default_factory=list)  # one short line per open/close today
     message_id: int | None = None
+    # The health lines (2026-11-05): is the map building, are trades being assessed. Edited in
+    # place with `updated_at`, so the thread carries one message and no outage/recovery posts.
+    updated_at: datetime | None = None
+    map_at: datetime | None = None  # the last successful build
+    map_builds: int = 0
+    map_failed_since: datetime | None = None  # start of the current outage
+    map_error: str | None = None
+    map_retry_min: int = 5
+    assessments: int = 0  # entry checks that fetched the chain and weighed candidates
+    assessed_at: datetime | None = None
+    watch_note: str | None = None  # what the entry loop is doing right now
+
+
+def _hm(t: datetime) -> str:
+    return f"{t.astimezone(ET):%H:%M} ET"
+
+
+def _map_line(card: DayCard) -> str:
+    if card.map_failed_since is not None:
+        why = esc(card.map_error or "no chain or index price")
+        return (
+            f"🗺 <b>GEX map</b> ⚠️ failing since {_hm(card.map_failed_since)} · {why} · "
+            f"retrying every {card.map_retry_min} min, no entries until it builds"
+        )
+    if card.map_at is not None:
+        plural = "" if card.map_builds == 1 else "s"
+        return (
+            f"🗺 <b>GEX map</b> ✅ built {_hm(card.map_at)} · {card.map_builds} build{plural} today"
+        )
+    return "🗺 <b>GEX map</b> ⏳ not built yet"
+
+
+def _assess_line(card: DayCard) -> str:
+    last = f" · last {_hm(card.assessed_at)}" if card.assessed_at else ""
+    note = f" · {esc(card.watch_note)}" if card.watch_note else ""
+    return f"🔎 <b>Trades</b> {card.assessments} assessed{last}{note}"
 
 
 def fmt_day_card(card: DayCard) -> str:
     head = f"🟦 <b>{esc(card.underlying)} 0DTE · {card.day:%a %d %b}</b> · {esc(card.mode.upper())}"
-    parts = [head]
+    if card.updated_at is not None:
+        head += f" · <i>updated {_hm(card.updated_at)}</i>"
+    parts = [head, _map_line(card), _assess_line(card)]
     lv = card.levels
     if lv is not None:
         em = "n/a" if lv.expected_move is None else f"±{lv.expected_move:.2f}"
@@ -267,11 +305,6 @@ def fmt_alert(text: str) -> str:
     text = _untag(text)
     icon = "🚨" if "URGENT" in text else "⚠️"
     return f"{icon} {esc(text)}"
-
-
-def fmt_recovered(text: str) -> str:
-    """The all-clear that closes an alert: the same escaping, a ✅ instead of a warning."""
-    return f"✅ {esc(_untag(text))}"
 
 
 # ---------------------------------------------------------------------------

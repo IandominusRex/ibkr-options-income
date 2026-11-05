@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chartPoints, heroDelay, heroFigures } from "./hero";
+import { changeCaption, chartPoints, heroDelay, heroFigures } from "./hero";
 import type { AccountValueSeries } from "./types";
 
 const series: AccountValueSeries = {
@@ -14,11 +14,27 @@ const series: AccountValueSeries = {
   previous_close: 101_000,
   change_today: 500,
   change_today_pct: 0.495,
+  change: 500,
+  change_pct: 0.495,
+  change_since: "2026-10-12T20:00:00Z",
 };
+
+describe("changeCaption", () => {
+  const now = new Date("2026-10-17T16:00:00Z"); // a Saturday
+  it("follows the range chip", () => {
+    expect(changeCaption({ ...series, range: "1w" }, now)).toBe("past week");
+    expect(changeCaption({ ...series, range: "3m" }, now)).toBe("past 3 months");
+  });
+  it("names the session when the 1d value is not from today", () => {
+    const fri = { ...series, range: "1d" as const, latest_at: "2026-10-16T20:00:00Z" };
+    expect(changeCaption(fri, now)).toBe("last session (Oct 16, 2026)");
+    expect(changeCaption(fri, new Date("2026-10-16T21:00:00Z"))).toBe("today");
+  });
+});
 
 describe("heroFigures", () => {
   it("shows the latest value and today's change when not scrubbing", () => {
-    expect(heroFigures(series, null)).toEqual({ value: 101_500, delta: 500, deltaPct: 0.495, caption: "today" });
+    expect(heroFigures(series, null)).toEqual({ value: 101_500, delta: 500, deltaPct: 0.495, caption: "past month" });
   });
   it("shows the scrubbed point and its change since the range start", () => {
     const f = heroFigures(series, 1);
@@ -28,8 +44,8 @@ describe("heroFigures", () => {
     expect(f.caption).toBe("Oct 12, 2026");
   });
   it("keeps unknowns unknown", () => {
-    const empty = { ...series, points: [], latest: null, change_today: null, change_today_pct: null };
-    expect(heroFigures(empty, null)).toEqual({ value: null, delta: null, deltaPct: null, caption: "today" });
+    const empty = { ...series, points: [], latest: null, change: null, change_pct: null };
+    expect(heroFigures(empty, null)).toEqual({ value: null, delta: null, deltaPct: null, caption: "past month" });
   });
 });
 

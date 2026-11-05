@@ -1083,6 +1083,10 @@ journal close, at that day's 16:00 New York time. The rules:
 - **`previous_close` is the close before the New York day `latest` belongs to**, and
   **`change_today` / `change_today_pct` are `null` unless that day is today** (a weekend,
   or before today's first snapshot): the day's change is unknown then, never `0`.
+  **`change` / `change_pct` / `change_since` are the move over the selected `range`** (1d: since the
+  previous close, so a weekend still shows the last session's move; 1w/1m/3m/ytd: since the last
+  close at or before the window start, else the first point; all: the first point). They are `null`
+  only when no earlier value exists. The Home hero reads these, not `change_today`.
 
 **Response — `AccountValueResponse`:** `{ as_of, series: AccountValueSeries }`.
 `AccountValueSeries`: `{ range, points: AccountValuePoint[], latest: float | null, latest_at: datetime | null, previous_close: float | null, change_today: float | null, change_today_pct: float | null }`.

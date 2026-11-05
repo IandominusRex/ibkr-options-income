@@ -145,14 +145,14 @@ def test_the_drawdown_breaker_honours_the_ack_too() -> None:
     from src.execution.circuit_breakers import evaluate_breakers
     from src.storage.system_settings import set_halted, set_high_water_mark
 
-    set_high_water_mark(300_000.0)  # 10% line = $30,000
+    set_high_water_mark(300_000.0)  # 6% line = $18,000
     reason = evaluate_breakers([], 265_000.0)
-    assert reason == "Drawdown $35,000 from high-water mark"
+    assert reason == "Drawdown $35,000 from the 3-session high"
     set_halted(True, reason, source="breaker")
     set_halted(False)
     assert evaluate_breakers([], 265_000.0) is None
-    assert evaluate_breakers([], 236_000.0) is None  # 64K < 35K + 30K
-    assert evaluate_breakers([], 234_000.0) is not None
+    assert evaluate_breakers([], 248_000.0) is None  # 52K < 35K + 18K
+    assert evaluate_breakers([], 246_000.0) is not None
 
 
 # --------------------------------------------------------------------------- #
@@ -371,3 +371,23 @@ async def test_the_set_roll_mode_handler_flips_the_setting() -> None:
         chat_id="1",
     )
     assert again == {"mode": "auto", "previous": "propose"}
+
+
+def test_a_drawdown_ack_carries_across_the_window_but_a_loss_ack_does_not(
+    tmp_path, monkeypatch
+) -> None:
+    """The 3-session window still holds the same drop tomorrow, so /resume on a drawdown halt
+    must not re-halt at the next open; a daily-loss ack still lapses at the end of its ET day."""
+    import json
+
+    from src.storage.system_settings import BREAKER_ACK_KEY, get_breaker_ack, set_setting
+
+    today = date(2026, 11, 5)
+    ack = {"date": "2026-11-04", "loss": 7_000.0, "drawdown": 35_000.0}
+    set_setting(BREAKER_ACK_KEY, json.dumps(ack))
+    assert get_breaker_ack(today) is None  # default keep_days=1: lapsed
+    carried = get_breaker_ack(today, keep_days=3)
+    assert carried == {"loss": 0.0, "drawdown": 35_000.0}
+    assert get_breaker_ack(date(2026, 11, 7), keep_days=3) is None  # past the window
+    set_setting(BREAKER_ACK_KEY, json.dumps({**ack, "drawdown": None}))
+    assert get_breaker_ack(today, keep_days=3) is None  # armed, never measured: do not carry

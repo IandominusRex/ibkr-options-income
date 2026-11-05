@@ -1,7 +1,7 @@
 import { formatDateTime, relativeAge } from "@/lib/format";
 import { formatMoneyCell, isStale } from "@/lib/money";
 import { FRESH_FOR_MINUTES } from "./positions";
-import type { AccountValuePoint, AccountValueSeries } from "./types";
+import type { AccountValuePoint, AccountValueSeries, RangeKey } from "./types";
 
 const DATE_ONLY = new Intl.DateTimeFormat("en-US", {
   month: "short",
@@ -46,16 +46,35 @@ export function pointLabel(p: AccountValuePoint): string {
   return `${formatDateTime(p.at)}, ${formatMoneyCell(p.value)}`;
 }
 
+const RANGE_CAPTION: Record<RangeKey, string> = {
+  "1d": "today",
+  "1w": "past week",
+  "1m": "past month",
+  "3m": "past 3 months",
+  ytd: "year to date",
+  all: "all time",
+};
+
+/** What the headline change is measured over: the chosen range, and for 1d the day the value is
+ *  from when that is not today (weekend, holiday), so the figure never reads as today's. */
+export function changeCaption(series: AccountValueSeries, now: Date): string {
+  if (series.range === "1d" && series.latest_at && formatDay(series.latest_at) !== formatDay(now.toISOString())) {
+    return `last session (${formatDay(series.latest_at)})`;
+  }
+  return RANGE_CAPTION[series.range];
+}
+
 export function heroFigures(
   series: AccountValueSeries,
   hoverIndex: number | null,
+  now: Date = new Date(),
 ): { value: number | null; delta: number | null; deltaPct: number | null; caption: string } {
   if (hoverIndex === null || !series.points[hoverIndex]) {
     return {
       value: series.latest,
-      delta: series.change_today,
-      deltaPct: series.change_today_pct,
-      caption: "today",
+      delta: series.change,
+      deltaPct: series.change_pct,
+      caption: changeCaption(series, now),
     };
   }
   const p = series.points[hoverIndex];

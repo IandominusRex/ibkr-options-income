@@ -79,7 +79,6 @@ from src.spreads.notify import (
     fmt_eod,
     fmt_exit,
     fmt_pick,
-    fmt_recovered,
     status_nothing_to_sell,
 )
 from src.spreads.pricing import ET, day_schedule
@@ -91,6 +90,7 @@ from src.spreads.tape import SessionTape, trigger
 log = logging.getLogger(__name__)
 
 _MAP_RETRY = timedelta(minutes=5)
+_CARD_BEAT = timedelta(minutes=5)  # the day card's clock moves at least this often while live
 
 
 class Broker(Protocol):
@@ -204,7 +204,7 @@ class SpreadsService:
         self.entries_blocked: str | None = None
         self.eod_sent_for: date | None = None
         self._alerted: set[tuple[date, str]] = set()
-        self._map_down_alerted = False  # an outage alert is out and its all-clear is owed
+        self.map_down_since: datetime | None = None  # start of the current map outage
         self._mismatch_ticks = 0
         self.picker = picker
         # The baseline book (ai.enabled): always the deterministic pick, always simulated —
@@ -369,16 +369,26 @@ class SpreadsService:
         self._alerted.add(mark)
         await self.notifier.send(fmt_alert(text))
 
+    def _card_for(self, now: datetime) -> DayCard:
+        """Today's day card, started fresh on the first call of an ET day."""
+        day = now.astimezone(ET).date()
+        if self._card is None or self._card.day != day:
+            self._card = DayCard(
+                day=day,
+                mode=self.cfg.mode,
+                underlying=self.cfg.underlying,
+                map_retry_min=int(_MAP_RETRY.total_seconds() // 60),
+            )
+        return self._card
+
     async def _card_update(self, now: datetime, **changes: Any) -> None:
         """Apply *changes* to today's day card and show it: the first update of an ET day posts
         the card, later ones edit it in place (a refused edit posts a fresh one). Never raises."""
-        day = now.astimezone(ET).date()
         try:
-            if self._card is None or self._card.day != day:
-                self._card = DayCard(day=day, mode=self.cfg.mode, underlying=self.cfg.underlying)
-            card = self._card
+            card = self._card_for(now)
             for k, v in changes.items():
                 setattr(card, k, v)
+            card.updated_at = now
             text = fmt_day_card(card)
             if card.message_id is not None and await self.notifier.edit(card.message_id, text):
                 return
@@ -417,8 +427,25 @@ class SpreadsService:
                 await self._guard("pick", self._resolve_pick(now))
         if s.entry_start <= hhmm < s.entry_end:
             await self._guard("entries", self._entries(now))
+        await self._guard("card", self._heartbeat(now, hhmm, s))
         if hhmm >= s.eod_summary and self.eod_sent_for != today:
             await self._guard("eod", self._eod(now))
+
+    async def _heartbeat(self, now: datetime, hhmm: str, s: Any) -> None:
+        """Keep the day card's clock moving while the session is live: one edit per `_CARD_BEAT`,
+        so "is the map building, are trades being assessed" reads off the one message."""
+        if not (s.map_time <= hhmm < s.force_close):
+            return
+        card = self._card_for(now)
+        if hhmm < s.entry_start:
+            card.watch_note = f"entry window opens {s.entry_start} ET"
+        elif hhmm >= s.entry_end:
+            card.watch_note = "entry window closed, managing open spreads"
+        if card.updated_at is None or now - card.updated_at >= _CARD_BEAT:
+            await self._card_update(now)
+
+    def _watch(self, now: datetime, note: str) -> None:
+        self._card_for(now).watch_note = note
 
     def _map_due(self, now: datetime, hhmm: str) -> bool:
         s = day_schedule(self.cfg.schedule, now.astimezone(ET).date())
@@ -462,15 +489,12 @@ class SpreadsService:
         if gex_chain is None or traded is None:
             self.map_failed_at = now
             self.levels = None
-            if not self._map_down_alerted:  # once per outage, not once per day (2026-10-21)
-                self._map_down_alerted = True
-                retry = int(_MAP_RETRY.total_seconds() // 60)
-                await self.notifier.send(
-                    fmt_alert(
-                        "[SPREADS] could not build the GEX map (no chain or no index price) — "
-                        f"no entries until it builds; retrying every {retry} min"
-                    )
-                )
+            self.map_down_since = self.map_down_since or now
+            await self._card_update(
+                now,
+                map_failed_since=self.map_down_since,
+                map_error="no chain or index price",
+            )
             return
         try:
             # The gamma-flip search is scipy-heavy: keep it off the loop so the heartbeat runs.
@@ -479,26 +503,31 @@ class SpreadsService:
             # Never trade on the previous map for another hour: no map, no entries, retry soon.
             self.levels = None
             self.map_failed_at = now
+            self.map_down_since = self.map_down_since or now
+            await self._card_update(
+                now, map_failed_since=self.map_down_since, map_error="the map build raised"
+            )
             raise
         self.map_failed_at = None
+        self.map_down_since = None
         self.map_at = now
         self.gex_chain = gex_chain
         self.levels = levels
         store.record_map(self.levels)
-        if self._map_down_alerted:
-            self._map_down_alerted = False
-            await self.notifier.send(
-                fmt_recovered(
-                    f"[SPREADS] GEX map is back (built {now.astimezone(ET):%H:%M} ET) — "
-                    "entries can resume"
-                )
-            )
         tape = self._tape_for(now)
         if tape.day_em is None:
             # The day's FIRST expected move, from spreads.db: a restart must not swap in the
             # smaller straddle it sees later in the day.
             tape.day_em = store.first_map_em(now.astimezone(ET).date())
-        await self._card_update(now, levels=self.levels)
+        card = self._card_for(now)
+        await self._card_update(
+            now,
+            levels=self.levels,
+            map_at=now,
+            map_builds=card.map_builds + 1,
+            map_failed_since=None,
+            map_error=None,
+        )
 
     def _tape_for(self, now: datetime) -> SessionTape:
         today = now.astimezone(ET).date()
@@ -559,26 +588,36 @@ class SpreadsService:
 
     async def _entries(self, now: datetime) -> None:
         if self._pending is not None:
+            self._watch(now, "a pick is in flight")
             return  # one decision at a time: the pick in flight resolves first
         if self.entries_blocked:
+            self._watch(now, f"entries blocked: {self.entries_blocked}")
             return
         if self.halt_path.exists():
+            self._watch(now, "halt file present, no new entries")
             await self.alert_once(
                 "halt", f"[SPREADS] halt file {self.halt_path} present — no new entries"
             )
             return
         if self.levels is None or self.gex_chain is None:
+            self._watch(now, "no GEX map, not assessing")
             return
         allowed = trigger(self.tape, now, self.cfg)
         if not allowed.sides:
             log.debug("spreads trigger: %s (move %s)", allowed.reason, allowed.move_em)
+            self._watch(now, f"waiting for the trigger ({allowed.reason})")
             return
         if not self._entry_due(now):
             return
         self.last_entry_check = now
         chain = await self._traded_chain(spot_hint=self.levels.spot)
         if chain is None:
+            self._watch(now, "armed, but the traded chain did not load")
             return
+        card = self._card_for(now)
+        card.assessments += 1
+        card.assessed_at = now
+        self._watch(now, f"armed ({allowed.reason}), weighing candidates")
         today = now.astimezone(ET).date()
         levels = self.levels.model_copy(
             update={

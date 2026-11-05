@@ -15,9 +15,10 @@ Breakers, all configured under `automation:` in settings.yaml:
     ``realized_cashflow_today`` cashflow measure read a real drawdown as a profit (D3) —
     it's kept only for its existing tests and is no longer wired into the intraday loop.
   * ``drawdown_halt_pct`` — auto-engage the kill switch when net liquidation falls N%
-    below its trailing high-water mark (``drawdown_breached`` / `system_settings`'s
-    ``get_high_water_mark``/``set_high_water_mark``). Catches the slow bleed that no
-    single day's loss trips.
+    below its highest level of the last ``drawdown_window_days`` sessions (``drawdown_breached`` /
+    `system_settings`'s ``get_high_water_mark``/``set_high_water_mark``: per-day highs, a rolling
+    window — not an all-time peak, which left a standing drawdown halting every morning).
+    Catches the slow bleed that no single day's loss trips.
 
 Nothing here feeds the risk engine, scoring, or sizing — it only gates whether the
 order machinery runs, so it stays clear of "the fence" around the deterministic layer.
@@ -220,25 +221,25 @@ def mark_based_loss(positions: list[PositionSnapshot], net_liquidation: float) -
 
 
 def _drawdown_raw(net_liquidation: float) -> tuple[float, float] | None:
-    """``(drawdown, high-water mark)``, or None when the breaker is off or net liq unknown.
+    """``(drawdown, window high)``, or None when the breaker is off, net liq is unknown, or net
+    liq is at or above the window's high.
 
-    Advances the high-water mark on a new high as a side effect, so the first call after a
-    fresh install simply seeds it."""
+    Records today's high as a side effect, so the first call after a fresh install seeds it."""
     pct = getattr(get_config().automation, "drawdown_halt_pct", 0.0)
     if not pct or net_liquidation <= 0:
         return None
-    hwm = get_high_water_mark()
-    if net_liquidation > hwm or hwm <= 0:
-        set_high_water_mark(net_liquidation)
+    hwm = get_high_water_mark(get_config().automation.drawdown_window_days)
+    set_high_water_mark(net_liquidation)  # today's high, kept for the rolling window
+    if net_liquidation >= hwm or hwm <= 0:
         return None
     return hwm - net_liquidation, hwm
 
 
 def drawdown_breached(net_liquidation: float) -> float | None:
-    """Drawdown from the trailing net-liquidation high-water mark, if it breaches the cap.
+    """Drawdown from the rolling-window net-liquidation high, if it breaches the cap.
 
-    Catches the slow bleed no single day trips. Advances the high-water mark on a new high
-    as a side effect, so the first call after a fresh install simply seeds it.
+    Catches the slow bleed no single day trips. Records today's high as a side effect, so the
+    first call after a fresh install simply seeds it.
     """
     raw = _drawdown_raw(net_liquidation)
     if raw is None:
@@ -280,7 +281,7 @@ def evaluate_breakers(positions: list[PositionSnapshot], net_liquidation: float)
     if net_liquidation <= 0:
         return None
     today = today_et()
-    ack = get_breaker_ack(today)
+    ack = get_breaker_ack(today, keep_days=cfg.drawdown_window_days)
     new_loss = ack["loss"] if ack else None
     new_dd = ack["drawdown"] if ack else None
     reason: str | None = None
@@ -308,7 +309,7 @@ def evaluate_breakers(positions: list[PositionSnapshot], net_liquidation: float)
             ack is not None and new_dd is None,
         )
         if trip and reason is None:
-            reason = f"Drawdown ${drawdown:,.0f} from high-water mark"
+            reason = f"Drawdown ${drawdown:,.0f} from the {cfg.drawdown_window_days}-session high"
 
     if ack is not None and (new_loss, new_dd) != (ack["loss"], ack["drawdown"]):
         record_breaker_ack(today, loss=new_loss, drawdown=new_dd)

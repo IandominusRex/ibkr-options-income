@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from types import SimpleNamespace
 
 import pytest
@@ -325,3 +326,28 @@ def test_a_halt_records_its_source_and_resume_clears_it(tmp_path, monkeypatch):
     assert get_halt_source() == "breaker"
     set_halted(False)
     assert get_halt_source() == ""
+
+
+def test_the_drawdown_window_forgets_a_peak_older_than_three_sessions(tmp_path, monkeypatch):
+    """2026-11-05: an all-time peak left the breaker in breach every morning for two weeks.
+    The drawdown now measures from the highest of the last 3 sessions only."""
+    from src.execution.circuit_breakers import drawdown_breached
+    from src.storage.system_settings import get_high_water_mark, set_high_water_mark
+
+    _db_setup(tmp_path, monkeypatch)
+    for day, high in [(1, 800_000.0), (2, 700_000.0), (3, 690_000.0), (4, 680_000.0)]:
+        set_high_water_mark(high, today=date(2026, 11, day))
+    # The 800k peak is 3 sessions back: out of a 3-session window ending Nov 4.
+    assert get_high_water_mark(3, today=date(2026, 11, 4)) == pytest.approx(700_000.0)
+    assert get_high_water_mark(4, today=date(2026, 11, 4)) == pytest.approx(800_000.0)
+    # Standing 5% below the window's high is not a breach at the 6% line.
+    assert drawdown_breached(665_000.0) is None
+
+
+def test_a_lower_print_never_lowers_the_days_high(tmp_path, monkeypatch):
+    from src.storage.system_settings import get_high_water_mark, set_high_water_mark
+
+    _db_setup(tmp_path, monkeypatch)
+    set_high_water_mark(500_000.0, today=date(2026, 11, 2))
+    set_high_water_mark(480_000.0, today=date(2026, 11, 2))
+    assert get_high_water_mark(3, today=date(2026, 11, 2)) == pytest.approx(500_000.0)

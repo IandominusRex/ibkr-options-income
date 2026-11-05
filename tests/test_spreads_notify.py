@@ -21,7 +21,6 @@ from src.spreads.notify import (
     fmt_entry,
     fmt_eod,
     fmt_exit,
-    fmt_recovered,
     status_nothing_to_sell,
 )
 
@@ -136,10 +135,6 @@ def test_alerts_drop_the_bracket_tag_and_escape() -> None:
     assert fmt_alert("[SPREADS] URGENT: 1 spread open").startswith("🚨")
 
 
-def test_a_recovery_notice_is_an_all_clear_not_a_warning() -> None:
-    assert fmt_recovered("[SPREADS] GEX map is back <09:55>") == "✅ GEX map is back &lt;09:55&gt;"
-
-
 async def test_send_without_credentials_never_builds_a_bot(monkeypatch) -> None:
     def boom(*a, **k):
         raise AssertionError("Bot must not be constructed without credentials")
@@ -182,3 +177,26 @@ async def test_send_posts_html_to_the_spreads_thread_and_edit_targets_the_messag
     assert await n.edit(9, "again") is True
     assert _FakeBot.edited[0]["message_id"] == 9 and _FakeBot.edited[0]["text"] == "again"
     assert SpreadsNotifier("tok", "123", "").thread_id is None
+
+
+def test_the_day_card_says_whether_the_map_builds_and_trades_are_assessed() -> None:
+    at = NOW
+    card = DayCard(
+        day=date(2026, 10, 7),
+        mode="paper",
+        updated_at=at,
+        map_at=at,
+        map_builds=3,
+        assessments=12,
+        assessed_at=at,
+        watch_note="trigger not armed — move 0.3 EM",
+    )
+    text = fmt_day_card(card)
+    assert "<i>updated 09:45 ET</i>" in text.splitlines()[0]
+    assert "GEX map</b> ✅ built 09:45 ET · 3 builds today" in text
+    assert "Trades</b> 12 assessed · last 09:45 ET · trigger not armed — move 0.3 EM" in text
+    card.map_failed_since, card.map_error = at, "no chain or index price"
+    assert "⚠️ failing since 09:45 ET · no chain or index price · retrying every 5 min" in (
+        fmt_day_card(card)
+    )
+    assert "⏳ not built yet" in fmt_day_card(DayCard(day=date(2026, 10, 7), mode="paper"))

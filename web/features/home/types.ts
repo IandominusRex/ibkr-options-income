@@ -17,6 +17,11 @@ export type AccountValueSeries = {
   /** Null whenever the headline value is not from today (weekend, before the first snapshot). */
   change_today: number | null;
   change_today_pct: number | null;
+  /** The headline's move over the selected range (1d: the last session's, so a weekend still
+   *  shows Friday's). Null only when there is no earlier known value. */
+  change: number | null;
+  change_pct: number | null;
+  change_since: string | null;
 };
 
 export type AccountValueResponse = { as_of: string; series: AccountValueSeries };

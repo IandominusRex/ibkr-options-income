@@ -36,10 +36,12 @@ HALT_SOURCE_KEY = "execution_halt_source"
 BREAKER_ACK_KEY = "breaker_ack"
 ROLL_MODE_KEY = "roll_mode"
 SCAN_LEASE_KEY = "scan_lease_expiry"
-# USD since 099fd0a (net liq reported in USD, not the account's base currency). The old
-# "nlv_high_water_mark" row holds a base-currency (SGD) figure and is deliberately never
-# read: against USD net liq it read as a ~25% drawdown and halted the wheel (2026-10-12).
-HIGH_WATER_MARK_KEY = "nlv_high_water_mark_usd"
+# JSON {ET day: highest USD net liquidation seen that day}: the drawdown breaker measures from the
+# highest of the last few sessions, not an all-time peak (2026-11-05: an all-time mark left the
+# breaker in breach every morning for two weeks). USD since 099fd0a; the old base-currency
+# "nlv_high_water_mark" and "nlv_high_water_mark_usd" rows are deliberately never read.
+HIGH_WATER_MARK_KEY = "nlv_daily_highs_usd"
+_DAILY_HIGHS_KEPT = 12
 MONITOR_HEARTBEAT_KEY = "monitor_heartbeat"
 MONITOR_IBKR_CONNECTED_KEY = "monitor_ibkr_connected"
 COMMAND_DRAIN_IBKR_CONNECTED_KEY = "command_drain_ibkr_connected"
@@ -355,19 +357,25 @@ def arm_breaker_ack() -> None:
     )
 
 
-def get_breaker_ack(day: date) -> dict[str, float | None] | None:
-    """Today's acknowledgement, or None (never acknowledged, or acknowledged on an earlier ET
-    day — an ack lasts one trading day). A ``None`` ``loss``/``drawdown`` means armed but not
-    yet measured."""
+def get_breaker_ack(day: date, keep_days: int = 1) -> dict[str, float | None] | None:
+    """The live acknowledgement, or None (never acknowledged, or it has lapsed). The daily-loss
+    ack lasts its own ET day; the drawdown ack lasts ``keep_days`` sessions, because the
+    drawdown window still holds the same drop the next morning. A ``None`` ``loss``/``drawdown``
+    means armed but not yet measured."""
     raw = get_setting(BREAKER_ACK_KEY, "")
     if not raw:
         return None
     try:
         data = json.loads(raw)
-        if data.get("date") != day.isoformat():
+        age = (day - date.fromisoformat(data["date"])).days
+        if age < 0 or age >= max(keep_days, 1):
             return None
-        return {"loss": data.get("loss"), "drawdown": data.get("drawdown")}
-    except (ValueError, AttributeError):
+        if age == 0:
+            return {"loss": data.get("loss"), "drawdown": data.get("drawdown")}
+        if data.get("drawdown") is None:
+            return None
+        return {"loss": 0.0, "drawdown": data["drawdown"]}  # 0.0 = no head-room beyond the line
+    except (ValueError, AttributeError, KeyError, TypeError):
         return None
 
 
@@ -389,16 +397,36 @@ def get_halt_source() -> str:
     return get_setting(HALT_SOURCE_KEY, "")
 
 
-def get_high_water_mark() -> float:
-    """Highest net liquidation seen, used by the drawdown circuit breaker."""
+def _daily_highs() -> dict[str, float]:
     try:
-        return float(get_setting(HIGH_WATER_MARK_KEY, "0") or 0.0)
-    except (TypeError, ValueError):
-        return 0.0
+        raw = json.loads(get_setting(HIGH_WATER_MARK_KEY, "") or "{}")
+        return {str(k): float(v) for k, v in raw.items()}
+    except (TypeError, ValueError, AttributeError):
+        return {}
 
 
-def set_high_water_mark(value: float) -> None:
-    set_setting(HIGH_WATER_MARK_KEY, f"{value:.2f}")
+def get_high_water_mark(window_days: int = 3, today: date | None = None) -> float:
+    """Highest net liquidation across the last ``window_days`` trading sessions (the days on
+    file, today included), used by the drawdown circuit breaker. 0.0 when nothing is recorded."""
+    from src.common.market_hours import today_et
+
+    cutoff = (today or today_et()).isoformat()
+    days = sorted(d for d in _daily_highs() if d <= cutoff)[-max(window_days, 1) :]
+    highs = _daily_highs()
+    return max((highs[d] for d in days), default=0.0)
+
+
+def set_high_water_mark(value: float, today: date | None = None) -> None:
+    """Record ``value`` as a net-liquidation high for the day if it beats that day's high."""
+    from src.common.market_hours import today_et
+
+    day = (today or today_et()).isoformat()
+    highs = _daily_highs()
+    if value <= highs.get(day, 0.0):
+        return
+    highs[day] = round(value, 2)
+    kept = dict(sorted(highs.items())[-_DAILY_HIGHS_KEPT:])
+    set_setting(HIGH_WATER_MARK_KEY, json.dumps(kept))
 
 
 def _lease_value(expiry_str: str, owner: str) -> str:

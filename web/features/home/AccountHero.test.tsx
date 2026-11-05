@@ -43,6 +43,9 @@ const body = (range: RangeKey): AccountValueResponse => ({
     previous_close: 101_000,
     change_today: 500,
     change_today_pct: 0.496,
+    change: 500,
+    change_pct: 0.496,
+    change_since: "2026-10-12T20:00:00Z",
   },
 });
 
@@ -50,7 +53,7 @@ describe("AccountHero", () => {
   it("shows the account value and today's signed change in words", async () => {
     renderWithQuery(<AccountHero />, { "/portfolio/value": body("1m") });
     expect(await screen.findByText("$101,500.00")).toBeInTheDocument();
-    expect(screen.getByText("+$500.00 (0.50%) today")).toBeInTheDocument();
+    expect(screen.getByText("+$500.00 (0.50%) past month")).toBeInTheDocument();
   });
   it("rewrites the number while scrubbing and restores it after", async () => {
     renderWithQuery(<AccountHero />, { "/portfolio/value": body("1m") });
@@ -94,18 +97,18 @@ describe("AccountHero", () => {
   });
   it("shows neutral, not green, when the day's change is exactly zero", async () => {
     const flat = body("1m");
-    flat.series = { ...flat.series, change_today: 0, change_today_pct: 0 };
+    flat.series = { ...flat.series, change: 0, change_pct: 0 };
     renderWithQuery(<AccountHero />, { "/portfolio/value": flat });
-    const line = await screen.findByText("$0 (0.00%) today");
+    const line = await screen.findByText("$0 (0.00%) past month");
     expect(line.className).not.toMatch(/text-gain|text-loss/);
   });
   it("keeps the value and says when it is from when today's change is unknown", async () => {
     const weekend = body("1m");
-    weekend.series = { ...weekend.series, change_today: null, change_today_pct: null };
+    weekend.series = { ...weekend.series, change: null, change_pct: null };
     renderWithQuery(<AccountHero />, { "/portfolio/value": weekend });
     expect(await screen.findByText("$101,500.00")).toBeInTheDocument();
     const line = screen.getByText(/last value Oct 13, 2026/);
-    expect(line).toHaveTextContent("n/a today · last value Oct 13, 2026");
+    expect(line).toHaveTextContent("n/a past month · last value Oct 13, 2026");
     // Unknown carries the hatch as well as the word, here as everywhere (DESIGN.md Words First).
     expect(within(line).getByText("n/a")).toHaveClass("hatch");
   });
@@ -225,7 +228,7 @@ describe("AccountHero", () => {
     });
     it("does not flag Friday's close at a weekend", async () => {
       const friday = body("1d");
-      friday.series = { ...friday.series, latest_at: "2026-10-16T20:00:00Z", change_today: null, change_today_pct: null };
+      friday.series = { ...friday.series, latest_at: "2026-10-16T20:00:00Z", change: null, change_pct: null };
       renderWithQuery(<AccountHero now={new Date("2026-10-17T16:00:00Z")} />, { "/portfolio/value": friday });
       await screen.findByText("$101,500.00");
       expect(screen.queryByText("Delayed")).toBeNull();
@@ -240,7 +243,7 @@ describe("AccountHero", () => {
   });
   it("says there is no history yet instead of drawing an empty frame", async () => {
     const empty = body("1m");
-    empty.series = { ...empty.series, points: [], latest: null, change_today: null, change_today_pct: null };
+    empty.series = { ...empty.series, points: [], latest: null, change: null, change_pct: null };
     renderWithQuery(<AccountHero />, { "/portfolio/value": empty });
     expect(await screen.findByText("No account history yet.")).toBeInTheDocument();
     // The value and the day's change are both unknown, and both say so with the hatch.

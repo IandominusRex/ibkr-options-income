@@ -1474,8 +1474,12 @@ export interface components {
          *     last close; 1d/1w end on it only when `latest_at` falls inside the window. Points ascend in
          *     time but not strictly: snapshot rows sharing a `captured_at` both appear.
          *     `previous_close` is the close before the New York day `latest` belongs to; `change_today`
-         *     is None unless that day is today (weekends, before the day's first snapshot). A net
-         *     liquidation of 0 or less is unknown. Every figure is None when unknown - never 0.0.
+         *     is None unless that day is today (weekends, before the day's first snapshot).
+         *     `change`/`change_pct` are the headline's move over the *selected range* from `change_since`
+         *     (1d: the previous close, so a weekend still shows Friday's move; 1w/1m/3m/ytd: the last close
+         *     at or before the window start, else the window's first point; all: the first point). They
+         *     are None only when there is no earlier known value. A net liquidation of 0 or less is
+         *     unknown. Every figure is None when unknown - never 0.0.
          */
         AccountValueSeries: {
             /**
@@ -1495,6 +1499,12 @@ export interface components {
             change_today?: number | null;
             /** Change Today Pct */
             change_today_pct?: number | null;
+            /** Change */
+            change?: number | null;
+            /** Change Pct */
+            change_pct?: number | null;
+            /** Change Since */
+            change_since?: string | null;
         };
         /**
          * AlternativeStrike
