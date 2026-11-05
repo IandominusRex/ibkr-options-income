@@ -128,7 +128,7 @@ check's count.
 | **Task 13: Pay's words, the month floor, the ledger's stock gain, capped spread fills, cross-links** | done | (this commit; `fix(web): Pay says strategy names, months start at the record, a capped list says so, History and Fills link`) | red: 7 of 9 new cases failed first (SummaryPanel 2, TradesView 1, SpreadFills 1, FillsView 1, HistoryView 1, PayView 1; the other two, a whole list claiming no cap and a month at the floor rewriting nothing, are guards that pass before the change); full vitest 1490 in 147 files (1481 + 9); tsc and lint clean; G1 empty, G2 the four files, G3 exit 0, G4 scratch build green (`/activity`, `/ledger/trades`, `/trades`, `/trades/[approvalId]` build); da-vinci lint.py over the seven non-test files: exit 0; mutations (month clamp off; stock-gain n/a for every non-open outcome): the PayView and TradesView cases fail | 2026-11-05 | (1) **No existing test changed**: the plan expected one assertion on the raw by-strategy label to update, but the only existing pin (`BreakdownTable` rendering `cash_secured_put`) renders the table directly with the default `labelOf`, which still passes labels through, and no SummaryPanel-level case read the raw label (cost: none). (2) `strategyWord` lives in `SummaryPanel.tsx` (exported) with two words; `credit_spread` and any other label pass through as the API names them (cost: a raw label if the API adds a strategy). (3) `PayView` clamps with `month = floor <= current && urlMonth < floor ? floor : urlMonth` plus a `useEffect` that calls the month setter so the URL is rewritten (`replace("/activity?month=2026-06")`); until the unfiltered curve answers, the floor is unknown, so the raw month is fetched once (a transient request for a pre-record month, never left on screen; cost: one wasted GET). A floor later than the current month is ignored. (4) The stock-gain n/a keys on the effective `outcome === "Called away"` (what the row shows), not `computed_outcome`. (5) `SpreadFills` reads `truncated` from the generated `SpreadOrdersResponse` (`features/activity/types.ts` aliases it; no hand type); the sentence says "200" because the component asks for `limit=200` itself. (6) The Fills sentence sits at the foot of the whole Fills and orders view (under every list chip), History's at the foot of History under every strategy. (7) DESIGN.md: one Activity bullet ("Honest words and the cross-links"); G3 exit 0. (8) G4 ran in a scratchpad copy, removed after (the `rm -rf "$(dirname ...)"` form is refused by the sandbox). |
 | **Section E exit** | done | f022dc0, ea9f8f4, Task 13 commit (the one holding this row; its hash is not known when written) | vitest 1490 in 147 files (1458 + 8 + 15 + 9), tsc and lint clean, G1 empty, G2 the four files, G3 exit 0, G4 green (every build, 19 routes at Task 12), da-vinci lint.py clean on all touched non-test files | 2026-11-05 | none beyond the task rows; read Task 12 ruling 1 (Spreads "Next onto today" already cleared the day, now pinned by a test) and ruling 3 (History's links omit today and All) |
 | **Section F entry** | done | | F1 vitest 1490 in 147 files, tsc+lint clean, G1/G2/G3 re-run by orchestrator; F2 only app/layout.tsx; F3 the nine client pages match. Section E hashes: Task 11 f022dc0, Task 12 ea9f8f4, Task 13 bd33441 | 2026-11-05 | |
-| **Task 14: a title on every route** | pending | | | | |
+| **Task 14: a title on every route** | done | (this commit; `feat(web): every route has its own title`) | red: titles.test.ts failed to load (the nine layouts and seven `metadata` exports did not exist); 20 passed after; full vitest 1510 in 148 files (1490 + 20, 147 + 1); tsc and lint clean; G1 empty, G2 the four files, G4 scratch build green (19 routes plus `/_not-found`), built HTML titles: `portfolio.html` `Portfolio · IBKR Income`, `more.html` `More · IBKR Income`, `index.html` `IBKR Income` | 2026-11-05 | (1) The nine layouts: static (`metadata`) for `more`, `more/claude`, `research`, `research/universe`; `generateMetadata` for stock, news ticker, ledger ticker, position and proposal. (2) The test mocks `next/font/google` and the four shell/provider modules so the root layout's `metadata` can be imported under jsdom (cost: none). (3) A dynamic title decodes its segment (`decodeURIComponent`) and upper-cases a symbol, as the pages do; a proposal id is decoded only (pinned for `brk%2Eb` on the position title). (4) Home is pinned to export no `metadata`. (5) The `?symbol=`-style routes are unchanged; `/research` and `/more` keep their pages as client components. G4 built in a scratchpad copy, removed by literal path afterwards (the plan's mktemp/rm form is refused by the sandbox) |
 | **Task 15: not-found and error pages** | pending | | | | |
 | **Section G entry** | pending | | | | |
 | **Task 16: docs** | pending | | | | |
@@ -1338,12 +1338,12 @@ export function useValueOut(valueAvailable: boolean | undefined): boolean {
 **Files:** Modify `web/app/layout.tsx`, the eight server pages; create nine `layout.tsx` files beside the
 client pages and `web/app/titles.test.ts`; this plan.
 
-- [ ] **Step 1: Test first.** `app/titles.test.ts` imports each server page's `metadata`, each new layout's
+- [x] **Step 1: Test first.** `app/titles.test.ts` imports each server page's `metadata`, each new layout's
   `metadata` or calls its `generateMetadata({ params: Promise.resolve({...}) })`, and asserts ruling 23's titles
   (`"AAPL"` from `symbol: "aapl"`; `"AAPL position"` from `underlying: "AAPL", slug: "x"`; `"Proposal 42"` from
   `approvalId: "42"`; `"AAPL news"`; `"AAPL ledger"`), plus the root's `{ default: "IBKR Income", template:
   "%s · IBKR Income" }`. Run red.
-- [ ] **Step 2: Build.** Root: `title: { default: "IBKR Income", template: "%s · IBKR Income" }`. Server pages:
+- [x] **Step 2: Build.** Root: `title: { default: "IBKR Income", template: "%s · IBKR Income" }`. Server pages:
   `export const metadata: Metadata = { title: "Trades" };` etc. (Home sets none.) Client pages: a sibling
   `layout.tsx`:
 
@@ -1362,7 +1362,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 ```
 
   (a static one exports `metadata` instead).
-- [ ] **Step 3: Gate and commit.** Web gate; G4 (titles appear in the built HTML: grep one page's `<title>` in
+- [x] **Step 3: Gate and commit.** Web gate; G4 (titles appear in the built HTML: grep one page's `<title>` in
   `.next/server/app/portfolio.html` of the scratch copy). Commit `feat(web): every route has its own title`.
 
 ### Task 15: Not-found and error pages

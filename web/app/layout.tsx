@@ -20,7 +20,7 @@ const mono = Red_Hat_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "IBKR Income",
+  title: { default: "IBKR Income", template: "%s · IBKR Income" },
   description: "Options income console",
 };
 

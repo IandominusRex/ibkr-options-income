@@ -1,5 +1,8 @@
+import type { Metadata } from "next";
 import { LedgerShell } from "@/components/ledger/LedgerShell";
 import { TradesView } from "@/components/ledger/TradesView";
+
+export const metadata: Metadata = { title: "Ledger trades" };
 
 export default function LedgerTradesPage() {
   return (
