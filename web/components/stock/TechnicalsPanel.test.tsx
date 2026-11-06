@@ -41,4 +41,9 @@ describe("TechnicalsPanel", () => {
     expect(screen.getByText(/Phase: n\/a/)).toBeInTheDocument();
     expect(screen.getByText(/Regime: n\/a/)).toBeInTheDocument();
   });
+
+  it("hatches an unknown figure (web overhaul Part 5)", () => {
+    render(<TechnicalsPanel data={{ ...full, rsi_14: null }} />);
+    expect(screen.getByText("n/a").className).toContain("hatch");
+  });
 });

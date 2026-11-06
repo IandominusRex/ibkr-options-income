@@ -119,8 +119,8 @@ Progress log row; a "Section X entry" row rides in the next task's commit. A rev
 | **Task 6: size tier and tranche plan in the value block** | done | `c296632` | `T6` (d11f27de...) applied clean: `SizeBlock.tsx`, `format.ts`, `format.test.ts`, `ValueBlock.test.tsx` all `M`. Red check: with `format.ts` and `SizeBlock.tsx` stashed, `vitest run features/stock-value` 3 failed, 35 passed; popped. Gate: 38 passed; full vitest 1549 in 152 files; tsc clean; lint clean; G1 prints nothing; G2 lists exactly the four expected files; G3 exit 0; G5 no finding. da-vinci: the two new lines (tranche line under the holding, size line under each entry ceiling) use the same `mt-1 text-sm` as their neighbours, so they sit in the block's rhythm; no change | 2026-11-06 | none |
 | **Section B exit** | done | `c296632` | Verified by the orchestrator: four task commits after Section A; vitest 1549 in 152 files; tsc and lint clean; G1 empty; G2 the four files; G3 exit 0; G5 no finding; status clean. G4 (scratch build green, 18 routes + `/_not-found`) and the vitest-per-task counts are the section agent's report | 2026-11-06 | none |
 | **Section C entry** | done | (rides in Task 7's commit) | C1 four task commits since Section A, vitest 1549 in 152 files; C2 T7-T9 apply; C3 test counts 5/6/2/5/5/6 as written | 2026-11-06 | none |
-| **Task 7: Checks** | done | (filled in Task 8's commit) | da-vinci loaded with the Section C spec. `T7` (5e04a7f7...) applied clean: five `M` files in `web/components/checks/`. Red check: with the three source files stashed, `components/checks` 3 failed, 18 passed; popped. Gate: 21 passed; full vitest 1552 in 152 files; tsc clean; lint clean. (The Task 6 hash, Section B exit and Section C entry rows ride in this commit.) | 2026-11-06 | none (da-vinci changed no spacing; patch classes kept; cost if wrong: none) |
-| **Task 8: Technicals, Sentiment, News, statements** | pending | | | | |
+| **Task 7: Checks** | done | `7e3c5ab` | da-vinci loaded with the Section C spec. `T7` (5e04a7f7...) applied clean: five `M` files in `web/components/checks/`. Red check: with the three source files stashed, `components/checks` 3 failed, 18 passed; popped. Gate: 21 passed; full vitest 1552 in 152 files; tsc clean; lint clean. (The Task 6 hash, Section B exit and Section C entry rows ride in this commit.) | 2026-11-06 | none (da-vinci changed no spacing; patch classes kept; cost if wrong: none) |
+| **Task 8: Technicals, Sentiment, News, statements** | done | (filled in Task 9's commit) | `T8` (27fbf9a2...) applied clean: seven `M` files in `web/components/stock/`. Red check: with the four source files stashed, the three panel suites 3 failed, 12 passed; popped. Gate: panels + StatementsTable 23 passed (panels 15, StatementsTable unchanged); full vitest 1555 in 152 files; tsc clean; lint clean; `git diff --stat main -- web/features/position` prints nothing. | 2026-11-06 | none (da-vinci changed no spacing; cost if wrong: none) |
 | **Task 9: the model summary** | pending | | | | |
 | **Section C exit** | pending | | | | |
 | **Section D entry** | pending | | | | |
@@ -2523,15 +2523,15 @@ three's tests; this plan.
 figure line; News rows on hairlines with the tone as a neutral `StatusWord`; the statements' tables without their own
 card fill (they sit in the section's card behind the disclosure), headers in the label style.
 
-- [ ] **Step 1: da-vinci.**
-- [ ] **Step 2: Check and apply `T8`.**
-- [ ] **Step 3: Red check.** `git stash push -- web/components/stock/TechnicalsPanel.tsx web/components/stock/SentimentPanel.tsx web/components/stock/NewsPanel.tsx web/components/stock/StatementsTable.tsx`,
+- [x] **Step 1: da-vinci.**
+- [x] **Step 2: Check and apply `T8`.**
+- [x] **Step 3: Red check.** `git stash push -- web/components/stock/TechnicalsPanel.tsx web/components/stock/SentimentPanel.tsx web/components/stock/NewsPanel.tsx web/components/stock/StatementsTable.tsx`,
   then `cd web && npx vitest run components/stock/TechnicalsPanel components/stock/SentimentPanel components/stock/NewsPanel`
   shows `3 failed | 12 passed`; `git stash pop`.
-- [ ] **Step 4: Gate.** The same three files: 15 passed; `npx vitest run components/stock/StatementsTable` passes
+- [x] **Step 4: Gate.** The same three files: 15 passed; `npx vitest run components/stock/StatementsTable` passes
   unchanged. Full vitest **1555 in 152 files**; tsc, lint. `features/position/Headlines.tsx` is untouched
   (`git diff --stat main -- web/features/position` prints nothing).
-- [ ] **Step 5: Commit** `fix(web): technicals, tone and headlines in words; the statements inside their card`.
+- [x] **Step 5: Commit** `fix(web): technicals, tone and headlines in words; the statements inside their card`.
 
 <!-- block T8 -->
 ````diff

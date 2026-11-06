@@ -1,3 +1,4 @@
+import { StatusWord } from "@/components/ui/StatusWord";
 import { relativeAge } from "@/lib/format";
 
 type NewsItem = {
@@ -26,42 +27,36 @@ export function sentimentTint(v: number | null): string {
 
 export function NewsPanel({ items }: { items: NewsItem[] }) {
   if (items.length === 0) {
-    return (
-      <p className="rounded-md bg-surface px-4 py-3 text-sm text-muted">
-        No recent headlines.
-      </p>
-    );
+    return <p className="text-sm text-muted">No recent headlines.</p>;
   }
 
+  // The tone is a word in a neutral status chip: it is not money, so it is never green or red on
+  // this page (web overhaul Part 5). `sentimentTint` stays for the position page's headlines.
   return (
-    <ul className="space-y-3">
+    <ul>
       {items.map((item, i) => {
-        const label = sentimentLabel(item.sentiment);
-        const tint = sentimentTint(item.sentiment);
         const age = relativeAge(item.published_at);
         return (
-          <li key={i} className="flex items-start gap-3 text-sm">
-            <div className="flex-1">
+          <li key={i} className="flex items-start gap-3 border-t border-border py-2.5 text-sm first:border-t-0">
+            <div className="min-w-0 flex-1">
               {item.url ? (
                 <a
                   href={item.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-content underline-offset-2 hover:underline"
+                  className="font-semibold underline-offset-2 hover:underline"
                 >
                   {item.title}
                 </a>
               ) : (
-                <span className="text-content">{item.title}</span>
+                <span className="font-semibold">{item.title}</span>
               )}
-              <div className="mt-0.5 flex gap-2 text-xs text-muted">
+              <div className="mt-0.5 flex flex-wrap gap-x-2 text-[0.8125rem] text-muted">
                 {item.source && <span>{item.source}</span>}
                 {age && <span>{age}</span>}
               </div>
             </div>
-            <span className={`tabular shrink-0 rounded bg-elevated px-2 py-0.5 text-xs ${tint}`}>
-              {label}
-            </span>
+            <StatusWord>{sentimentLabel(item.sentiment)}</StatusWord>
           </li>
         );
       })}

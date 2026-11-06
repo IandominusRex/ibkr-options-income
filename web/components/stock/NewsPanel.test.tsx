@@ -59,4 +59,10 @@ describe("NewsPanel", () => {
     render(<NewsPanel items={[]} />);
     expect(screen.getByText("No recent headlines.")).toBeInTheDocument();
   });
+
+  it("says the tone as a neutral word, never green or red (web overhaul Part 5)", () => {
+    render(<NewsPanel items={items} />);
+    expect(screen.getByText("bullish").className).not.toMatch(/text-(gain|loss)/);
+    expect(screen.getByText("bearish").className).not.toMatch(/text-(gain|loss)/);
+  });
 });

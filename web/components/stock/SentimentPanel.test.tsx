@@ -54,4 +54,10 @@ describe("SentimentPanel", () => {
     expect(screen.getByText("n/a samples")).toBeInTheDocument();
     expect(screen.queryByText("0 samples")).not.toBeInTheDocument();
   });
+
+  it("signs the day's change but never colours it: tone is not money (web overhaul Part 5)", () => {
+    render(<SentimentPanel data={{ ...full, delta_1d: -2.0 }} />);
+    const delta = screen.getByText("-2.0 1d");
+    expect(delta.className).not.toMatch(/text-(gain|loss)/);
+  });
 });

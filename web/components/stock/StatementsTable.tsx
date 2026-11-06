@@ -28,23 +28,19 @@ const ROWS: [string, string][] = [
 
 function StatementBody({ periods }: { periods: Period[] }) {
   if (periods.length === 0) {
-    return (
-      <p className="rounded-md bg-surface px-4 py-3 text-sm text-muted">
-        No periods filed.
-      </p>
-    );
+    return <p className="text-sm text-muted">No periods filed.</p>;
   }
 
   return (
-    <div className="overflow-x-auto rounded-md bg-surface">
+    <div className="overflow-x-auto">
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr className="border-b border-border">
-            <th className="px-4 py-3 text-left font-medium text-muted">Line item</th>
+            <th className="py-2 pr-3 text-left text-xs font-semibold tracking-[0.04em] text-muted">Line item</th>
             {periods.map((p) => (
               <th
                 key={p.period_end}
-                className="tabular px-4 py-3 text-right font-mono font-medium text-muted"
+                className="tabular px-3 py-2 text-right font-mono text-xs font-semibold text-muted"
               >
                 {formatPeriod(p.period_end)}
               </th>
@@ -54,7 +50,7 @@ function StatementBody({ periods }: { periods: Period[] }) {
         <tbody>
           {ROWS.map(([key, label]) => (
             <tr key={key} className="border-b border-border last:border-0">
-              <td className="px-4 py-2 text-content">{label}</td>
+              <td className="whitespace-nowrap py-2 pr-3">{label}</td>
               {periods.map((p) => {
                 const item = p.items[key];
                 // Hyphen, not an em dash, per web/CLAUDE.md "Zero em dashes in UI copy".
@@ -66,7 +62,7 @@ function StatementBody({ periods }: { periods: Period[] }) {
                   <td
                     key={p.period_end}
                     title={title}
-                    className={`tabular px-4 py-2 text-right font-mono ${
+                    className={`tabular whitespace-nowrap px-3 py-2 text-right font-mono ${
                       isUnknown ? "hatch text-unknown" : "text-content"
                     }`}
                   >
@@ -84,27 +80,21 @@ function StatementBody({ periods }: { periods: Period[] }) {
 
 export function StatementsTable({ financials }: { financials: Financials }) {
   return (
-    <div className="space-y-8">
+    <div className="space-y-5">
       {financials.annual.length > 0 && (
         <section>
-          <h3 className="mb-3 text-xs font-medium tracking-wide text-muted">
-            Annual
-          </h3>
+          <h3 className="mb-1 text-xs font-semibold tracking-[0.04em] text-muted">Annual</h3>
           <StatementBody periods={financials.annual} />
         </section>
       )}
       {financials.quarterly.length > 0 && (
         <section>
-          <h3 className="mb-3 text-xs font-medium tracking-wide text-muted">
-            Quarterly
-          </h3>
+          <h3 className="mb-1 text-xs font-semibold tracking-[0.04em] text-muted">Quarterly</h3>
           <StatementBody periods={financials.quarterly} />
         </section>
       )}
       {financials.annual.length === 0 && financials.quarterly.length === 0 && (
-        <p className="rounded-md bg-surface px-4 py-3 text-sm text-muted">
-          No statements filed.
-        </p>
+        <p className="text-sm text-muted">No statements filed.</p>
       )}
     </div>
   );
