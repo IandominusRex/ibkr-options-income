@@ -127,8 +127,8 @@ Progress log row; a "Section X entry" row rides in the next task's commit. A rev
 | **Section B exit** | done | - | three task commits (76a3093, ad30440, b613c9b); vitest 1593 in 153 files; tsc and lint clean; G1 empty; G2 the four files; G3 exit 0; G4 green (19 route rows); G5 no non-test finding; G6 `pytest -q tests/test_web_fence.py tests/test_value_fence.py tests/test_eval_skills.py tests/test_openapi_current.py` 55 passed; G7 the one layout line; scratch build removed; status clean after commit | 2026-11-07 | recorded in Task 7's commit (the plan allows it; cost if wrong: none) |
 | **Section C entry** | done | - | C1 Section B landed (76a3093, ad30440, b613c9b plus docs commit 45d8781), vitest 1593 in 153 files, tsc and lint clean, G1 empty, G2 four files, G7 prints `web/app/layout.tsx:55:          <CommandPalette />`; C2 `git apply --check` of T8 printed nothing; C3 test counts 6, 4, 9 as written and ResearchPage.tsx does not exist. No Python file changed since the green A3 baseline | 2026-11-07 | none |
 | **Task 8: Your watchlist** | done | b1f29b3 | red check (WatchlistTable.tsx, research/page.tsx stashed): 6 failed / 7 passed (13); with patch components/home + app/research 17 passed; full vitest 1597 in 153 files; tsc, lint clean; G5 no non-test line | 2026-11-07 | da-vinci invoked with the section Spec (DESIGN.md ratified, extending an existing surface): no change to the patch |
-| **Task 9: the Sectors card** | done | (next commit) | red check (SectorCard.tsx, SectorGrid.tsx stashed): components/home/Sector 4 failed / 4 passed (8); with patch components/home + app/research 21 passed; full vitest 1601 in 154 files; tsc, lint clean; G5 no non-test line | 2026-11-07 | da-vinci invoked with the section Spec: no change to the patch. Task 8's row hash filled in (b1f29b3) |
-| **Task 10: the Research page** | | | | | |
+| **Task 9: the Sectors card** | done | bdbb71d | red check (SectorCard.tsx, SectorGrid.tsx stashed): components/home/Sector 4 failed / 4 passed (8); with patch components/home + app/research 21 passed; full vitest 1601 in 154 files; tsc, lint clean; G5 no non-test line | 2026-11-07 | da-vinci invoked with the section Spec: no change to the patch. Task 8's row hash filled in (b1f29b3) |
+| **Task 10: the Research page** | done | (next commit) | features/research 34 passed (ResearchPage is a new module: red = module missing); full vitest 1603 in 154 files; tsc, lint clean; G3 exit 0; G4 green first try (19 rows: 18 routes plus /_not-found, `○ /research` 10.3 kB, `○ /research/universe` 2.89 kB; scratch build removed); G5 no non-test line | 2026-11-07 | da-vinci invoked with the section Spec (reads the Research surface in the T10 patch): no change to the patch. Task 9's row hash filled in (bdbb71d) |
 | **Task 11: Claude's note** | | | | | |
 | **Section C exit** | | | | | |
 | **Section D entry** | | | | | |
@@ -2830,13 +2830,13 @@ Research surface, the Decision Log entry); this plan.
 **What it does (ruling 10):** the frame, Search and Universe at the right, Top opportunities, then the two cards in
 Stock's grid.
 
-- [ ] **Step 1: da-vinci** with the Spec above; it reads the Research surface in the T10 patch.
-- [ ] **Step 2: Check and apply `T10`.** `git status --short` shows `M web/DESIGN.md`, `M web/app/research/page.tsx`,
+- [x] **Step 1: da-vinci** with the Spec above; it reads the Research surface in the T10 patch.
+- [x] **Step 2: Check and apply `T10`.** `git status --short` shows `M web/DESIGN.md`, `M web/app/research/page.tsx`,
   `D web/app/research/page.test.tsx` and `?? web/features/research/ResearchPage.test.tsx`,
   `?? web/features/research/ResearchPage.tsx`.
-- [ ] **Step 3: Gate.** `cd web && npx vitest run features/research`: 34 passed (ResearchPage 5 is a new module: red is
+- [x] **Step 3: Gate.** `cd web && npx vitest run features/research`: 34 passed (ResearchPage 5 is a new module: red is
   "module missing"). Full vitest **1603 in 154 files**; tsc, lint clean; G3 exit 0; G4 green; G5.
-- [ ] **Step 4: Commit** `feat(web): Research on the payslip: Top opportunities, Your watchlist and the sectors`.
+- [x] **Step 4: Commit** `feat(web): Research on the payslip: Top opportunities, Your watchlist and the sectors`.
 
 <!-- block T10 -->
 ````diff

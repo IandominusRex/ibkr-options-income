@@ -979,7 +979,29 @@ the figure face.
   live-cutover gate asks for. Claude's cut is labelled as Claude's wherever its reason shows.
 
 ### Research
-Read. Search, watchlist, sectors, the stock page, and Universe. VARIANCE 3, DENSITY 6.
+Read. Search, watchlist, sectors, the stock page, and Universe. VARIANCE 3, DENSITY 6. Recomposed 2026-11-06 (web
+overhaul Part 6) on the Stock page's frame.
+
+- **THESIS:** what is worth a look today. The value book's candidates lead; the names the operator follows and
+  how each sector is doing follow them.
+- **FIRST VIEWPORT:** the title "Research" (24px, 800) with one muted line ("What the value book would buy, the
+  names you follow, and how each sector is doing."), Search (secondary, the magnifier; it opens the search
+  palette) and Universe (a secondary pill link) at the right, wrapping under the title on a phone; then
+  "Top opportunities" (17px, 700) with one muted line and the strip.
+- **FORM:** the 1200px frame (`px-4` on a phone, `px-7` from 768px). Top opportunities full width; then one grid
+  as Stock's: "Your watchlist" left and the Sectors card in a 340px column right from 1024px, each column one
+  `minmax(0,1fr)` track; the DOM order is the phone order.
+- **Your watchlist:** a white card. The title, the count at the right ("3 names"), one muted line ("Names you
+  follow here, so their quotes stay fresh. The scan's own watchlist is on Universe.", Universe a link), the
+  field "Follow a name" (a typeahead over the symbol directory; a pick adds at once: no order consequence, so no
+  dialog), then a row per name: the ticker bold and the company muted, a muted line "IV rank 80.0 · 3 of 5 checks
+  pass · Earnings Nov 19, 2026", the price at the right with "-1.25% today" under it (signed, never green or red:
+  a price move is not money) and "Delayed" as a flag word on a stale quote, and a quiet "Remove". The row is a
+  link to the stock page. Unknowns are hatched n/a (never "0 of 0"); loading holds its place; a failed read, add
+  or remove is a sentence.
+- **Sectors by IV rank:** one white card, a row per sector in the API's order: the name bold with "IV rank 42.0
+  (3)" at the right, then "3 names · +1.50% today", then "Best MSFT +2.00% · worst AAPL -1.00%", all in muted ink
+  apart from the names; no green or red. Loading holds its place; empty and failed are sentences.
 
 - **Top opportunities (2026-11-05):** a strip above the watchlist, headed "Top opportunities", with two tabs on
   the strategy-switch track, Deep value and Quality growth (only the list on view is fetched). Up to ten white
@@ -1158,6 +1180,14 @@ sibling keys; re-run the check after edits.
   legacy pages that Parts 2-4 have yet to restyle.
 
 ## Decision Log
+
+- 2026-11-06: **Research, Universe and the search palette on the payslip** (web overhaul Part 6). Added the Search
+  palette component (one dialog in the root layout: pages and tickers, the arrow keys, a status line in words),
+  the rail's Search row (Research's icon became a telescope so the magnifier means search alone), More's Search
+  row, and the Research and Universe Surfaces. The operator ruled that search finds tickers and the console's own
+  pages from a fixed list (no API change) and that Research's list is "Your watchlist", apart from the scan's own
+  on Universe. A watchlist or sector move is a price, not money, so it is signed and never green or red. No new
+  token, colour, font, radius or elevation.
 
 - 2026-11-06: **The stock page on the payslip** (web overhaul Part 5). Added the Stock surface. The chart keeps its
   candles (the HANDOFF's call: keep `PriceChart`, add the value book's levels) but draws them in ink with direction
