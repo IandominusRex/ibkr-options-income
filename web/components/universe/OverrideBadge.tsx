@@ -33,22 +33,22 @@ export function OverrideBadge({
 
   return (
     <div
-      className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted"
+      className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.8125rem] text-muted"
       data-testid="override-badge"
       data-removed={removed}
     >
-      <span className="rounded-sm bg-elevated px-1.5 py-0.5 text-content">
+      <span className="rounded-[6px] bg-sunk px-2 py-px text-xs font-semibold tracking-[0.04em] text-content">
         {removed ? "Removed override" : "Override"}
       </span>
       <span>
-        {removed ? "removed" : "added"} by {author ?? "n/a"}
+        {removed ? "removed" : "added"} by {author ?? <span className="hatch px-1 text-unknown">n/a</span>}
         {age ? ` · ${age}` : ""}
       </span>
       <button
         type="button"
         disabled={disabled}
         onClick={onRevert}
-        className="text-content underline enabled:hover:text-focus disabled:cursor-default disabled:opacity-50 focus-visible:ring-focus"
+        className="inline-flex min-h-11 items-center font-semibold text-content underline underline-offset-2 enabled:hover:text-muted disabled:cursor-default disabled:opacity-50 md:min-h-0"
         data-testid="revert-button"
       >
         {removed ? "Revert (add back)" : "Revert"}

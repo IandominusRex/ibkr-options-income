@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ApiError, apiFetch } from "@/lib/api";
 import {
@@ -10,6 +10,8 @@ import {
 } from "@/lib/commands";
 import { ConfirmAction } from "@/components/options/ConfirmAction";
 import { CommandReceipt } from "@/components/options/CommandReceipt";
+import { StatusWord } from "@/components/ui/StatusWord";
+import { FIELD, FIELD_LABEL } from "@/components/ui/field";
 
 type Hit = { symbol: string; name: string; exchange: string | null; is_etf: boolean };
 type SearchResponse = { as_of: string; query: string; results: Hit[] };
@@ -34,6 +36,11 @@ type SearchResponse = { as_of: string; query: string; results: Hit[] };
  * Universe write routes never return `needs_confirmation: true`, so there is
  * no live-mode second-confirmation step to build here (unlike `HaltControl`/
  * `AssessedRow`).
+ *
+ * Web overhaul Part 6 restyled it in place: a visible label above the
+ * console's 44px field, the hits as a white panel with 44px rows on a phone,
+ * and a failure in plain words. The confirmation, its consequence text and
+ * the command flow are unchanged.
  */
 export function AddSymbol({
   listName,
@@ -50,6 +57,7 @@ export function AddSymbol({
   const [submitting, setSubmitting] = useState(false);
 
   const qc = useQueryClient();
+  const inputId = useId();
 
   // Poll every 2s while pending; stop once terminal (lib/commands.ts).
   const commandQuery = useCommandStatus(command?.id ?? null);
@@ -116,19 +124,22 @@ export function AddSymbol({
   }
 
   return (
-    <div data-testid={`add-symbol-${listName}`}>
+    <div data-testid={`add-symbol-${listName}`} className="max-w-sm">
+      <label htmlFor={inputId} className={FIELD_LABEL}>
+        {listName === "would_own" ? "Add a name to Would own" : "Add a name to Watchlist"}
+      </label>
       <input
+        id={inputId}
         value={term}
         disabled={inFlight}
         onChange={(e) => setTerm(e.target.value)}
         placeholder="Add a symbol"
-        aria-label={`Add a symbol to ${listName}`}
         autoComplete="off"
-        className="w-full max-w-xs rounded-sm border border-border bg-background px-2 py-1 font-mono text-sm text-content outline-none placeholder:text-muted focus-visible:border-focus disabled:opacity-50"
+        className={`${FIELD} mt-1 w-full disabled:opacity-50`}
       />
       {hits.length > 0 && (
         <ul
-          className="mt-1 max-w-xs rounded-sm border border-border bg-surface"
+          className="mt-1 rounded-xl border border-control bg-surface py-1"
           data-testid={`add-symbol-hits-${listName}`}
         >
           {hits.map((h) => (
@@ -136,23 +147,23 @@ export function AddSymbol({
               <button
                 type="button"
                 onClick={() => pick(h)}
-                className="flex w-full items-baseline gap-3 px-2 py-1 text-left text-sm hover:bg-elevated focus-visible:bg-elevated"
+                className="flex min-h-11 w-full items-center gap-3 px-3 text-left text-sm hover:bg-sunk focus-visible:bg-sunk md:min-h-9"
               >
-                <span className="tabular font-mono text-content">{h.symbol}</span>
-                <span className="truncate text-xs text-muted">{h.name}</span>
-                {h.is_etf && <span className="ml-auto text-[11px] text-muted">ETF</span>}
+                <span className="tabular font-semibold">{h.symbol}</span>
+                <span className="min-w-0 flex-1 truncate text-muted">{h.name}</span>
+                {h.is_etf && <StatusWord>ETF</StatusWord>}
               </button>
             </li>
           ))}
         </ul>
       )}
       {term.trim() && hits.length === 0 && (
-        <p className="mt-1 text-xs text-muted">No match</p>
+        <p className="mt-1 text-[0.8125rem] text-muted">No ticker matches yet.</p>
       )}
 
       {error && (
         <p
-          className="mt-1 text-xs text-loss"
+          className="mt-1 text-sm"
           role="alert"
           data-testid={`add-symbol-error-${listName}`}
         >
