@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Search } from "lucide-react";
 import { BotCard } from "@/components/shell/BotCard";
 import { SystemStatusCard } from "@/components/shell/SystemStatusCard";
 import { ThemeToggle } from "@/components/shell/ThemeToggle";
 import { Card } from "@/components/ui/Card";
 import { TargetCard } from "@/features/more/TargetCard";
+import { openSearch } from "@/lib/search";
 
 const LINKS = [
   { href: "/research", label: "Research", sub: "Search, watchlist, sectors, universe" },
@@ -39,8 +40,17 @@ export default function MorePage() {
 
       <Card className="mt-4" as="div">
         <ul>
+          <li>
+            <button type="button" onClick={openSearch} className="flex w-full items-center justify-between gap-3 py-3 text-left">
+              <span>
+                <span className="block font-bold">Search</span>
+                <span className="block text-[0.8125rem] text-muted">A ticker, a company or a page</span>
+              </span>
+              <Search aria-hidden="true" size={18} className="text-muted" />
+            </button>
+          </li>
           {LINKS.map((l) => (
-            <li key={l.href} className="border-t border-border first:border-t-0">
+            <li key={l.href} className="border-t border-border">
               <Link href={l.href} className="flex items-center justify-between gap-3 py-3">
                 <span>
                   <span className="block font-bold">{l.label}</span>

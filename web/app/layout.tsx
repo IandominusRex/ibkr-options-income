@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Hanken_Grotesk, Red_Hat_Mono } from "next/font/google";
 import "./globals.css";
+import { CommandPalette } from "@/components/search/CommandPalette";
 import { HaltedBanner } from "@/components/shell/HaltedBanner";
 import { Rail } from "@/components/shell/Rail";
 import { TabBar } from "@/components/shell/TabBar";
@@ -50,6 +51,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
             <TabBar />
           </div>
+          {/* The console's one search dialog: ⌘K anywhere, and openSearch() from the rail, More and Research. */}
+          <CommandPalette />
         </Providers>
       </body>
     </html>

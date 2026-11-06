@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
+import { OPEN_SEARCH_EVENT } from "@/lib/search";
 import Home from "./page";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
@@ -27,11 +28,14 @@ describe("Home — visible search bar", () => {
     expect(screen.getByRole("button", { name: /search a ticker/i })).toBeDefined();
   });
 
-  it("opens the same command palette as ⌘K when clicked", () => {
+  it("opens the console's one palette when clicked, instead of mounting its own", () => {
     withClient(<Home />);
-    expect(screen.queryByPlaceholderText(/search a ticker, company or page/i)).toBeNull();
+    const seen = vi.fn();
+    window.addEventListener(OPEN_SEARCH_EVENT, seen);
     fireEvent.click(screen.getByRole("button", { name: /search a ticker/i }));
-    expect(screen.getByPlaceholderText(/search a ticker, company or page/i)).toBeDefined();
+    window.removeEventListener(OPEN_SEARCH_EVENT, seen);
+    expect(seen).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("puts Top opportunities above the watchlist", () => {

@@ -1,21 +1,18 @@
 "use client";
 
-import { useState } from "react";
-import { CommandPalette } from "@/components/search/CommandPalette";
 import { SectorGrid } from "@/components/home/SectorGrid";
 import { WatchlistTable } from "@/components/home/WatchlistTable";
 import { TopOpportunities } from "@/features/research/TopOpportunities";
+import { openSearch } from "@/lib/search";
 
 export default function Home() {
-  const [searchOpen, setSearchOpen] = useState(false);
-
   return (
     <div className="px-8 py-6">
       <div className="flex items-center justify-between gap-4">
         <h1 className="font-mono text-2xl text-content">Research</h1>
         <button
           type="button"
-          onClick={() => setSearchOpen(true)}
+          onClick={openSearch}
           className="flex items-center gap-2 rounded border border-border bg-surface px-3 py-1.5 text-sm text-muted hover:text-content focus-visible:ring-focus"
         >
           <span>Search a ticker</span>
@@ -24,7 +21,6 @@ export default function Home() {
           </kbd>
         </button>
       </div>
-      <CommandPalette open={searchOpen} onOpenChange={setSearchOpen} />
 
       <section className="mt-10">
         <h2 className="mb-3 text-sm font-medium tracking-wide text-muted">Top opportunities</h2>

@@ -453,12 +453,14 @@ the not-draining warning sits above the controls. The same exception as the revi
 state also shows a full-width flag banner on every page, worded for the wheel ("Wheel trading is
 halted"), since credit spreads have their own halt.
 
-**Rail and tab bar**: the 200px white rail lists the seven destinations with an ink-on-sage
-current row and the lime pending count on Trades; the phone tab bar (64px, white, hairline above)
+**Rail and tab bar**: the 200px white rail opens with the wordmark, then a pressed-sage **Search** row
+(the magnifier, "Search" and a muted "⌘K") that opens the search palette, then the seven destinations
+with an ink-on-sage current row and the lime pending count on Trades (Research's icon is a telescope, so
+the magnifier means search alone); the phone tab bar (64px, white, hairline above)
 holds Home, Trades, Portfolio, Activity and More, and marks More current on Research, Universe,
 stock and News pages, which a phone reaches through More.
 
-**More**: the bot card, the theme toggle (Light, Dark, Follow OS, on the strategy-switch track), the income target card, links to Research, Universe, News, Ledger, How it works, What Claude knows and statement import, system status, and Credits (the chart library's licence link).
+**More**: the bot card, the theme toggle (Light, Dark, Follow OS, on the strategy-switch track), the income target card, a Search row first in the links card (a phone has no rail and no shortcut), links to Research, Universe, News, Ledger, How it works, What Claude knows and statement import, system status, and Credits (the chart library's licence link).
 
 **Regime and limits card** (What Claude knows): "Regime and limits", with when it was recorded at the right of the title. Per index (SPY, QQQ) a heading, the regime as a status word (flag amber above normal, neutral at normal), one plain line (the daily base, what raised it today, a bottoming-signal ease, or "Matches the daily base") and the CSP limits as figure lines under a perforation: Budget and Per trade as a percent of the normal limit, New puts a day ("No limit" or the count), Guaranteed lots a day. Up to three flag lines come first when they apply, each a flag word with one sentence beside it, in this order: "Off in config", "Suspended today" (`/regime off`, the limits shown are not applied) and "Cuts paused today" (today's circuit breaker has tripped: "The circuit breaker tripped, so Claude's size cuts are recorded but not applied until tomorrow"). Below the indices, the leveraged-ETF ceilings grouped by multiple ("3x (TQQQ, SOXL): 60% of the regime's size when calm, 30% when the name or its market is under stress") and Claude's size cuts as a sentence ("applied (paper)", "recorded only (live)"). When today's circuit breaker has tripped (Claude zeroed most of the day's auto puts) the cut sentence says so itself ("applied (paper), paused today.") so it is true when read alone, and the flag line above carries the state. The breaker is a flag word, not a plain sentence: it is the one state on the card besides `/regime off` that changes what happens today, so it joins that stack, in the first screen at phone width, instead of sitting below both indices. What the limits mean sits in a closed plain Disclosure. No regime yet: "No regime recorded yet" with a hatched n/a.
 
@@ -663,6 +665,20 @@ the stub face under a perforation, outcomes as status words, and a trade's detai
 that is wider than a phone scrolls inside its own card and says "Scroll sideways to see every column." on a
 phone, and a chart names each series in words. The pages lead back to Activity, Ledger with a back link in
 place of a sub-navigation.
+
+**Search palette** (the whole console, web overhaul Part 6): one dialog, mounted once in the root layout,
+opened by ⌘K or Ctrl+K anywhere and by the rail's Search row, More's Search row and Research's Search button.
+A white 18px panel at most 576px wide, 12vh from the top over the scrim (no shadow: the scrim does the
+lifting), with 16px gutters on a phone. The input row is the magnifier, a 16px input ("Search a ticker,
+company or page", so iOS does not zoom) and, on a phone, a quiet Close. Under a hairline, the results in two
+labelled groups, **Pages** first (the console's own pages from a fixed list in the web: "Trades, History",
+"Activity, Ledger", "What Claude knows" ..., at most five) then **Tickers** (`GET /research/search`, the
+symbol bold and the company muted, "ETF" as a neutral status word); each row is 44px on a phone and 40px from
+768px, and the active one is pressed sage. The arrow keys move, Enter opens, Escape or a tap on the scrim
+closes, focus goes back where it was. One status line says what is going on in words: "Type a ticker, a
+company or a page.", "No ticker or page matches "xyz"." (only once the search has answered), "Tickers could
+not be searched right now." (pages still listed). A muted foot line from 768px names the keys. It reads and
+navigates; it sends nothing. No lime.
 
 **Not-found and error pages** (the whole console, web overhaul Part 4): one `not-found.tsx` and one `error.tsx` at
 the root, each a single Card on the 720px page frame. The words are fixed. Not found: "This page does not exist",

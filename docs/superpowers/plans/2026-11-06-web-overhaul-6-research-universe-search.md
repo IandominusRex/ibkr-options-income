@@ -122,9 +122,9 @@ Progress log row; a "Section X entry" row rides in the next task's commit. A rev
 | **Section A exit** | done | - | vitest 1575 in 152 files; tsc and lint clean; G1 empty; G2 the four files; G5 no non-test finding (lint.py rejects the not-yet-created paths web/features/search and web/features/universe, so it was run over the existing ones); status clean after commit | 2026-11-07 | G5 run on existing paths only (cost if wrong: none, those folders do not exist yet) |
 | **Section B entry** | done | - | B1 `git log main..HEAD` shows the four Section A commits (725f26b, 61f503a, 496127f, 8104abd), vitest 1575 in 152 files, tsc and lint clean, G1 empty, G2 four files; B2 `git apply --check` printed nothing for T5 and T6; B3 neither web/features/search nor web/lib/search.ts exists and the openSearch grep printed nothing. Baseline pytest/ruff/mypy green at A3, no Python file changed | 2026-11-07 | none |
 | **Task 5: pages and the open event** | done | 76a3093 | features/search 8 passed (new module: red = module missing); full vitest 1583 in 153 files; tsc, lint clean | 2026-11-07 | patch applied as given; Task 4's row hash filled in (8104abd, was "(this commit)"; cost if wrong: none, a log cell) |
-| **Task 6: the palette** | done | ef087bb | red check (CommandPalette.tsx stashed): components/search 12 failed / 5 passed (17); with patch 17 + 3 passed (components/search, app/research); full vitest 1591 in 153 files; tsc, lint clean; G5 no non-test line | 2026-11-07 | da-vinci invoked with the section Spec (DESIGN.md ratified, extending an existing surface): no change to the patch; Task 5's row hash filled in (76a3093) |
-| **Task 7: the palette in the shell** | | | | | |
-| **Section B exit** | | | | | |
+| **Task 6: the palette** | done | ad30440 | red check (CommandPalette.tsx stashed): components/search 12 failed / 5 passed (17); with patch 17 + 3 passed (components/search, app/research); full vitest 1591 in 153 files; tsc, lint clean; G5 no non-test line | 2026-11-07 | da-vinci invoked with the section Spec (DESIGN.md ratified, extending an existing surface): no change to the patch; Task 5's row hash filled in (76a3093) |
+| **Task 7: the palette in the shell** | done | (this commit) | red check (Rail.tsx, more/page.tsx, research/page.tsx stashed): 3 failed / 12 passed (15); with patch components/shell, app/more, app/research, app/titles, lib/nav: 89 passed; full vitest 1593 in 153 files; tsc, lint clean; G1 empty, G2 the four files, G3 exit 0, G4 green (19 rows: 18 routes plus /_not-found, `○ /research` 8.88 kB, `○ /research/universe` 2.89 kB; first try), G5 no non-test line, G7 exactly `web/app/layout.tsx:55:          <CommandPalette />` | 2026-11-07 | da-vinci invoked with the section Spec (DESIGN.md ratified, extending an existing surface): no change to the patch. Task 6's row hash corrected to ad30440 (the commit was amended once, before Task 7, to carry its own plan edits; cost if wrong: none, a log cell). G5 run without web/features/universe (folder does not exist until Task 12; cost if wrong: none) |
+| **Section B exit** | done | - | three task commits (76a3093, ad30440, and Task 7's); vitest 1593 in 153 files; tsc and lint clean; G1 empty; G2 the four files; G3 exit 0; G4 green (19 route rows); G5 no non-test finding; G6 `pytest -q tests/test_web_fence.py tests/test_value_fence.py tests/test_eval_skills.py tests/test_openapi_current.py` 55 passed; G7 the one layout line; scratch build removed; status clean after commit | 2026-11-07 | recorded in Task 7's commit (the plan allows it; cost if wrong: none) |
 | **Section C entry** | | | | | |
 | **Task 8: Your watchlist** | | | | | |
 | **Task 9: the Sectors card** | | | | | |
@@ -1629,15 +1629,15 @@ index 8896631..5ef1c76 100644
 telescope; More's Search row first in its links card (the first link row gains a top hairline); Research's button calls
 `openSearch` and the page no longer mounts a palette. DESIGN.md: the Search palette paragraph, the Rail and More lines.
 
-- [ ] **Step 1: da-vinci** with the Spec above.
-- [ ] **Step 2: Check and apply `T7`.** `git status --short` shows nine `M` files.
-- [ ] **Step 3: Red check.** `git stash push -- web/components/shell/Rail.tsx web/app/more/page.tsx web/app/research/page.tsx`,
+- [x] **Step 1: da-vinci** with the Spec above.
+- [x] **Step 2: Check and apply `T7`.** `git status --short` shows nine `M` files.
+- [x] **Step 3: Red check.** `git stash push -- web/components/shell/Rail.tsx web/app/more/page.tsx web/app/research/page.tsx`,
   then `cd web && npx vitest run components/shell/Rail.test.tsx app/more app/research` ends `3 failed | 12 passed (15)`,
   then `git stash pop`.
-- [ ] **Step 4: Gate.** `npx vitest run components/shell app/more app/research app/titles.test.ts lib/nav.test.ts`: 89
+- [x] **Step 4: Gate.** `npx vitest run components/shell app/more app/research app/titles.test.ts lib/nav.test.ts`: 89
   passed. Full vitest **1593 in 153 files**; tsc, lint clean; G1, G2, G3 exit 0, G4 green (route table as G4 says), G5,
   **G7 prints exactly the layout line**.
-- [ ] **Step 5: Commit** `feat(web): search from anywhere: one palette in the shell, a Search row in the rail and on More`.
+- [x] **Step 5: Commit** `feat(web): search from anywhere: one palette in the shell, a Search row in the rail and on More`.
 
 <!-- block T7 -->
 ````diff

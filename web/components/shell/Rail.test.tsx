@@ -1,9 +1,10 @@
-import { screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderWithQuery } from "@/lib/test-query";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/trades/41" }));
 
+import { OPEN_SEARCH_EVENT } from "@/lib/search";
 import { Rail } from "./Rail";
 
 const controls = {
@@ -43,5 +44,15 @@ describe("Rail", () => {
   it("shows no badge when nothing is waiting", async () => {
     renderWithQuery(<Rail />, { "/options/controls": controls, "/options/approvals": approvals(0) });
     expect(await screen.findByRole("link", { name: "Trades" })).toBeInTheDocument();
+  });
+  it("offers Search under the wordmark, which opens the console's one palette", async () => {
+    renderWithQuery(<Rail />, { "/options/controls": controls, "/options/approvals": approvals(0) });
+    const seen = vi.fn();
+    window.addEventListener(OPEN_SEARCH_EVENT, seen);
+    const button = screen.getByRole("button", { name: "Search" });
+    expect(button).toHaveAttribute("aria-keyshortcuts", "Meta+K Control+K");
+    fireEvent.click(button);
+    window.removeEventListener(OPEN_SEARCH_EVENT, seen);
+    expect(seen).toHaveBeenCalledTimes(1);
   });
 });

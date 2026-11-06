@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { ArrowLeftRight, Ellipsis, Home, Newspaper, PieChart, Receipt, Search } from "lucide-react";
+import { ArrowLeftRight, Ellipsis, Home, Newspaper, PieChart, Receipt, Telescope } from "lucide-react";
 
 export type NavItem = {
   key: string;
@@ -17,7 +17,7 @@ export const NAV: NavItem[] = [
   { key: "trades", label: "Trades", href: "/trades", match: ["/trades"], icon: ArrowLeftRight, phone: true },
   { key: "portfolio", label: "Portfolio", href: "/portfolio", match: ["/portfolio"], icon: PieChart, phone: true },
   { key: "activity", label: "Activity", href: "/activity", match: ["/activity", "/ledger"], icon: Receipt, phone: true },
-  { key: "research", label: "Research", href: "/research", match: ["/research", "/stock"], icon: Search, phone: false },
+  { key: "research", label: "Research", href: "/research", match: ["/research", "/stock"], icon: Telescope, phone: false },
   { key: "news", label: "News", href: "/news", match: ["/news"], icon: Newspaper, phone: false },
   { key: "more", label: "More", href: "/more", match: ["/more", "/explain"], icon: Ellipsis, phone: true },
 ];

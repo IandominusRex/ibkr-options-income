@@ -1,6 +1,7 @@
 import { fireEvent, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { renderWithQuery } from "@/lib/test-query";
+import { OPEN_SEARCH_EVENT } from "@/lib/search";
 import { THEME_STORAGE_KEY } from "@/lib/theme";
 import MorePage from "./page";
 
@@ -37,6 +38,14 @@ describe("More page", () => {
     expect(screen.getByRole("link", { name: /Research/ })).toHaveAttribute("href", "/research");
     expect(screen.getByRole("link", { name: /News/ })).toHaveAttribute("href", "/news");
     expect(screen.getByRole("link", { name: /Import a statement/ })).toHaveAttribute("href", "/ledger/import");
+  });
+  it("offers Search first, for a phone, which has no rail and no shortcut", () => {
+    renderWithQuery(<MorePage />, served);
+    const seen = vi.fn();
+    window.addEventListener(OPEN_SEARCH_EVENT, seen);
+    fireEvent.click(screen.getByRole("button", { name: /^Search/ }));
+    window.removeEventListener(OPEN_SEARCH_EVENT, seen);
+    expect(seen).toHaveBeenCalledTimes(1);
   });
   it("links to What Claude knows, the page that shows the market picture and what each call reads", () => {
     renderWithQuery(<MorePage />, served);
