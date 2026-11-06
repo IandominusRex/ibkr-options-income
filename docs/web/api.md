@@ -1595,7 +1595,10 @@ Up to ten names of the trading universe on one list by the **effective** verdict
 WAIT; each by rank, higher first). **Response — `ValueTopResponse`:** `{ as_of, available, list_name, items }`;
 `ValueTopItem`: `{ symbol, list_name, verdict, decided_by: "claude" | "python", price, fair_value (the
 effective one), entry_ceiling, stop, half_sell, mos (a fraction), reasons (up to 3, Python's), put_ceiling,
-age_days }`. `stop` is always `null`: the live `value` policy sets no stop before the half sale, so there is no
+age_days, claude_note }`. `claude_note` (web overhaul Part 5) is Claude's own `why` for the list on one line (the
+latest non-superseded verdict from the CLI backend; whitespace collapsed, at most 200 characters, cut at a word
+with an ellipsis), `null` when Claude has not read the name; a local model's verdict never fills it. It is
+Claude's text: label it as Claude's and never put it on a button. `stop` is always `null`: the live `value` policy sets no stop before the half sale, so there is no
 number to show for a name not yet held. `half_sell` is the effective fair value, the level the half sale fires
 at. `put_ceiling` is the highest effective entry ceiling among the name's priced lists, the ceiling of a
 value-suggested put.
@@ -1630,12 +1633,18 @@ The ticker file. **Response — `ValueTickerResponse`:** `{ as_of, available, sy
 laid over each list's baseline: `gates` (data quality and health, each `{ id, group, state, value, threshold,
 detail }`), `lists[]` (`baseline_verdict`, the effective `verdict` and `decided_by`, Python's `fair_value` and
 the `effective_fair_value`, `mos`, `entry_ceiling`, `methods[]` with `used` and `median` marked, the entry and
-timing `gates[]`), `metrics`, `put_ceiling`. **`claude` is `null` when Claude has read nothing for the name**,
+timing `gates[]`, and since web overhaul Part 5 `size_pct` and `tranches`), `metrics`, `put_ceiling`. `size_pct` is
+the size tier the effective margin of safety reaches (`value.book.tiers`, in percent of the book's ceiling, capped
+at `name_cap_pct`): `0.0` below the first tier, `null` when the margin is unknown; `tranches` is
+`value.book.tranches`. **`claude` is `null` when Claude has read nothing for the name**,
 else `{ source: "claude", read_at, lists[] (a verdict per list with `why`, `fair_value`, `python_fair_value`,
 `cap_applied`, `drivers[]` `{ name, chosen, used, clamped, bound }`, `clamps[]`, `backend`), notes[], kill_triggers[]
 (`{ name, threshold, actual, state, distance_pct }`), facts[] (grounded only, `{ text, quote, filing }`) }`: it is
 Claude's text and numbers as Python bounded them and is always labelled; no Python field carries it. `reevaluations`
-are a held name's; `plan` is its open position's exit plan (`null` for a name not held).
+are a held name's; `plan` is its open position's exit plan (`null` for a name not held), with, since web overhaul
+Part 5, `tranches_done`, `tranches`, `tranche_min_sessions` and `last_tranche_on` (the tranche plan: the second
+tranche waits for a higher low, any later one for a close above the 50-day average, each at least
+`tranche_min_sessions` after the last and gated again).
 
 `computed` (ruling 24, `src/api/value_lookup.py`): **`stored`** when the file's freshness key (the newest accession
 and bar in `research.db`, the regime, the ruleset: `src/common/value_freshness.py`) equals the key of the cheap

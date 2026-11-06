@@ -121,10 +121,10 @@ Progress log row; a "Section X entry" row rides in the next task's commit. A rev
 | **Section C entry** | done | (rides in Task 7's commit) | C1 four task commits since Section A, vitest 1549 in 152 files; C2 T7-T9 apply; C3 test counts 5/6/2/5/5/6 as written | 2026-11-06 | none |
 | **Task 7: Checks** | done | `7e3c5ab` | da-vinci loaded with the Section C spec. `T7` (5e04a7f7...) applied clean: five `M` files in `web/components/checks/`. Red check: with the three source files stashed, `components/checks` 3 failed, 18 passed; popped. Gate: 21 passed; full vitest 1552 in 152 files; tsc clean; lint clean. (The Task 6 hash, Section B exit and Section C entry rows ride in this commit.) | 2026-11-06 | none (da-vinci changed no spacing; patch classes kept; cost if wrong: none) |
 | **Task 8: Technicals, Sentiment, News, statements** | done | `416fe2d` | `T8` (27fbf9a2...) applied clean: seven `M` files in `web/components/stock/`. Red check: with the four source files stashed, the three panel suites 3 failed, 12 passed; popped. Gate: panels + StatementsTable 23 passed (panels 15, StatementsTable unchanged); full vitest 1555 in 152 files; tsc clean; lint clean; `git diff --stat main -- web/features/position` prints nothing. | 2026-11-06 | none (da-vinci changed no spacing; cost if wrong: none) |
-| **Task 9: the model summary** | done | (the orchestrator fills this hash) | `T9` (455f0cb3...) applied clean: `M SummaryPanel.tsx`, `M SummaryPanel.test.tsx`. Red check: with `SummaryPanel.tsx` stashed, 2 failed, 6 passed; popped. Gate: 8 passed; full vitest 1557 in 152 files; tsc clean; lint clean; G1 prints nothing; G2 lists exactly the four expected files; G3 exit 0; G4 scratch build compiled, `ƒ /stock/[symbol]` 16.4 kB, scratch copy removed; G5 no finding | 2026-11-06 | none (da-vinci changed no spacing; cost if wrong: none) |
-| **Section C exit** | pending | | | | |
-| **Section D entry** | pending | | | | |
-| **Task 10: docs** | pending | | | | |
+| **Task 9: the model summary** | done | `d74ad70` | `T9` (455f0cb3...) applied clean: `M SummaryPanel.tsx`, `M SummaryPanel.test.tsx`. Red check: with `SummaryPanel.tsx` stashed, 2 failed, 6 passed; popped. Gate: 8 passed; full vitest 1557 in 152 files; tsc clean; lint clean; G1 prints nothing; G2 lists exactly the four expected files; G3 exit 0; G4 scratch build compiled, `ƒ /stock/[symbol]` 16.4 kB, scratch copy removed; G5 no finding | 2026-11-06 | none (da-vinci changed no spacing; cost if wrong: none) |
+| **Section C exit** | done | `d74ad70` | Verified by the orchestrator: three task commits after Section B; vitest 1557 in 152 files; tsc and lint clean; G1 empty; G2 the four files; G3 exit 0; G5 no finding; status clean. G4 and per-task counts are the section agent's report | 2026-11-06 | none |
+| **Section D entry** | done | (rides in Task 10's commit) | D1 nine task commits after A0, G1-G6 green (G6 55 passed); D2 T10 applies; D3 playwright-core present under ~/.npm/_npx | 2026-11-06 | none |
+| **Task 10: docs** | done | (orchestrator fills: a commit cannot hold its own hash) | `T10` applied clean: `M ARCHITECTURE.md`, `M STATUS.md`, `M docs/web/api.md`, `M web/CLAUDE.md`. Step 2: commit range `0a9ed58` to `d74ad70` added to the STATUS Built section; no Progress-log ruling changed behaviour and no section recorded a minor, so nothing else added. Gate: G3 exit 0; the stale-phrase grep prints nothing; `features/stock/` count 2 in ARCHITECTURE.md, 3 in web/CLAUDE.md; status shows only the four docs and this plan. Docs only: no test run. (The Task 9 hash row edits, Section C exit and Section D entry rows ride in this commit.) | 2026-11-06 | none |
 | **Task 11: the da-vinci finish by a fresh reviewer** | pending | | | | |
 | **Whole-branch review (opus)** | pending | | | | |
 | **Review fix pass (sonnet)** | pending | | | | |
@@ -3031,13 +3031,13 @@ F-I)" bullet), `ARCHITECTURE.md` (the Routes paragraph, a `features/stock/` bull
 `value_db.py` rows), `web/CLAUDE.md` (the `stock/[symbol]/`, `checks/`, `stock/` and `stock-value/` entries, a new
 `features/stock/` entry), `docs/web/api.md` (`claude_note`, `size_pct`, `tranches`, the plan's tranche fields); this plan.
 
-- [ ] **Step 1: Check and apply `T10`.**
-- [ ] **Step 2: Fill in what the patch could not know.** In the new STATUS Built section, after "Plan:", add the
+- [x] **Step 1: Check and apply `T10`.**
+- [x] **Step 2: Fill in what the patch could not know.** In the new STATUS Built section, after "Plan:", add the
   commit range (`git log --oneline main..HEAD | tail -1` to the head) and every ruling from the Progress log that
   changed behaviour; under "Deferred", add any minor a section recorded. Keep the section's existing sentences.
-- [ ] **Step 3: Gate.** G3; `grep -n "no tranche plan or size tier\|has no Claude note field" STATUS.md` prints
+- [x] **Step 3: Gate.** G3; `grep -n "no tranche plan or size tier\|has no Claude note field" STATUS.md` prints
   nothing; `grep -c "features/stock/" ARCHITECTURE.md web/CLAUDE.md` prints a non-zero count for each; `git status --short` shows only the four docs and this plan. Docs only: no test run needed.
-- [ ] **Step 4: Commit** `docs: web overhaul Part 5`.
+- [x] **Step 4: Commit** `docs: web overhaul Part 5`.
 
 <!-- block T10 -->
 ````diff

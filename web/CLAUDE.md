@@ -172,13 +172,10 @@ app/                App Router pages and the root layout
                     that they are managed in config/universe.yaml. Still shows sector
                     tag, strike-band override, and marks which would_own names are
                     actively_wheeling vs dip-watch.
-  stock/[symbol]/   Ticker page: react-query on GET /research/{symbol}, polls while
-                    fundamentals/technicals/sentiment/news/checks is pending, mounts
-                    <SectionShell/> per region, shows the delayed quote (with its age
-                    and a "delayed" tag once stale) beside the header. <PriceChart/>
-                    is NOT gated behind a Section's state — it fetches its own data
-                    from GET /research/{symbol}/bars independently, so a technicals
-                    outage must not hide it too
+  stock/[symbol]/   Ticker page: page.tsx mounts features/stock/StockPage (web overhaul Part 5);
+                    the sibling layout.tsx sets the title. <PriceChart/> is NOT gated
+                    behind a Section's state: it fetches GET /research/{symbol}/bars
+                    itself, so a technicals outage must not hide it too
   options/          (RETIRED) The old tabbed options console. `/options` and `/options/:id`
                     redirect (307) to `/trades` and `/trades/:id` in next.config.ts; what it
                     did lives under trades/ above and features/trades/ below, and its
@@ -344,20 +341,30 @@ components/          Where new code goes (web overhaul Part 4, HANDOFF D4): `fea
                     `<button aria-expanded>` that expands to CheckRow list on click,
                     collapses on a second click; a not-applicable category is disabled and
                     shows its `note` instead; renders leveraged-ETF decay Warnings above the
-                    ribbons), CheckRow (statement + actual + threshold + state; unknown
-                    renders `n/a` in `text-unknown`, never `0`)
-  stock/            SectionShell (renders pending/unavailable states inline),
-                    StatementsTable (normalised statements with filing traceability
+                    ribbons, each with a "Caution" (flag) or "Note" word), CheckRow (the
+                    statement and its state as a StatusWord, Fail in the flag tone, then
+                    "Reads <actual> · bar <threshold>" on its own line; unknown renders a
+                    hatched `n/a`, never `0`). Since web overhaul Part 5 the ribbon fills a
+                    passed check and outlines a failed one in ink: no green or red
+  stock/            StatementsTable (normalised statements with filing traceability
                     in a `title` attribute using a hyphen not an em dash; fixed row
                     order; annual and quarterly sections; missing items render "n/a"
                     with `.hatch` texture, never "$0", never colour alone),
-                    PriceChart (lightweight-charts candlestick + volume + SMA 50/200,
-                    colours read from CSS custom properties at mount, no entry
-                    animation), TechnicalsPanel (RSI/MACD/SMA/ATR + phase/regime,
-                    null renders "n/a" never "0"), NewsPanel (newest-first, relative
-                    age, sentiment chip is label+tint not colour-only), SentimentPanel
-                    (composite score + per-source sample count; a source with no
-                    tracked count renders "n/a samples", never a fabricated "0")
+                    PriceChart (lightweight-charts: a year of ink candles, up hollow and
+                    down filled, light volume, SMA 50 ink and SMA 200 muted, the caller's
+                    `lines` as dashed price lines; colours from the tokens at mount and on
+                    a theme change, no entry animation, attribution logo off; a role="img"
+                    sentence and a line of words name every series), TechnicalsPanel
+                    (figure lines; null renders a hatched "n/a" never "0"), NewsPanel
+                    (newest-first, relative age, the tone as a neutral StatusWord word,
+                    never green or red; `sentimentTint` stays exported for
+                    features/position/Headlines), SentimentPanel (composite score, the
+                    day's change signed but not coloured, per-source sample count; a
+                    source with no tracked count renders "n/a samples", never a
+                    fabricated "0"), SummaryPanel ("Generate summary" is a secondary
+                    Button; the foot line says "Written by <model>, a language model that
+                    decides nothing"). Web overhaul Part 5 deleted SectionShell (replaced
+                    by features/stock/StockSection)
   options/          Web overhaul Part 4 deleted the unmounted ApprovalsList, ApprovalCard, ShortsTable,
                     ShortsRow and ControlsStrip (their live coverage moved first: the decide flow's cases
                     to DecideControls.test.tsx, the roll flow's to RollCard.test.tsx, the drain line's to
@@ -774,6 +781,14 @@ components/          Where new code goes (web overhaul Part 4, HANDOFF D4): `fea
                     tests. A trim has no web button (plan ruling 10): the card
                     says it is offered in Telegram. Claude's words never sit on a button.
 features/
+  stock/            The stock page (web overhaul Part 5). StockPage (react-query on GET /research/{symbol},
+                    key ["analysis",SYMBOL], polling every 5 s while a section is pending, no retry on a
+                    404; it also reads GET /value/{symbol} under ValueBlock's own key ["value","ticker",
+                    SYMBOL], so no second fetch, to place the value block and draw its levels), StockSection
+                    (a Card per section: the title, then the content, or the API's reason / "Building this
+                    section." in words), and stock.ts (`valueLeads`, `valueLines`, `nameLine`, the
+                    `Analysis` alias over the generated AnalysisResponse). The page reads; its only command
+                    is AnalyseButton inside the value block.
   stock-value/      The value book's view of one name on the stock page (value book Part 6, Section G).
                     ValueBlock (react-query on GET /value/{symbol}, key ["value","ticker",SYMBOL]:
                     the verdict per list first, then BusinessBlock, WorthBlock and SizeBlock for the spec's
@@ -786,8 +801,11 @@ features/
                     parts.tsx (Hatched, Segments, ClaudeLabel), `types.ts` (aliases over the generated
                     api-types) and `format.ts` (sentences and the poll rule `refetchMs`). Every piece of
                     Claude's text carries a "Claude's ..." label with the date it was read against; a
-                    hatched n/a is an unknown; Claude's words never sit on a button. Mounted by one line in
-                    app/stock/[symbol]/page.tsx after NameNotes.
+                    hatched n/a is an unknown; Claude's words never sit on a button. Mounted by
+                    features/stock/StockPage: first under the chart when `valueLeads` (a priced list or a
+                    held name), else at the foot of the left column. Since web overhaul Part 5 SizeBlock
+                    says the size tier per priced list (`sizeSegment`) and a held name's tranche plan
+                    (`trancheWords`).
   research/         Top opportunities (value book Part 6, Section H), the strip above the watchlist.
                     TopOpportunities (two tabs on a SegmentedControl, Deep value and Quality growth; react-query
                     on GET /value/top?list=, key ["value","top",list], only the list on view is fetched; a second
