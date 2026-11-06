@@ -104,7 +104,9 @@ app/                App Router pages and the root layout
                     that calls `reset`. No `loading.tsx` (every page draws its own `role="status"`
                     skeleton) and no `global-error.tsx` (the root layout renders no data). Both are
                     pinned by `boundaries.test.tsx`.
-  titles            Every route has its own title (`titles.test.ts` pins them): a server page exports
+  titles            Every route has its own title (`titles.test.ts` pins them; since web overhaul Part 6 a
+                    dynamic segment is decoded through lib/segment.ts, so a malformed `%` keeps the raw
+                    segment instead of throwing): a server page exports
                     `metadata`; a client page gets a sibling server `layout.tsx` that renders
                     `children` and exports `metadata`, or `generateMetadata` for a dynamic segment
                     (`more`, `more/claude`, `research`, `research/universe`, `stock/[symbol]`,
@@ -155,15 +157,14 @@ app/                App Router pages and the root layout
                     Read-only: one request, `GET /claude/context`, and five cards (Regime and
                     limits, Market picture, What each Claude call reads, Dropped as noise, Names).
                     No news service says so in a sentence and the regime still shows.
-  research/         Research, the old landing page (moved from app/page.tsx): a header
-                    row with the page title and a visible
-                    search-bar button (opens the same <CommandPalette/> ⌘K does — the
-                    page owns `searchOpen` state and passes it as controlled
-                    `open`/`onOpenChange` props), then <TopOpportunities/> (features/research/),
-                    then WatchlistTable, then SectorGrid
-                    (ordered by IV rank). A client component because the watchlist and
-                    sector grid use react-query.
-  research/universe/  (moved from universe/; `/universe` redirects here) Universe page: react-query on GET /universe (M7: `lists[]`, one
+  research/         Research (web overhaul Part 6): page.tsx only mounts
+                    features/research/ResearchPage (the title with Search, which calls
+                    lib/search.ts `openSearch` to open the shell's one palette, and a Universe
+                    link; Top opportunities; then Your watchlist and the Sectors card).
+  research/universe/  (moved from universe/; `/universe` redirects here) Universe page; since web overhaul
+                    Part 6 page.tsx only mounts features/universe/UniversePage (a back link to Research,
+                    one card per list, two columns from 1024px, loading and failure in words). What
+                    follows is unchanged: react-query on GET /universe (M7: `lists[]`, one
                     UniverseListOut per section, replacing the old flat per-list
                     arrays), renders each list through <UniverseList/>. Writable since
                     M7 Task 7.5 (`editable: true`): would_own and watchlist accept add
@@ -261,8 +262,8 @@ components/          Where new code goes (web overhaul Part 4, HANDOFF D4): `fea
                     days out, Today and Clear in the foot; dates.ts is its UTC day arithmetic).
                     Activity's Book, Outcome, Since and Until and the ledger Trades page's filters use
                     them; a test drives them with `lib/test-pick.ts` (`chooseOption`, `chooseDay`).
-  shell/            Web overhaul Part 1: Rail (desktop, from 768px: the lib/nav.ts
-                    destinations, the lime pending-count badge on Trades, BotCard at its
+  shell/            Web overhaul Part 1: Rail (desktop, from 768px: since Part 6 a Search row under the
+                    wordmark that calls `openSearch()`, then the lib/nav.ts destinations, the lime pending-count badge on Trades, BotCard at its
                     foot), TabBar (phones: five tabs; Research and News mark More
                     current), BotCard (running or halted in words, mode, rung, the
                     not-draining line; aria-haspopup; a loading block) and BotSheet (the
@@ -299,7 +300,13 @@ components/          Where new code goes (web overhaul Part 4, HANDOFF D4): `fea
                     matching lines at this level" when it exists but nothing matched -
                     so a healthy daemon's clean log is never reported as if it had never
                     run)
-  search/           CommandPalette (⌘K/Escape as before; controlled if `open`/
+  search/           CommandPalette. Since web overhaul Part 6 it is mounted ONCE, in app/layout.tsx, and
+                    nothing else mounts it: the rail's Search row, More's Search row and Research's
+                    Search button call lib/search.ts `openSearch()`, whose event it listens for. It
+                    lists the console's pages (features/search/pages.ts, no request) above the tickers
+                    (GET /research/search), is a combobox (aria-activedescendant; the arrow keys move,
+                    Enter opens, Escape or a tap on the scrim closes, Close on a phone), and says its
+                    state in one always-mounted `role="status"` line. The older notes follow: (⌘K/Escape as before; controlled if `open`/
                     `onOpenChange` props are passed — the home page's visible search-bar
                     button drives it that way — otherwise falls back to its own internal
                     open state so ⌘K still works standalone anywhere it's mounted with
@@ -316,7 +323,12 @@ components/          Where new code goes (web overhaul Part 4, HANDOFF D4): `fea
                     during React's commit, before any effect can run, so it would steal
                     focus out from under the open-edge effect's own capture of the prior
                     trigger before that capture ever happened)
-  home/             SectorGrid (react-query on GET /research/sectors, renders SectorCard
+  home/             Restyled in place in web overhaul Part 6: WatchlistTable is the "Your watchlist" card
+                    (rows, not a table; the move signed and never green or red; a hatched n/a for
+                    every unknown; loading, a failed read, add or remove in words; a line pointing to
+                    the scan's own watchlist on Universe) and SectorGrid is one "Sectors by IV rank"
+                    card whose rows are SectorCard (an `li`, no green or red). The older notes follow:
+                    SectorGrid (react-query on GET /research/sectors, renders SectorCard
                     ordered by avg_iv_rank desc; a sector with no IV history sorts last),
                     SectorCard (sector name + count, daily change with sign + colour never
                     colour alone, best/worst movers, avg IV rank with contributing count so a
@@ -555,7 +567,11 @@ components/          Where new code goes (web overhaul Part 4, HANDOFF D4): `fea
                     CampaignsView, CalendarView), and the rules they carried (n/a never "$0.00",
                     the degraded note verbatim, filters in the request, an unknown consequence
                     named) are those views' tests.
-  universe/         M7 Task 7.5. UniverseList (one GET /universe section: heading with
+  universe/         Restyled in place in web overhaul Part 6: each UniverseList is a Card (17px title, the
+                    count, one line on what the list is for), Wheeling and Dip-watch are status words,
+                    Remove and Revert are 44px on a phone, AddSymbol has a visible label on the `field`,
+                    and a failure is plain words, never red; the behaviour below is unchanged.
+                    M7 Task 7.5. UniverseList (one GET /universe section: heading with
                     entry count, a row per entry with sector tag, strike-band
                     override, and, for would_own only, a wheeling/dip-watch tag; a
                     non-overridable list renders a config/universe.yaml note instead
@@ -788,7 +804,13 @@ features/
                     (a Card per section: the title, then the content, or the API's reason / "Building this
                     section." in words), and stock.ts (`valueLeads`, `valueLines`, `nameLine`, the
                     `Analysis` alias over the generated AnalysisResponse). The page reads; its only command
-                    is AnalyseButton inside the value block.
+                    is AnalyseButton inside the value block. Since web overhaul Part 6 the value block
+                    mounts only once GET /value/{symbol} has answered (or failed), in the slot the
+                    answer picks, so it never mounts at the foot and moves.
+  search/           Web overhaul Part 6: pages.ts (PAGES, the console's own pages, and `matchPages`: every
+                    typed word must match a page's name, hint or words; at most five). The palette is
+                    components/search/CommandPalette; the open event is lib/search.ts.
+  universe/         Web overhaul Part 6: UniversePage (see app/research/universe above).
   stock-value/      The value book's view of one name on the stock page (value book Part 6, Section G).
                     ValueBlock (react-query on GET /value/{symbol}, key ["value","ticker",SYMBOL]:
                     the verdict per list first, then BusinessBlock, WorthBlock and SizeBlock for the spec's
@@ -806,7 +828,9 @@ features/
                     held name), else at the foot of the left column. Since web overhaul Part 5 SizeBlock
                     says the size tier per priced list (`sizeSegment`) and a held name's tranche plan
                     (`trancheWords`).
-  research/         Top opportunities (value book Part 6, Section H), the strip above the watchlist.
+  research/         ResearchPage (web overhaul Part 6, the `/research` page) and Top opportunities (value
+                    book Part 6, Section H), the strip above the watchlist; since Part 6 OpportunityCard
+                    shows `claude_note` after Python's reasons, labelled "Claude's note", never on a button.
                     TopOpportunities (two tabs on a SegmentedControl, Deep value and Quality growth; react-query
                     on GET /value/top?list=, key ["value","top",list], only the list on view is fetched; a second
                     query, key ["value","top","assessed-passed"], reads `GET /options/assessed?run=latest&stage=
@@ -1025,7 +1049,12 @@ lib/
   useHydrated.ts    `useHydrated()` (moved out of HomePage; Home and Trades both use it): false for
                     the server render and the hydration pass, so a page whose query shares a key
                     with the rail renders its bare shell until hydration is over
-  nav.ts            NAV (the seven destinations, which five sit on the phone tab bar),
+  search.ts         Web overhaul Part 6: OPEN_SEARCH_EVENT and `openSearch()`, the one way to open the
+                    shell's search palette.
+  segment.ts        Web overhaul Part 6: `decodeSegment`, a dynamic segment decoded for a title, the raw
+                    segment when the escape is malformed.
+  nav.ts            NAV (the seven destinations, which five sit on the phone tab bar; Research's
+                    icon is a telescope since Part 6, so the magnifier means search),
                     activeKey and phoneActiveKey
   strategy.ts       StrategyKind / StrategyFilter, labels and eyebrows, kindOf (a roll
                     files under the side it rolls; unknown strategies only under All),

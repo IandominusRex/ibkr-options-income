@@ -135,8 +135,8 @@ Progress log row; a "Section X entry" row rides in the next task's commit. A rev
 | **Task 12: the Universe page** | done | 388944f | red check (UniverseList.tsx stashed): 2 failed / 19 passed (21); with patch 21 passed; full vitest 1608 in 155 files; tsc, lint clean; G3 exit 0; G5 no non-test line | 2026-11-07 | da-vinci invoked with the section Spec (DESIGN.md Universe surface ratified in the patch): no change to the patch |
 | **Task 13: the add field and the override badge** | done | 299f54d | red check (AddSymbol.tsx, OverrideBadge.tsx stashed): restyle.test.tsx 3 failed (3); with patch components/universe + features/universe 24 passed; full vitest 1611 in 156 files; tsc, lint clean; G1 empty, G2 the four files, G5 no non-test line, G7 the one layout line, G4 green | 2026-11-07 | da-vinci invoked with the section Spec: no change to the patch. Task 12's row hash filled in (388944f) |
 | **Section D exit** | done | - - | two task commits (388944f, 299f54d); vitest 1611 in 156 files; tsc and lint clean; G1 empty; G2 the four files; G3 exit 0; G4 green (`○ /research` 9.79 kB, `○ /research/universe` 3.87 kB, /_not-found; scratch build removed); G5 no non-test finding (web/features/universe now included); G6 55 passed; G7 `web/app/layout.tsx:55:          <CommandPalette />` | 2026-11-07 | none |
-| **Section E entry** | | | | | |
-| **Task 14: docs** | | | | | |
+| **Section E entry** | done | - | E1 sixteen commits on main..HEAD (13 task commits plus three docs hash commits), vitest 1611 in 156 files, tsc and lint clean, G1 empty, G2 four files, G7 one layout line, G6 fences 55 passed at the D exit; E2 `git apply --check` of T14 printed nothing; E3 playwright-core present at ~/.npm/_npx/e41f203b7505f1fb and ~/.npm/_npx/9833c18b2d85bc59 | 2026-11-07 | none |
+| **Task 14: docs** | done | (this commit) | `git apply --check` then apply of T14; G3 exit 0; the stale-phrase grep prints nothing; features/search and features/universe counts non-zero in ARCHITECTURE.md and web/CLAUDE.md; status shows only the three docs and the plan; docs only, no test run | 2026-11-07 | STATUS Built section got the commit range (725f26b to 000143f); no behaviour-changing ruling in the log and no new deferred minor to add |
 | **Task 15: the da-vinci finish by a fresh reviewer** | | | | | |
 | **Whole-branch review (opus)** | | | | | |
 | **Review fix pass (sonnet)** | | | | | |
@@ -3938,14 +3938,14 @@ Part 5's, the Web overhaul row, two Part 5 and value-book deferred lines), `ARCH
 titles paragraph, three new bullets, the palette sentence, the stock page's hold), `web/CLAUDE.md` (the `research/`,
 `research/universe/`, titles, `search/`, `home/`, `universe/`, `features/` and `lib/` entries); this plan.
 
-- [ ] **Step 1: Check and apply `T14`.**
-- [ ] **Step 2: Fill in what the patch could not know.** In the new STATUS Built section, after "Plan:", add the commit
+- [x] **Step 1: Check and apply `T14`.**
+- [x] **Step 2: Fill in what the patch could not know.** In the new STATUS Built section, after "Plan:", add the commit
   range (`git log --oneline main..HEAD | tail -1` to the head) and every ruling from the Progress log that changed
   behaviour; under "Deferred", add any minor a section recorded. Keep the section's existing sentences.
-- [ ] **Step 3: Gate.** G3; `grep -n "still mounted only on Research\|has no plan yet.*Part 6\|cmdk. drives" STATUS.md ARCHITECTURE.md`
+- [x] **Step 3: Gate.** G3; `grep -n "still mounted only on Research\|has no plan yet.*Part 6\|cmdk. drives" STATUS.md ARCHITECTURE.md`
   prints nothing; `grep -c "features/search\|features/universe" ARCHITECTURE.md web/CLAUDE.md` prints a non-zero count
   for each; `git status --short` shows only the three docs and this plan. Docs only: no test run needed.
-- [ ] **Step 4: Commit** `docs: web overhaul Part 6`.
+- [x] **Step 4: Commit** `docs: web overhaul Part 6`.
 
 <!-- block T14 -->
 ````diff

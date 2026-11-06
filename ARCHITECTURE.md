@@ -1586,7 +1586,8 @@ reskinned without an edit. The structure it added:
   nothing waits on you; `/trades/[approvalId]` is an approval's page, with its trade, Claude's review and the
   decision), `/portfolio` (Part 3: the Account card, then Positions by name, Campaigns and the expiry Calendar in `?view=`),
   `/activity` (Part 3: Pay a month at a time, the broker-truth Ledger, Fills and orders and System in `?view=`),
-  `/research` (the old landing page) and `/research/universe`,
+  `/research` (Part 6: Top opportunities, Your watchlist and the Sectors card) and `/research/universe` (Part 6: one
+  card per list),
   `/news`, `/more` (the bot card, the theme toggle, the income-target card, links to Research,
   Universe, News, Ledger, How it works, What Claude knows and statement import, system status and Credits),
   `/more/claude` (What Claude knows: the market picture, the regime and its limits, what each Claude call reads),
@@ -1604,14 +1605,17 @@ reskinned without an edit. The structure it added:
   `components/<domain>` where it is (the "fold into `features/`" idea was cut). **The rule for new code: it goes in
   `features/`; `components/` keeps `ui`, `shell`, the protected `options` controls, `value` and the survivors.**
   **Part 5 (2026-11-06, `docs/superpowers/plans/2026-11-06-web-overhaul-5-stock-page.md`) recomposed the stock
-  page** (`features/stock/`, below). Parts 6-8 (Research, Universe and search; News, More and How it works; the
-  value record) and order control have no plan yet.
+  page** (`features/stock/`, below). **Part 6 (2026-11-06,
+  `docs/superpowers/plans/2026-11-06-web-overhaul-6-research-universe-search.md`) recomposed Research and Universe
+  and put search in the shell** (`features/research/`, `features/universe/`, `features/search/`, below). Parts 7-8
+  (News, More and How it works; the value record) and order control have no plan yet.
 - **`app/` boundaries and titles** — web overhaul Part 4: the root `layout.tsx` sets `metadata.title` to
   `{ default: "IBKR Income", template: "%s · IBKR Income" }`; each server page exports its own `metadata`, and a
   client page gets a sibling server `layout.tsx` that exports `metadata` (or `generateMetadata` for a dynamic
   segment): `more`, `more/claude`, `research`, `research/universe`, `stock/[symbol]`, `news/[symbol]`,
   `ledger/ticker/[symbol]`, `positions/[underlying]/[slug]` and `trades/[approvalId]`. `app/titles.test.ts` pins
-  every route's title. `app/not-found.tsx` and `app/error.tsx` are the console's two boundaries (one Card each, one
+  every route's title. Since Part 6 the five `generateMetadata` layouts decode their segment through
+  `lib/segment.ts::decodeSegment`, which keeps the raw segment when an escape is malformed. `app/not-found.tsx` and `app/error.tsx` are the console's two boundaries (one Card each, one
   secondary action each: Go to Home on the not-found page, Try again calling `reset` on the error page; the error page shows `error.digest` as a
   reference and never the error's own message); `app/boundaries.test.tsx` pins them. There is no `loading.tsx`
   (every page draws its own `role="status"` skeleton) and no `global-error.tsx`.
@@ -1631,6 +1635,23 @@ reskinned without an edit. The structure it added:
   Activity's At IBKR list (a Value chip in `ExecutionsList`); every value position row links to the stock page's
   value block, and the "Value book unavailable" flag on Home and Activity is hidden only when the book is off and has
   never written.
+- **`features/search/` + `components/search/CommandPalette.tsx` + `lib/search.ts`** — web overhaul Part 6: the
+  console's one search dialog, mounted once in `app/layout.tsx`. `pages.ts` is the fixed list of the console's own
+  pages with `matchPages` (every typed word must match a page's name, hint or words; at most five; operator ruling:
+  no API change); the palette lists them above the tickers from `GET /research/search`, works as a combobox (the arrow
+  keys, Enter, Escape, a tap on the scrim, Close on a phone) and says its state in one status line. ⌘K or Ctrl+K opens
+  it anywhere; the rail's Search row, More's Search row and Research's Search button call `lib/search.ts::openSearch`,
+  which dispatches the one event the palette listens for, so nothing mounts a second palette. It navigates; it sends
+  nothing.
+- **`features/research/ResearchPage.tsx`** — web overhaul Part 6: `/research` (`page.tsx` only mounts it). The title
+  with Search and a Universe link, Top opportunities (`TopOpportunities`, whose `OpportunityCard` shows
+  `claude_note` labelled "Claude's note" since Part 6), then "Your watchlist" (`components/home/WatchlistTable`, the
+  per-user list in research.db, apart from the scan's own) and the Sectors card (`components/home/SectorGrid`), each
+  column one `grid-cols-1` track. A watchlist or sector move is signed, never green or red.
+- **`features/universe/UniversePage.tsx`** — web overhaul Part 6: `/research/universe` (`page.tsx` only mounts it). A
+  back link to Research, then one card per `GET /universe` list (`components/universe/UniverseList`, restyled in
+  place with `AddSymbol` and `OverrideBadge`), two columns from 1024px. The add and remove commands, the would-own
+  confirmation and its consequence text are unchanged; `sectors` stays file-only.
 - **`features/stock/`** — web overhaul Part 5: the stock page (`/stock/[symbol]`; `page.tsx` only mounts
   `StockPage`). A back link to Research, the ticker, name and last price ("Delayed" in words when stale), then one
   grid as the position page's: the chart (`components/stock/PriceChart`, ink candles with the value book's fair
@@ -1640,14 +1661,15 @@ reskinned without an edit. The structure it added:
   (`features/stock-value/ValueBlock`, first when `valueLeads` says the book would buy the name at a price or holds
   it), Checks, Technicals and the statements (behind a disclosure) on the left; the news service's notes, News,
   Sentiment and the model summary on the right, each column one `grid-cols-1` track so a wide statements table
-  scrolls inside its card. Each section is a `StockSection` card. It reads
+  scrolls inside its card. Each section is a `StockSection` card; since Part 6 the value block mounts only after
+  `GET /value/{symbol}` has answered, once, in the slot the answer picks. It reads
   `GET /research/{symbol}` and `GET /value/{symbol}` (the value block's own query key, so one fetch); its only
   command is the value block's `AnalyseButton`.
 
 The paragraphs below describe the pages as they were built; their file paths moved with the routes
 above (`app/page.tsx` → `app/research/page.tsx`, `app/universe/` → `app/research/universe/`,
-`app/options/` → `app/trades/`, `app/pnl/` → `app/activity/`). `cmdk` drives the `⌘K` command palette
-over the SEC symbol directory.
+`app/options/` → `app/trades/`, `app/pnl/` → `app/activity/`). The `⌘K` palette is hand-built (not `cmdk`)
+over the SEC symbol directory and, since Part 6, the console's own pages.
 
 Ticker page at `/stock/[symbol]` renders a price chart (lightweight-charts candlesticks + volume +
 SMA 50/200), technicals panel, sentiment panel, news panel, and normalised SEC statements with
