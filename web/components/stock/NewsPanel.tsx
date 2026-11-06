@@ -37,16 +37,17 @@ export function NewsPanel({ items }: { items: NewsItem[] }) {
       {items.map((item, i) => {
         const age = relativeAge(item.published_at);
         return (
-          <li key={i} className="flex items-start gap-3 border-t border-border py-2.5 text-sm first:border-t-0">
+          <li key={i} className="flex items-start gap-3 border-t border-border py-2 text-sm first:border-t-0 md:py-2.5">
             <div className="min-w-0 flex-1">
               {item.url ? (
                 <a
                   href={item.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="font-semibold underline-offset-2 hover:underline"
+                  className="flex min-h-11 items-center font-semibold underline-offset-2 hover:underline md:inline md:min-h-0"
                 >
                   {item.title}
+                  <span className="sr-only"> (opens in a new tab)</span>
                 </a>
               ) : (
                 <span className="font-semibold">{item.title}</span>

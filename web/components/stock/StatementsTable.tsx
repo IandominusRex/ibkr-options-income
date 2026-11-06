@@ -81,6 +81,9 @@ function StatementBody({ periods }: { periods: Period[] }) {
 export function StatementsTable({ financials }: { financials: Financials }) {
   return (
     <div className="space-y-5">
+      {(financials.annual.length > 0 || financials.quarterly.length > 0) && (
+        <p className="text-xs text-muted md:hidden">Scroll sideways to see every column.</p>
+      )}
       {financials.annual.length > 0 && (
         <section>
           <h3 className="mb-1 text-xs font-semibold tracking-[0.04em] text-muted">Annual</h3>

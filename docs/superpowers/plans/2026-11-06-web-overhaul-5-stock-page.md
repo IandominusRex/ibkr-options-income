@@ -124,8 +124,8 @@ Progress log row; a "Section X entry" row rides in the next task's commit. A rev
 | **Task 9: the model summary** | done | `d74ad70` | `T9` (455f0cb3...) applied clean: `M SummaryPanel.tsx`, `M SummaryPanel.test.tsx`. Red check: with `SummaryPanel.tsx` stashed, 2 failed, 6 passed; popped. Gate: 8 passed; full vitest 1557 in 152 files; tsc clean; lint clean; G1 prints nothing; G2 lists exactly the four expected files; G3 exit 0; G4 scratch build compiled, `ƒ /stock/[symbol]` 16.4 kB, scratch copy removed; G5 no finding | 2026-11-06 | none (da-vinci changed no spacing; cost if wrong: none) |
 | **Section C exit** | done | `d74ad70` | Verified by the orchestrator: three task commits after Section B; vitest 1557 in 152 files; tsc and lint clean; G1 empty; G2 the four files; G3 exit 0; G5 no finding; status clean. G4 and per-task counts are the section agent's report | 2026-11-06 | none |
 | **Section D entry** | done | (rides in Task 10's commit) | D1 nine task commits after A0, G1-G6 green (G6 55 passed); D2 T10 applies; D3 playwright-core present under ~/.npm/_npx | 2026-11-06 | none |
-| **Task 10: docs** | done | (orchestrator fills: a commit cannot hold its own hash) | `T10` applied clean: `M ARCHITECTURE.md`, `M STATUS.md`, `M docs/web/api.md`, `M web/CLAUDE.md`. Step 2: commit range `0a9ed58` to `d74ad70` added to the STATUS Built section; no Progress-log ruling changed behaviour and no section recorded a minor, so nothing else added. Gate: G3 exit 0; the stale-phrase grep prints nothing; `features/stock/` count 2 in ARCHITECTURE.md, 3 in web/CLAUDE.md; status shows only the four docs and this plan. Docs only: no test run. (The Task 9 hash row edits, Section C exit and Section D entry rows ride in this commit.) | 2026-11-06 | none |
-| **Task 11: the da-vinci finish by a fresh reviewer** | pending | | | | |
+| **Task 10: docs** | done | `19da4d9` | `T10` applied clean: `M ARCHITECTURE.md`, `M STATUS.md`, `M docs/web/api.md`, `M web/CLAUDE.md`. Step 2: commit range `0a9ed58` to `d74ad70` added to the STATUS Built section; no Progress-log ruling changed behaviour and no section recorded a minor, so nothing else added. Gate: G3 exit 0; the stale-phrase grep prints nothing; `features/stock/` count 2 in ARCHITECTURE.md, 3 in web/CLAUDE.md; status shows only the four docs and this plan. Docs only: no test run. (The Task 9 hash row edits, Section C exit and Section D entry rows ride in this commit.) | 2026-11-06 | none |
+| **Task 11: the da-vinci finish by a fresh reviewer** | done | (hash left for the orchestrator; Task 10 is `19da4d9`) | da-vinci loaded (ratified DESIGN.md, sync OK); `critique`, `audit`, `polish` run over the page. `mock5` (8799) and a scratch build (3101, G4's copy, rebuilt after each fix; green every time, `ƒ /stock/[symbol]` 16.4 kB) served the captures; `capture5` ran twice (before and after the fixes) plus my own chunked probe (scrolls `main`, measures `main.scrollWidth`, lists targets under 44 px). **After the fixes:** `hscroll` 0 in all 24 captures, no `pageErrors` at any width or theme, `main` scrollWidth equals clientWidth at 320, 390 and 1440 on every page, light and dark; `h2` order as the plan expects (GOOGL: price chart, Value book, Checks, Technicals, Financial statements, news service notes, News, Sentiment, Model summary; KO and SPY: value block after Financial statements; ZZZZ: no `h2`, the 404 sentence). Targets: no phone control under 44 px. **Red checks:** StockPage grid test failed (`grid min-w-0 gap-4` lacked `grid-cols-1`), StatementsTable hint test failed, NewsPanel link test failed (each against the old code, then green). Gates: vitest **1560 in 152 files** (1557 + 3), `tsc --noEmit` clean, `npm run lint` clean, G1 prints nothing, G2 lists exactly the four files, G3 exit 0, G5 no finding; servers stopped and `<S>/p5/build` removed (symlink first). **Fixed (all found by looking):** (1) **the page scrolled sideways on a phone when the statements disclosure was open**: both columns were `grid min-w-0 gap-4` with no column template, so the grid track took the table's min-content width (main 458 px wide at 320 and 390; `documentElement` reported hscroll 0 because the shell scrolls `main`, so the harness's check missed it); both columns are now `grid-cols-1` (`minmax(0,1fr)`), the table scrolls inside its card; (2) the scrolling statements table now says "Scroll sideways to see every column." on a phone (`md:hidden`, once for both tables, as Activity's tables do); (3) a headline link was 18 px tall on a phone and did not say it opens a new tab: it is now a 44 px target on a phone (`md:` restores the inline link) and carries a visually hidden "(opens in a new tab)", as the position page's headlines do. **Not fixed, with reasons:** (a) at one year, ~2.8 px per bar at 1440 px, a hollow up candle and a filled down candle read alike (direction by shape is weak at this density; the lines, volume and levels read fine): a real fix is range chips or a zoom, which ruling 13 deferred, so it waits for the operator; (b) the position page (`features/position/PositionPage.tsx` line 191 has the same `grid gap-4` column with no column template, and `Headlines.tsx` uses the same unpadded inline headline link) was not captured or measured here and is outside this plan's files; it may share fixes (1) and (3), worth a look in a later part; (c) the Sentiment row for a source with no score reads "n/a" then "n/a samples" (redundant but each is true and tested, ruling-level copy); (d) fully hatched n/a cells in the statements table are loud when most of a column is unknown (the plan's rule is a hatched n/a, never $0); (e) KO's mock shows a price of $182.40 over a $60 chart and a -20% margin of safety: synthetic data, not a page defect; (f) the capture harness's `fullPage` shows one viewport because the shell scrolls `main`, so the plan's expected `hscroll 0` is true but blind to this bug: the chunked probe, not the harness, caught it; (g) the 404 page offers no link to Research besides the back link above (by ruling 15 it is one sentence). No new token, colour, font, radius or shadow; no protected file touched | 2026-11-06 | Fixed (1) sits in `StockPage.tsx` (two classes), (2) in `StatementsTable.tsx`, (3) in `NewsPanel.tsx`; each with its test. Cost if wrong: classes. A DESIGN.md or CLAUDE.md edit was not needed: the layout rule (a grid with no column template is sized by its widest table) is already in `web/CLAUDE.md` under `ledger/`. |
 | **Whole-branch review (opus)** | pending | | | | |
 | **Review fix pass (sonnet)** | pending | | | | |
 | **Merge, push, restart** | pending | | | | |
@@ -3016,11 +3016,11 @@ index 1165be5..fd35c04 100644
 
 **Entry checks:**
 
-- [ ] **D1. Sections A-C landed** (nine task commits after A0); every gate green at the C exit; G1-G6.
-- [ ] **D2. The docs patch applies**: `git apply --check <S>/p5/T10.out` prints nothing. If it fails because
+- [x] **D1. Sections A-C landed** (nine task commits after A0); every gate green at the C exit; G1-G6.
+- [x] **D2. The docs patch applies**: `git apply --check <S>/p5/T10.out` prints nothing. If it fails because
   `STATUS.md`, `ARCHITECTURE.md`, `web/CLAUDE.md` or `docs/web/api.md` moved on `main`, apply its hunks by hand (each
   names its file and the lines around it), record a ruling, and continue: docs only.
-- [ ] **D3. A browser for Task 11**: `ls ~/.npm/_npx/*/node_modules/playwright-core/package.json` lists at least one
+- [x] **D3. A browser for Task 11**: `ls ~/.npm/_npx/*/node_modules/playwright-core/package.json` lists at least one
   path (the capture harness uses it headless), or the Playwright MCP loads. Neither: ask the operator.
 
 ### Task 10: Docs (sonnet, effort medium)
@@ -3304,15 +3304,15 @@ index ce355c9..062ca96 100644
 rulings 6-17, `web/DESIGN.md` (the Stock surface), "Invoke the `da-vinci` skill first and run `critique`, then
 `audit`, then `polish` over the stock page", "never the live API, never inside `web/`, never on port 3000".
 
-- [ ] **Step 1: The synthetic API.** `mock5` was extracted in A0 to `<S>/p5/mock5.out`. Copy it to `<S>/p5/mock5.py`
+- [x] **Step 1: The synthetic API.** `mock5` was extracted in A0 to `<S>/p5/mock5.out`. Copy it to `<S>/p5/mock5.py`
   and run it in the background: `python3 <S>/p5/mock5.py` (port 8799). It serves GOOGL (Ready deep value, held: the
   value block first, levels on the chart, a Caution warning, a failed and an unknown check, a model summary), KO
   (every list No: the value block after the statements), SPY (an ETF the book does not score, no bars, checks
   pending, statements unavailable) and a 404 for ZZZZ, plus the two routes the shell reads.
-- [ ] **Step 2: A scratch build served on 3101.** G4's copy and build in `<S>/p5/build` (keep it), then in the
+- [x] **Step 2: A scratch build served on 3101.** G4's copy and build in `<S>/p5/build` (keep it), then in the
   background: `cd <S>/p5/build/web && API_URL=http://127.0.0.1:8799 API_TOKEN=mock npx next start -p 3101`. Wait until
   `curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3101/stock/GOOGL` prints 200.
-- [ ] **Step 3: Captures.** Copy `capture5` to `<S>/p5/capture5.cjs`, `mkdir -p <S>/p5/shots`, then
+- [x] **Step 3: Captures.** Copy `capture5` to `<S>/p5/capture5.cjs`, `mkdir -p <S>/p5/shots`, then
   `node <S>/p5/capture5.cjs <a playwright-core directory from D3, without /package.json> <S>/p5/shots` (if Chromium
   fails to launch for a missing browser build, use the other directory D3 listed; the prototype ran with
   `~/.npm/_npx/e41f203b7505f1fb/node_modules/playwright-core`). It writes 24 PNGs (four pages x 320, 390,
@@ -3322,10 +3322,10 @@ rulings 6-17, `web/DESIGN.md` (the Stock surface), "Invoke the `da-vinci` skill 
   on GOOGL, News, Sentiment, Model summary; KO's and SPY's put the value book after Financial statements. The shell
   scrolls its `main`, so a full-page capture of a long page may show one viewport: scroll `main` and capture in
   chunks (`-a`, `-b`, ...) as Part 4 did. Open and look at every capture.
-- [ ] **Step 4: critique, audit, polish.** Fix what they find, each behaviour fix with a test written red first;
+- [x] **Step 4: critique, audit, polish.** Fix what they find, each behaviour fix with a test written red first;
   no new token (a proposal waits for the operator); nothing in the protected files. Record every finding not fixed,
   with a reason, in the Progress log row.
-- [ ] **Step 5: Gate and commit.** Every web gate; G1-G5; stop the two background servers (`pkill -f "next start -p 3101"`,
+- [x] **Step 5: Gate and commit.** Every web gate; G1-G5; stop the two background servers (`pkill -f "next start -p 3101"`,
   `pkill -f mock5.py`); remove `<S>/p5/build` by literal path (symlink first). Commit
   `fix(web): da-vinci finish of the stock page` (if nothing changed, record "no change" and commit only the log row).
 

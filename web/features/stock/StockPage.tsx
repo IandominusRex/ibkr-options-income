@@ -126,7 +126,7 @@ export function StockPage({ symbol }: { symbol: string }) {
       <BackLink />
       {header}
       <div className="mt-4 grid items-start gap-x-6 gap-y-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="grid min-w-0 gap-4">
+        <div className="grid min-w-0 grid-cols-1 gap-4">
           <section aria-labelledby="stock-chart-title">
             <h2 id="stock-chart-title" className="sr-only">
               {`${upper} price chart`}
@@ -149,7 +149,7 @@ export function StockPage({ symbol }: { symbol: string }) {
           </StockSection>
           {!leads && valueBlock}
         </div>
-        <div className="grid min-w-0 gap-4">
+        <div className="grid min-w-0 grid-cols-1 gap-4">
           <NameNotes symbol={upper} />
           <StockSection id="news" title="News" {...section("news")}>
             {data?.news?.data && <NewsPanel items={data.news.data as Props<typeof NewsPanel>["items"]} />}

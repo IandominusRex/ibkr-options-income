@@ -101,6 +101,17 @@ describe("StockPage", () => {
     expect(screen.getByText("RSI 14")).toBeInTheDocument();
   });
 
+  it("sizes each column to one minmax(0,1fr) track, so a wide table inside a card scrolls and never widens the page on a phone", async () => {
+    // Found by looking (Task 11): with the statements open, a grid with no column template took the
+    // table's min-content width and the whole page scrolled sideways at 320 and 390 px.
+    renderWithQuery(<StockPage symbol="GOOGL" />, { "/research/GOOGL": ANALYSIS, "/value/GOOGL": VALUE_READY });
+    await screen.findByText("Alphabet Inc. · NASDAQ");
+    const left = screen.getByTestId("chart").closest("section")?.parentElement;
+    const right = screen.getByRole("heading", { level: 2, name: "News" }).closest("section")?.parentElement;
+    expect(left).toHaveClass("grid-cols-1");
+    expect(right).toHaveClass("grid-cols-1");
+  });
+
   it("says a name the research service does not know in words, not an empty page", async () => {
     apiFetchMock.mockImplementation(async (path: string) => {
       throw new ApiError(404, `Unknown ${path}`);

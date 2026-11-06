@@ -42,6 +42,15 @@ describe("NewsPanel", () => {
     expect(link).toHaveAttribute("target", "_blank");
   });
 
+  it("says a headline opens in a new tab, and gives a phone a 44px target on it", () => {
+    // Found by looking (Task 11): at 390 px the link was 18px tall, and nothing said it leaves the page.
+    render(<NewsPanel items={items} />);
+    const link = screen.getAllByRole("link")[0];
+    expect(link).toHaveAccessibleName("Apple surges on strong earnings (opens in a new tab)");
+    expect(link).toHaveClass("min-h-11");
+    expect(link).toHaveClass("md:min-h-0");
+  });
+
   it("shows per-item sentiment as a labelled chip, not colour-only", () => {
     render(<NewsPanel items={items} />);
     expect(screen.getByText("bullish")).toBeInTheDocument();

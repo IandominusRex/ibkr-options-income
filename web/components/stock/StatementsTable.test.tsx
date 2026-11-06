@@ -41,6 +41,16 @@ const financials = {
 };
 
 describe("StatementsTable", () => {
+  it("says on a phone that the table scrolls sideways, once for both tables, and not when nothing is filed", () => {
+    // Found by looking (Task 11): at 390 px the third year sat off the card's edge with no hint.
+    const { unmount } = render(<StatementsTable financials={financials} />);
+    const hint = screen.getByText("Scroll sideways to see every column.");
+    expect(hint).toHaveClass("md:hidden");
+    unmount();
+    render(<StatementsTable financials={{ annual: [], quarterly: [] }} />);
+    expect(screen.queryByText("Scroll sideways to see every column.")).toBeNull();
+  });
+
   it("renders the annual period column header", () => {
     render(<StatementsTable financials={financials} />);
     expect(screen.getByText("Sep 2024")).toBeDefined();
