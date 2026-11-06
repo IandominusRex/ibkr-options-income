@@ -5993,6 +5993,13 @@ export interface components {
             methods?: components["schemas"]["ValueMethodOut"][];
             /** Gates */
             gates?: components["schemas"]["ValueGateOut"][];
+            /** Size Pct */
+            size_pct?: number | null;
+            /**
+             * Tranches
+             * @default 3
+             */
+            tranches: number;
         };
         /** ValueMethodOut */
         ValueMethodOut: {
@@ -6059,6 +6066,20 @@ export interface components {
             fair_value?: number | null;
             /** Effective Fair Value */
             effective_fair_value?: number | null;
+            /** Tranches Done */
+            tranches_done?: number | null;
+            /**
+             * Tranches
+             * @default 3
+             */
+            tranches: number;
+            /**
+             * Tranche Min Sessions
+             * @default 5
+             */
+            tranche_min_sessions: number;
+            /** Last Tranche On */
+            last_tranche_on?: string | null;
         };
         /** ValuePositionOut */
         ValuePositionOut: {
@@ -6236,6 +6257,8 @@ export interface components {
             put_ceiling?: number | null;
             /** Age Days */
             age_days?: number | null;
+            /** Claude Note */
+            claude_note?: string | null;
         };
         /** ValueTopResponse */
         ValueTopResponse: {

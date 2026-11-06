@@ -29,7 +29,7 @@ function ticker(over: Partial<ValueTicker> = {}): ValueTicker {
         {
           list_name: "deep_value", baseline_verdict: "WAIT", verdict: "READY", decided_by: "claude",
           fair_value: 200, effective_fair_value: 215, mos: 0.151, required_mos_pct: 30, entry_ceiling: 190,
-          entry: "pass", timing: "fail", reasons: ["timing_not_ready"], mos_review: false,
+          entry: "pass", timing: "fail", reasons: ["timing_not_ready"], mos_review: false, size_pct: 3, tranches: 3,
           methods: [
             { method: "B", value: 210, state: "ok", detail: "", used: true, median: true },
             { method: "A", value: 190, state: "ok", detail: "", used: true, median: false },
@@ -40,7 +40,8 @@ function ticker(over: Partial<ValueTicker> = {}): ValueTicker {
         {
           list_name: "quality_growth", baseline_verdict: "NO", verdict: "NO", decided_by: "python",
           fair_value: null, effective_fair_value: null, mos: null, required_mos_pct: 25, entry_ceiling: null,
-          entry: "fail", timing: "unknown", reasons: [], mos_review: false, methods: [], gates: [],
+          entry: "fail", timing: "unknown", reasons: [], mos_review: false, methods: [], gates: [], size_pct: null,
+          tranches: 3,
         },
       ],
       metrics: {}, adjustments: [],
@@ -72,7 +73,8 @@ function ticker(over: Partial<ValueTicker> = {}): ValueTicker {
     ],
     plan: {
       position_id: 1, list_name: "deep_value", shares: 20, avg_cost: 150, next_exit: { kind: "sell_half", level: 215 },
-      stop: 140, half_sold: false, fair_value: 200, effective_fair_value: 215,
+      stop: 140, half_sold: false, fair_value: 200, effective_fair_value: 215, tranches_done: 1, tranches: 3,
+      tranche_min_sessions: 5, last_tranche_on: "2026-10-20",
     },
     ...over,
   };

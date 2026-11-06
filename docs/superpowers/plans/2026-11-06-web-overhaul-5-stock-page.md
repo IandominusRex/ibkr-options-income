@@ -109,8 +109,8 @@ Progress log row; a "Section X entry" row rides in the next task's commit. A rev
 | **Plan written** | done | (plan file only) | Prototyped on a code-only copy of `main` at `6347dd9` (`git archive`, `.venv` and `web/node_modules` symlinked, session scratchpad), then replayed as a per-task git history from which every patch was generated; each task's commit re-checked: `tsc --noEmit` clean at T2-T9; the targeted suites 79 -> 79 -> 86 -> 89 -> 94 -> 97 -> 100 -> 103 -> 105 across T1-T10. **Full gates on the final tree:** pytest **5703 passed, 1 skipped** (5675 + 28); `ruff check .` clean; the four touched Python files `ruff format`-clean; `mypy src` 361 files clean; `test_openapi_current`, `test_web_fence`, `test_value_fence` green; vitest **1557 in 152 files** (1531 + 26); `tsc --noEmit` and `npm run lint` clean; da-vinci `lint.py` over the touched folders: no finding; `design_md_check.py web/DESIGN.md` exit 0; scratch `npm run build` green (19 routes plus `/_not-found`; the first try hit the known Google-font fetch error, the retry passed). **Red checks run** (each new test against the old code): Task 1 28 failed / 16 passed; Task 4 3 failed; Task 6 3 failed / 35 passed; Task 7 3 / 18; Task 8 3 / 12; Task 9 2 / 6; Tasks 3 and 5 are new modules (red = module missing). **Rendered** with `next start` from the prototype's build against the `mock5` API and a headless Chromium (`capture5`): `/stock/GOOGL`, `/KO`, `/SPY`, `/ZZZZ` at 320, 390 and 1440 px, light and dark: no page error, no horizontal scroll, the value block second for GOOGL and after the statements for KO and SPY, the 404 sentence for ZZZZ, the chart's levels "Fair value, Half sale $215.00" and "Entry ceiling $190.00". One fix came from looking: the volume bars drew a "1M" axis label and a heavy band, so they are now the perforation tone with no label (in the T4 patch). **Not run:** a fresh-eyes da-vinci critique and audit (Task 11 does it), the live API. | 2026-11-06 | Written from the HANDOFF (updated 2026-11-06) section 5's Part 5 row; rulings 1-21 below. |
 | **A0 setup** | done | `7981584` (docs: plan + handoff, on `main` over `6347dd9`) | Worktree `/Users/ianlim/Desktop/IBKR Investments/.claude/worktrees/web-overhaul-5` on `feat/web-overhaul-5`; `.venv` and `web/node_modules` symlinked; `init_db()` ok; patch helper written; all 12 block hashes match the table; 22 GiB free | 2026-11-06 | none |
 | **Section A entry** | done | (rides in Task 1's commit) | A1 clean at `7981584`; A2 `T1` applies; A3 baseline: pytest 5675 passed, 1 skipped; ruff clean; mypy 361 files clean; vitest 1531 in 149 files; tsc and lint clean | 2026-11-06 | none |
-| **Task 1: size tier, tranche plan and Claude's note in the API** | done | this commit (hash recorded in Task 2's commit) | `T1` applied clean (hash c7b47420...). Red check: `tests/test_api_value.py` 28 failed, 16 passed with the three source files stashed, as the plan says. Targeted: 100 passed (test_api_value, test_api_value_lookup, test_value_fence, test_web_fence); `ruff format --check` 4 files already formatted; `ruff check .` clean; `mypy src` 361 files clean. Full pytest: 1 failed, 5702 passed, 1 skipped, the one failure `tests/test_openapi_current.py` as expected (Task 2 regenerates the contract) | 2026-11-06 | none. (The Section A entry row and the A0 row ride in this commit.) |
-| **Task 2: the contract, regenerated** | pending | | | | |
+| **Task 1: size tier, tranche plan and Claude's note in the API** | done | `0a9ed58` | `T1` applied clean (hash c7b47420...). Red check: `tests/test_api_value.py` 28 failed, 16 passed with the three source files stashed, as the plan says. Targeted: 100 passed (test_api_value, test_api_value_lookup, test_value_fence, test_web_fence); `ruff format --check` 4 files already formatted; `ruff check .` clean; `mypy src` 361 files clean. Full pytest: 1 failed, 5702 passed, 1 skipped, the one failure `tests/test_openapi_current.py` as expected (Task 2 regenerates the contract) | 2026-11-06 | none. (The Section A entry row and the A0 row ride in this commit.) |
+| **Task 2: the contract, regenerated** | done | this commit (hash in the report; Task 1 is `0a9ed58`) | Regenerated offline: `docs/web/openapi.json` +60, `web/lib/api-types.ts` +23 (83 insertions, no deletions), the added keys exactly as the step lists. Red: `tsc --noEmit` failed with the three expected errors (format.test.ts 17, ValueBlock.test.tsx 19 and 73). `T2` (hash a7852848...) applied clean; tsc clean; `vitest run features/stock-value` 35 passed; full vitest 1531 in 149 files; `npm run lint` clean; `ruff check .` clean; `mypy src` 361 files clean; full pytest 5703 passed, 1 skipped (`test_openapi_current` green); G1 prints nothing; G2 lists exactly the four expected files; G6 (web_fence, value_fence, eval_skills, openapi_current) 55 passed | 2026-11-06 | none |
 | **Section A exit** | pending | | | | |
 | **Section B entry** | pending | | | | |
 | **Task 3: `features/stock/stock.ts`** | pending | | | | |
@@ -693,21 +693,21 @@ index 8e8fd2b..8301084 100644
 **Files:** Regenerate `docs/web/openapi.json`, `web/lib/api-types.ts`; modify `web/features/stock-value/format.test.ts`,
 `web/features/stock-value/ValueBlock.test.tsx` (typed fixtures only); this plan.
 
-- [ ] **Step 1: Regenerate offline** (from `<W>`):
+- [x] **Step 1: Regenerate offline** (from `<W>`):
   `IBKR_CONFIG_USE_EXAMPLES=1 python -c "import json; from src.api.main import create_app; print(json.dumps(create_app().openapi(), indent=2))" > docs/web/openapi.json`
   then `cd web && npx openapi-typescript ../docs/web/openapi.json -o lib/api-types.ts`.
   `git diff --stat` shows `docs/web/openapi.json | 60 +` and `web/lib/api-types.ts | 23 +` (83 insertions, no
   deletions). `git diff web/lib/api-types.ts | grep '^+ ' ` lists exactly these keys: `size_pct?: number | null`,
   `tranches: number` (twice), `tranches_done?: number | null`, `tranche_min_sessions: number`,
   `last_tranche_on?: string | null`, `claude_note?: string | null`.
-- [ ] **Step 2: Red.** `cd web && npx tsc --noEmit` fails with three errors: `features/stock-value/format.test.ts(17,...)`
+- [x] **Step 2: Red.** `cd web && npx tsc --noEmit` fails with three errors: `features/stock-value/format.test.ts(17,...)`
   and `features/stock-value/ValueBlock.test.tsx(19,...)` and `(73,...)` (the new keys are required in the generated
   types because the API declares them with a default).
-- [ ] **Step 3: Check and apply `T2`.** It adds the keys to the two typed fixtures.
-- [ ] **Step 4: Gate.** `npx tsc --noEmit` clean; `npx vitest run features/stock-value` 35 passed; full vitest
+- [x] **Step 3: Check and apply `T2`.** It adds the keys to the two typed fixtures.
+- [x] **Step 4: Gate.** `npx tsc --noEmit` clean; `npx vitest run features/stock-value` 35 passed; full vitest
   **1531 in 149 files**; `npm run lint` clean; from `<W>`, `python -m pytest -q`: **5703 passed, 1 skipped**
   (`test_openapi_current` green now); G1, G2, G6.
-- [ ] **Step 5: Commit** `chore(api): regenerate the contract for the value book's size, tranches and note`.
+- [x] **Step 5: Commit** `chore(api): regenerate the contract for the value book's size, tranches and note`.
 
 <!-- block T2 -->
 ````diff

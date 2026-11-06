@@ -15991,6 +15991,22 @@
             },
             "type": "array",
             "title": "Gates"
+          },
+          "size_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Pct"
+          },
+          "tranches": {
+            "type": "integer",
+            "title": "Tranches",
+            "default": 3
           }
         },
         "type": "object",
@@ -16170,6 +16186,39 @@
               }
             ],
             "title": "Effective Fair Value"
+          },
+          "tranches_done": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tranches Done"
+          },
+          "tranches": {
+            "type": "integer",
+            "title": "Tranches",
+            "default": 3
+          },
+          "tranche_min_sessions": {
+            "type": "integer",
+            "title": "Tranche Min Sessions",
+            "default": 5
+          },
+          "last_tranche_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Tranche On"
           }
         },
         "type": "object",
@@ -16701,6 +16750,17 @@
               }
             ],
             "title": "Age Days"
+          },
+          "claude_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claude Note"
           }
         },
         "type": "object",

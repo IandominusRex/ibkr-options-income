@@ -16,7 +16,8 @@ import type { ValuePlan, ValueTicker } from "./types";
 
 const plan = (over: Partial<ValuePlan> = {}): ValuePlan => ({
   position_id: 1, list_name: "deep_value", shares: 20, avg_cost: 150, next_exit: null, stop: 140,
-  half_sold: false, fair_value: 200, effective_fair_value: 210, ...over,
+  half_sold: false, fair_value: 200, effective_fair_value: 210, tranches_done: 1, tranches: 3, tranche_min_sessions: 5,
+  last_tranche_on: "2026-10-20", ...over,
 });
 
 const ticker = (over: Partial<ValueTicker> = {}): ValueTicker => ({
