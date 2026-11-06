@@ -1058,6 +1058,25 @@ overhaul Part 6) on the Stock page's frame.
   a higher low, at least 10 sessions after the last, and passes the value gate again first."). No new
   token, colour, font, radius or elevation.
 
+### Universe
+Read and Operate. The names the scan covers, recomposed 2026-11-06 (web overhaul Part 6) on the Stock page's frame.
+- **FIRST VIEWPORT:** a back link to Research, the title "Universe" (24px, 800) and one muted line ("The names
+  the scan covers. Would own and Watchlist take add and remove here; Indexes and Actively wheeling are set in
+  config/universe.yaml."), then the list cards.
+- **FORM:** one white card per list in the API's order (Indexes, Watchlist, Would own, Actively wheeling), two
+  `minmax(0,1fr)` columns from 1024px, one below. A card: the list's name (17px, 700) with "12 names" at the
+  right, one muted line on what the list is for (Would own: "The cash-secured-put allowlist: the system may sell
+  puts on these names, so it may be assigned their shares."), the read-only note on the two file-managed lists
+  ("Managed in config/universe.yaml. No add or remove control here."), the add field on the two others, then
+  hairline rows: the ticker bold (a link to the stock page, 44px on a phone), the sector, "Wheeling" or
+  "Dip-watch" as neutral status words on Would own, "Strike band 0.85", and a quiet Remove. An override keeps its
+  badge (who and when, and Revert) under the row, and a removed base name stays listed, struck through. A
+  failed command is a sentence, never red.
+- **Safety, unchanged:** adding to Would own opens the existing confirmation, which names the cash-secured put
+  and the assignment; Watchlist adds at once; every change is a command with its receipt. `sectors` stays
+  file-only, so nothing here reaches the concentration limits.
+- No new token, colour, font, radius or elevation.
+
 ### Stock
 Read. One name, and everything the system knows about it. VARIANCE 3, DENSITY 6. Recomposed 2026-11-06 (web
 overhaul Part 5) on the Position page's frame.

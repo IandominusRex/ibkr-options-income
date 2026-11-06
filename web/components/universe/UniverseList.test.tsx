@@ -314,12 +314,12 @@ describe("UniverseList — would_own entries are tagged wheeling vs dip-watch", 
     );
 
     const wheelingTag = screen.getByTestId("wheeling-tag-NVDA");
-    expect(wheelingTag.textContent).toBe("wheeling");
+    expect(wheelingTag.textContent).toBe("Wheeling");
     expect(wheelingTag.className).toMatch(/text-content/);
     expect(screen.queryByTestId("dip-watch-tag-NVDA")).toBeNull();
 
     const dipWatchTag = screen.getByTestId("dip-watch-tag-AAPL");
-    expect(dipWatchTag.textContent).toBe("dip-watch");
+    expect(dipWatchTag.textContent).toBe("Dip-watch");
     expect(dipWatchTag.className).toMatch(/text-muted/);
     expect(screen.queryByTestId("wheeling-tag-AAPL")).toBeNull();
   });

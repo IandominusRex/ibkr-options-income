@@ -131,8 +131,8 @@ Progress log row; a "Section X entry" row rides in the next task's commit. A rev
 | **Task 10: the Research page** | done | 76db0fa | features/research 34 passed (ResearchPage is a new module: red = module missing); full vitest 1603 in 154 files; tsc, lint clean; G3 exit 0; G4 green first try (19 rows: 18 routes plus /_not-found, `○ /research` 10.3 kB, `○ /research/universe` 2.89 kB; scratch build removed); G5 no non-test line | 2026-11-07 | da-vinci invoked with the section Spec (reads the Research surface in the T10 patch): no change to the patch. Task 9's row hash filled in (bdbb71d) |
 | **Task 11: Claude's note** | done | 3ae07f2 | red check (OpportunityCard.tsx stashed): 1 failed / 10 passed (11); with patch features/research 36 passed; full vitest 1605 in 154 files; tsc, lint clean; G1 empty, G2 the four files, G3 exit 0, G5 no non-test line, G7 the one layout line | 2026-11-07 | da-vinci invoked with the section Spec (reads the Top opportunities sentence in the T11 patch): no change to the patch |
 | **Section C exit** | done | - (hash fill in a trailing docs commit) | four task commits (b1f29b3, bdbb71d, 76db0fa, 3ae07f2); vitest 1605 in 154 files; tsc and lint clean; G1 empty; G2 the four files; G3 exit 0; G4 green again at exit (19 route rows, `○ /research` 10.3 kB, `○ /research/universe` 2.89 kB; scratch build removed); G5 no non-test finding; G6 `pytest -q tests/test_web_fence.py tests/test_value_fence.py tests/test_eval_skills.py tests/test_openapi_current.py` 55 passed; G7 `web/app/layout.tsx:55:          <CommandPalette />`; the Research surface is in `web/DESIGN.md` (line 981) | 2026-11-07 | G5 run without web/features/universe (folder does not exist until Task 12; cost if wrong: none). Hash-fill for Tasks 10 and 11 in one trailing docs commit (cost if wrong: none, log cells) |
-| **Section D entry** | | | | | |
-| **Task 12: the Universe page** | | | | | |
+| **Section D entry** | done | - | D1 Section C landed (b1f29b3, bdbb71d, 76db0fa, 3ae07f2 plus docs commit 0c74eeb), vitest 1605 in 154 files, tsc and lint clean, G1 empty, G2 four files, G7 one layout line; D2 `git apply --check` of T12 and T13 printed nothing; D3 `grep -c "it("` on UniverseList.test.tsx prints 18. No Python file changed since the green A3 baseline | 2026-11-07 | none |
+| **Task 12: the Universe page** | done | (this commit) | red check (UniverseList.tsx stashed): 2 failed / 19 passed (21); with patch 21 passed; full vitest 1608 in 155 files; tsc, lint clean; G3 exit 0; G5 no non-test line | 2026-11-07 | da-vinci invoked with the section Spec (DESIGN.md Universe surface ratified in the patch): no change to the patch |
 | **Task 13: the add field and the override badge** | | | | | |
 | **Section D exit** | | | | | |
 | **Section E entry** | | | | | |
@@ -3248,13 +3248,13 @@ one mount; modify `web/components/universe/UniverseList.tsx` (+ test, two string
 
 **What it does (ruling 14):** the page and the list cards described in the Spec.
 
-- [ ] **Step 1: da-vinci** with the Spec above.
-- [ ] **Step 2: Check and apply `T12`.** `git status --short` shows four `M` files and `?? web/features/universe/`.
-- [ ] **Step 3: Red check.** `git stash push -- web/components/universe/UniverseList.tsx`, then
+- [x] **Step 1: da-vinci** with the Spec above.
+- [x] **Step 2: Check and apply `T12`.** `git status --short` shows four `M` files and `?? web/features/universe/`.
+- [x] **Step 3: Red check.** `git stash push -- web/components/universe/UniverseList.tsx`, then
   `cd web && npx vitest run components/universe features/universe` ends `2 failed | 19 passed (21)`, then `git stash pop`.
-- [ ] **Step 4: Gate.** `npx vitest run components/universe features/universe`: 21 passed. Full vitest **1608 in 155
+- [x] **Step 4: Gate.** `npx vitest run components/universe features/universe`: 21 passed. Full vitest **1608 in 155
   files**; tsc, lint clean; G3 exit 0; G5.
-- [ ] **Step 5: Commit** `feat(web): Universe on the payslip: a card per list, each saying what it is for`.
+- [x] **Step 5: Commit** `feat(web): Universe on the payslip: a card per list, each saying what it is for`.
 
 <!-- block T12 -->
 ````diff
