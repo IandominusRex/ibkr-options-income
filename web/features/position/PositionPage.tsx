@@ -188,7 +188,9 @@ export function PositionPage({ underlying, slug }: { underlying: string; slug: s
           <UnderlyingChart symbol={symbol} lines={chartLines(data)} openedOn={openedOn(data)} onLastClose={setLastClose} />
         </div>
 
-        <div className="grid gap-4 lg:col-start-2 lg:row-span-2 lg:row-start-1">
+        {/* One minmax(0,1fr) track: a grid with no column template is sized by its widest child and
+            would widen the page on a phone (the stock page's lesson, web overhaul Parts 5 and 6). */}
+        <div className="grid min-w-0 grid-cols-1 gap-4 lg:col-start-2 lg:row-span-2 lg:row-start-1">
           {data.kind === "shares" ? (
             <SharesCard d={data} />
           ) : data.opened ? (

@@ -53,7 +53,7 @@ export function Headlines({ symbol }: { symbol: string }) {
                     href={h.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="font-semibold underline-offset-2 hover:underline"
+                    className="flex min-h-11 items-center font-semibold underline-offset-2 hover:underline md:inline md:min-h-0"
                   >
                     {h.title}
                     <span className="sr-only"> (opens in a new tab)</span>

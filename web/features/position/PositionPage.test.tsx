@@ -190,6 +190,18 @@ describe("PositionPage", () => {
     expect(screen.getByText("n/a")).toHaveClass("hatch"); // unknown sentiment is unknown, with texture
   });
 
+  it("makes a headline link a 44px target on a phone, inline from 768px", async () => {
+    renderWithQuery(<PositionPage underlying="AAPL" slug={SLUG} />, serve());
+    const link = await screen.findByRole("link", { name: /Apple unveils a new chip/ });
+    expect(link).toHaveClass("min-h-11", "md:inline", "md:min-h-0");
+  });
+
+  it("sizes the trade column to one minmax(0,1fr) track, so a wide child never widens the page", async () => {
+    renderWithQuery(<PositionPage underlying="AAPL" slug={SLUG} />, serve());
+    const trade = await screen.findByRole("article");
+    expect(trade.parentElement).toHaveClass("grid-cols-1", "min-w-0");
+  });
+
   it("says so when there are no headlines, or they cannot load", async () => {
     const { unmount } = renderWithQuery(<PositionPage underlying="AAPL" slug={SLUG} />, serve(detail(), { "/research/AAPL/headlines": { as_of: "", symbol: "AAPL", items: [] } }));
     expect(await screen.findByText("No recent headlines for AAPL.")).toBeInTheDocument();

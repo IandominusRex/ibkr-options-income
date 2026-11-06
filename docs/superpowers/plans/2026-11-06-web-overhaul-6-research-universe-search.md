@@ -115,11 +115,11 @@ Progress log row; a "Section X entry" row rides in the next task's commit. A rev
 | **Plan written** | done | (plan file only) | Prototyped on a code-only copy of `main` at `d3d1e28` (`git archive`, `.venv` and `web/node_modules` symlinked, session scratchpad), as a per-task git history from which every patch was generated (two fixes found by looking were folded back into T6 and T8 with `--fixup`). **Each task's commit re-checked in a second worktree:** `tsc --noEmit` clean at T1-T14; full vitest 1567, 1571, 1573, 1575, 1583, 1591, 1593, 1597, 1601, 1603, 1605, 1608, 1611, 1611 across T1-T14 (152 files to T4, 153 to T8, 154 to T11, 155 at T12, 156 from T13). **Full gates on the final tree:** vitest **1611 in 156 files** (1562 + 49); `tsc --noEmit` and `npm run lint` clean; pytest **5767 passed, 1 skipped** (no Python file changes; equal to `main`); `ruff check .` clean; `mypy src` 361 files clean; da-vinci `lint.py` over every touched folder: no finding (it first flagged the palette input's `outline-none`, now a `focus-visible` outline); `design_md_check.py web/DESIGN.md` exit 0; G1 empty, G2 the four files, G7 the one layout line; scratch `npm run build` green on the first try (18 routes plus `/_not-found`; `○ /research` 9.8 kB, `○ /research/universe` 3.87 kB). **Red checks run** (each new test against the old code, by stashing the task's source files): T1 5 failed / 20 passed; T2 by mutation of the two protected save calls, then restored (4 failed / 33 passed, ruling 16); T3 1 / 7; T4 2 / 15; T6 12 / 5; T7 3 / 12; T8 6 / 7; T9 4 / 4; T11 1 / 10; T12 2 / 19; T13 3 / 0; T5 and T10 are new modules (red = module missing). **Rendered** with `next start` from the prototype's build against `mock6` and a headless Chromium (`capture6`): Research, Universe and More at 320, 390 and 1440 px, light and dark, plus the palette with "a" typed: `hscroll` measured on `main` 0 everywhere, no page error, the `h2` orders as Task 15 expects, the palette's two groups and 7 options. **Two fixes came from looking** (both in the patches): the palette input's focus ring sat 2 px off the input and clipped against Close (now offset 0); the watchlist's facts line doubled the space before each dot and began a wrapped line with a dot (now one inline run). **Not run:** a fresh-eyes da-vinci critique and audit (Task 15 does it), the live API, the stock and position pages rendered (Tasks 3 and 4 are pinned by tests only), the Opus review. | 2026-11-06 | Written from the HANDOFF (updated 2026-11-06 after Part 5) section 5's Part 6 row and the operator's three answers (HANDOFF 5.4); rulings 1-20 below. |
 | **A0 setup** | done | plan commit affa316 on main over d3d1e28 | worktree <W> with .venv and web/node_modules symlinks, init_db run; free disk 21 GiB (floor 10) | 2026-11-07 | all 16 block hashes match the table |
 | **Section A entry** | done | - | A1 git log shows affa316 over d3d1e28, status clean; A2 git apply --check silent for T1-T4; A3 baseline: pytest 5767 passed 1 skipped, ruff clean, mypy 361 files clean, vitest 1562 in 152 files, tsc and lint clean | 2026-11-07 | none |
-| **Task 1: the title guard** | done | (this commit; hash in the Section A exit commit) | red check (5 layouts stashed): titles.test.ts 5 failed / 20 passed; with the patch 25 passed; full vitest 1567 in 152 files; tsc and lint clean | 2026-11-07 | none: patch applied as given |
-| **Task 2: the save-side tests** | done | (this commit) | 37 passed in the two files; full vitest 1571 in 152 files; tsc, lint clean; G1 prints nothing; no red check (ruling 16) | 2026-11-07 | none |
-| **Task 3: the value block mounts once** | done | (this commit) | red check: StockPage 1 failed / 7 passed; with patch 8 passed; features/stock 53 passed; full vitest 1573 in 152 files; tsc, lint clean | 2026-11-07 | da-vinci invoked with the section Spec: no change |
-| **Task 4: the position page's column and headline links** | | | | | |
-| **Section A exit** | | | | | |
+| **Task 1: the title guard** | done | 725f26b | red check (5 layouts stashed): titles.test.ts 5 failed / 20 passed; with the patch 25 passed; full vitest 1567 in 152 files; tsc and lint clean | 2026-11-07 | none: patch applied as given |
+| **Task 2: the save-side tests** | done | 61f503a | 37 passed in the two files; full vitest 1571 in 152 files; tsc, lint clean; G1 prints nothing; no red check (ruling 16) | 2026-11-07 | none |
+| **Task 3: the value block mounts once** | done | 496127f | red check: StockPage 1 failed / 7 passed; with patch 8 passed; features/stock 53 passed; full vitest 1573 in 152 files; tsc, lint clean | 2026-11-07 | da-vinci invoked with the section Spec: no change |
+| **Task 4: the position page's column and headline links** | done | (this commit) | red check: PositionPage 2 failed / 15 passed; with patch 17 passed; full vitest 1575 in 152 files; tsc, lint clean; G1 empty, G2 the four files, G5 no non-test line | 2026-11-07 | da-vinci invoked with the section Spec: no change |
+| **Section A exit** | done | - | vitest 1575 in 152 files; tsc and lint clean; G1 empty; G2 the four files; G5 no non-test finding (lint.py rejects the not-yet-created paths web/features/search and web/features/universe, so it was run over the existing ones); status clean after commit | 2026-11-07 | G5 run on existing paths only (cost if wrong: none, those folders do not exist yet) |
 | **Section B entry** | | | | | |
 | **Task 5: pages and the open event** | | | | | |
 | **Task 6: the palette** | | | | | |
@@ -815,14 +815,14 @@ index 9a2b744..ff3745b 100644
 
 **What it does (ruling 17):** the trade column is `grid min-w-0 grid-cols-1`; a headline link is a 44px row on a phone.
 
-- [ ] **Step 1: da-vinci** with the section's Spec (classes only).
-- [ ] **Step 2: Check and apply `T4`.** `git status --short` shows the three files as `M`.
-- [ ] **Step 3: Red check.** `git stash push -- web/features/position/PositionPage.tsx web/features/position/Headlines.tsx`,
+- [x] **Step 1: da-vinci** with the section's Spec (classes only).
+- [x] **Step 2: Check and apply `T4`.** `git status --short` shows the three files as `M`.
+- [x] **Step 3: Red check.** `git stash push -- web/features/position/PositionPage.tsx web/features/position/Headlines.tsx`,
   then `cd web && npx vitest run features/position/PositionPage.test.tsx` ends `2 failed | 15 passed (17)`, then
   `git stash pop`.
-- [ ] **Step 4: Gate.** `npx vitest run features/position/PositionPage.test.tsx`: 17 passed. Full vitest **1575 in 152
+- [x] **Step 4: Gate.** `npx vitest run features/position/PositionPage.test.tsx`: 17 passed. Full vitest **1575 in 152
   files**; tsc, lint clean; G1, G2, G5.
-- [ ] **Step 5: Commit** `fix(web): the position page's column never widens the page; headline links are 44px on a phone`.
+- [x] **Step 5: Commit** `fix(web): the position page's column never widens the page; headline links are 44px on a phone`.
 
 <!-- block T4 -->
 ````diff
