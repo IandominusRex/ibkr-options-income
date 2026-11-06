@@ -38,10 +38,10 @@ describe("Home — visible search bar", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("puts Top opportunities above the watchlist", () => {
+  it("puts Top opportunities above the watchlist", async () => {
     withClient(<Home />);
     const top = screen.getByRole("heading", { name: "Top opportunities" });
-    const watch = screen.getByRole("heading", { name: "Watchlist" });
+    const watch = await screen.findByRole("heading", { name: "Your watchlist" });
     expect(top.compareDocumentPosition(watch) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole("group", { name: "Opportunity list" })).toBeDefined();
   });

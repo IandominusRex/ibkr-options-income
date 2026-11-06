@@ -125,8 +125,8 @@ Progress log row; a "Section X entry" row rides in the next task's commit. A rev
 | **Task 6: the palette** | done | ad30440 | red check (CommandPalette.tsx stashed): components/search 12 failed / 5 passed (17); with patch 17 + 3 passed (components/search, app/research); full vitest 1591 in 153 files; tsc, lint clean; G5 no non-test line | 2026-11-07 | da-vinci invoked with the section Spec (DESIGN.md ratified, extending an existing surface): no change to the patch; Task 5's row hash filled in (76a3093) |
 | **Task 7: the palette in the shell** | done | b613c9b | red check (Rail.tsx, more/page.tsx, research/page.tsx stashed): 3 failed / 12 passed (15); with patch components/shell, app/more, app/research, app/titles, lib/nav: 89 passed; full vitest 1593 in 153 files; tsc, lint clean; G1 empty, G2 the four files, G3 exit 0, G4 green (19 rows: 18 routes plus /_not-found, `○ /research` 8.88 kB, `○ /research/universe` 2.89 kB; first try), G5 no non-test line, G7 exactly `web/app/layout.tsx:55:          <CommandPalette />` | 2026-11-07 | da-vinci invoked with the section Spec (DESIGN.md ratified, extending an existing surface): no change to the patch. Task 6's row hash corrected to ad30440 (the commit was amended once, before Task 7, to carry its own plan edits; cost if wrong: none, a log cell). G5 run without web/features/universe (folder does not exist until Task 12; cost if wrong: none) |
 | **Section B exit** | done | - | three task commits (76a3093, ad30440, b613c9b); vitest 1593 in 153 files; tsc and lint clean; G1 empty; G2 the four files; G3 exit 0; G4 green (19 route rows); G5 no non-test finding; G6 `pytest -q tests/test_web_fence.py tests/test_value_fence.py tests/test_eval_skills.py tests/test_openapi_current.py` 55 passed; G7 the one layout line; scratch build removed; status clean after commit | 2026-11-07 | recorded in Task 7's commit (the plan allows it; cost if wrong: none) |
-| **Section C entry** | | | | | |
-| **Task 8: Your watchlist** | | | | | |
+| **Section C entry** | done | - | C1 Section B landed (76a3093, ad30440, b613c9b plus docs commit 45d8781), vitest 1593 in 153 files, tsc and lint clean, G1 empty, G2 four files, G7 prints `web/app/layout.tsx:55:          <CommandPalette />`; C2 `git apply --check` of T8 printed nothing; C3 test counts 6, 4, 9 as written and ResearchPage.tsx does not exist. No Python file changed since the green A3 baseline | 2026-11-07 | none |
+| **Task 8: Your watchlist** | done | (next commit) | red check (WatchlistTable.tsx, research/page.tsx stashed): 6 failed / 7 passed (13); with patch components/home + app/research 17 passed; full vitest 1597 in 153 files; tsc, lint clean; G5 no non-test line | 2026-11-07 | da-vinci invoked with the section Spec (DESIGN.md ratified, extending an existing surface): no change to the patch |
 | **Task 9: the Sectors card** | | | | | |
 | **Task 10: the Research page** | | | | | |
 | **Task 11: Claude's note** | | | | | |
@@ -1946,10 +1946,10 @@ change as a ruling; it may not add a token, colour, font, radius, shadow or lime
 
 **Entry checks:**
 
-- [ ] **C1. Section B landed.** Three task commits since Section A; vitest 1593 in 153 files; G7 prints the layout line.
-- [ ] **C2. The first patch applies** (T8-T11 each edit `app/research/page.tsx` or `DESIGN.md` after the one before,
+- [x] **C1. Section B landed.** Three task commits since Section A; vitest 1593 in 153 files; G7 prints the layout line.
+- [x] **C2. The first patch applies** (T8-T11 each edit `app/research/page.tsx` or `DESIGN.md` after the one before,
   so each is checked at its own Step 1): `git apply --check <S>/p6/T8.out` prints nothing.
-- [ ] **C3. Test counts as written.** `grep -c "^  it(" web/components/home/WatchlistTable.test.tsx web/components/home/SectorCard.test.tsx web/features/research/OpportunityCard.test.tsx`
+- [x] **C3. Test counts as written.** `grep -c "^  it(" web/components/home/WatchlistTable.test.tsx web/components/home/SectorCard.test.tsx web/features/research/OpportunityCard.test.tsx`
   prints `6`, `4` and `9`; `ls web/features/research/ResearchPage.tsx` fails.
 
 **Section exit:** four task commits; vitest **1605 in 154 files**; tsc, lint clean; G1-G5, G7; the Research surface is
@@ -1964,14 +1964,14 @@ loading and failure in words, a failed add or remove in words. The research page
 (the card has its own). Five new cases; two existing ones change (the empty line is awaited, Remove is found by its name
 "Remove NVDA").
 
-- [ ] **Step 1: da-vinci** with the Spec above.
-- [ ] **Step 2: Check and apply `T8`.** `git status --short` shows four `M` files.
-- [ ] **Step 3: Red check.** `git stash push -- web/components/home/WatchlistTable.tsx web/app/research/page.tsx`, then
+- [x] **Step 1: da-vinci** with the Spec above.
+- [x] **Step 2: Check and apply `T8`.** `git status --short` shows four `M` files.
+- [x] **Step 3: Red check.** `git stash push -- web/components/home/WatchlistTable.tsx web/app/research/page.tsx`, then
   `cd web && npx vitest run components/home/WatchlistTable.test.tsx app/research` ends `6 failed | 7 passed (13)`, then
   `git stash pop`.
-- [ ] **Step 4: Gate.** `npx vitest run components/home app/research`: 17 passed. Full vitest **1597 in 153 files**;
+- [x] **Step 4: Gate.** `npx vitest run components/home app/research`: 17 passed. Full vitest **1597 in 153 files**;
   tsc, lint clean; G5.
-- [ ] **Step 5: Commit** `feat(web): Your watchlist, a card of rows that says unknown, loading and failure in words`.
+- [x] **Step 5: Commit** `feat(web): Your watchlist, a card of rows that says unknown, loading and failure in words`.
 
 <!-- block T8 -->
 ````diff

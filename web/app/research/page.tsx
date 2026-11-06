@@ -27,10 +27,9 @@ export default function Home() {
         <TopOpportunities />
       </section>
 
-      <section className="mt-10">
-        <h2 className="mb-3 text-sm font-medium tracking-wide text-muted">Watchlist</h2>
+      <div className="mt-10">
         <WatchlistTable />
-      </section>
+      </div>
 
       <section className="mt-10">
         <h2 className="mb-3 text-sm font-medium tracking-wide text-muted">
