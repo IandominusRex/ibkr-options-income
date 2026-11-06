@@ -168,6 +168,7 @@ export function CommandPalette({
   if (!q) status = "Type a ticker, a company or a page.";
   else if (current?.failed) status = "Tickers could not be searched right now.";
   else if (current && options.length === 0) status = `No ticker or page matches "${q}".`;
+  else if (!current && options.length === 0) status = "Searching tickers.";
 
   const groups = (["Pages", "Tickers"] as const)
     .map((g) => ({ g, rows: options.map((o, i) => ({ o, i })).filter((x) => x.o.group === g) }))

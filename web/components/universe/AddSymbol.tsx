@@ -51,6 +51,7 @@ export function AddSymbol({
 }) {
   const [term, setTerm] = useState("");
   const [hits, setHits] = useState<Hit[]>([]);
+  const [failed, setFailed] = useState(false);
   const [pendingHit, setPendingHit] = useState<Hit | null>(null);
   const [command, setCommand] = useState<CommandStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +71,7 @@ export function AddSymbol({
   }, [current, qc]);
 
   useEffect(() => {
+    setFailed(false);
     if (!term.trim()) {
       setHits([]);
       return;
@@ -82,6 +84,7 @@ export function AddSymbol({
         setHits(data.results);
       } catch {
         setHits([]);
+        setFailed(true);
       }
     }, 200);
     return () => clearTimeout(id);
@@ -158,7 +161,9 @@ export function AddSymbol({
         </ul>
       )}
       {term.trim() && hits.length === 0 && (
-        <p className="mt-1 text-[0.8125rem] text-muted">No ticker matches yet.</p>
+        <p className="mt-1 text-[0.8125rem] text-muted">
+          {failed ? "Tickers could not be searched right now." : "No ticker matches yet."}
+        </p>
       )}
 
       {error && (

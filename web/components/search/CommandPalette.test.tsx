@@ -100,8 +100,17 @@ describe("CommandPalette", () => {
     openWithShortcut();
     expect(screen.getByRole("status")).toHaveTextContent("Type a ticker, a company or a page.");
     fireEvent.change(input(), { target: { value: "zzzz" } });
-    expect(screen.getByRole("status")).toHaveTextContent("");
+    expect(screen.getByRole("status")).not.toHaveTextContent("No ticker or page matches");
     expect(await screen.findByText('No ticker or page matches "zzzz".')).toBeInTheDocument();
+  });
+
+  it("says the tickers are being searched while the answer is pending and no page matches", async () => {
+    render(<CommandPalette />);
+    openWithShortcut();
+    fireEvent.change(input(), { target: { value: "zzzz" } });
+    expect(screen.getByRole("status")).toHaveTextContent("Searching tickers.");
+    expect(await screen.findByText('No ticker or page matches "zzzz".')).toBeInTheDocument();
+    expect(screen.getByRole("status")).not.toHaveTextContent("Searching tickers.");
   });
 
   it("says the ticker search failed in words, and still lists the pages", async () => {

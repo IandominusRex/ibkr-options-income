@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 import { AddSymbol } from "./AddSymbol";
 import { OverrideBadge } from "./OverrideBadge";
 
+vi.mock("@/lib/api", async (orig) => ({ ...(await orig<typeof import("@/lib/api")>()), apiFetch: vi.fn() }));
+
 // Web overhaul Part 6 restyled the universe controls in place; UniverseList.test.tsx keeps their behaviour.
 function withClient(ui: React.ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -15,6 +17,15 @@ describe("AddSymbol, restyled", () => {
     withClient(<AddSymbol listName="would_own" />);
     const input = screen.getByRole("textbox", { name: "Add a name to Would own" });
     expect(input).toHaveClass("min-h-11");
+  });
+
+  it("says a failed ticker search in words, not 'no ticker matches'", async () => {
+    const { apiFetch } = await import("@/lib/api");
+    vi.mocked(apiFetch).mockRejectedValue(new Error("down"));
+    withClient(<AddSymbol listName="watchlist" />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Add a name to Watchlist" }), { target: { value: "AAP" } });
+    expect(await screen.findByText("Tickers could not be searched right now.")).toBeInTheDocument();
+    expect(screen.queryByText("No ticker matches yet.")).toBeNull();
   });
 
   it("names the Watchlist in its label", () => {

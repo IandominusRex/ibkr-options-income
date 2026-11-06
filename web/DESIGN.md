@@ -221,7 +221,7 @@ components:
     backgroundColor: "{colors.ink}"
     textColor: "{colors.ground}"
 ---
-<!-- da-vinci schema=1 status=ratified updated=2026-11-06 -->
+<!-- da-vinci schema=1 status=ratified updated=2026-11-07 -->
 # Design System: IBKR Income
 
 ## Overview
@@ -676,7 +676,7 @@ labelled groups, **Pages** first (the console's own pages from a fixed list in t
 symbol bold and the company muted, "ETF" as a neutral status word); each row is 44px on a phone and 40px from
 768px, and the active one is pressed sage. The arrow keys move, Enter opens, Escape or a tap on the scrim
 closes, focus goes back where it was. One status line says what is going on in words: "Type a ticker, a
-company or a page.", "No ticker or page matches "xyz"." (only once the search has answered), "Tickers could
+company or a page.", "Searching tickers." (while the first answer is pending and no page matches), "No ticker or page matches "xyz"." (only once the search has answered), "Tickers could
 not be searched right now." (pages still listed). A muted foot line from 768px names the keys. It reads and
 navigates; it sends nothing. No lime.
 
@@ -998,7 +998,9 @@ overhaul Part 6) on the Stock page's frame.
   pass · Earnings Nov 19, 2026", the price at the right with "-1.25% today" under it (signed, never green or red:
   a price move is not money) and "Delayed" as a flag word on a stale quote, and a quiet "Remove". The row is a
   link to the stock page. Unknowns are hatched n/a (never "0 of 0"); loading holds its place; a failed read, add
-  or remove is a sentence.
+  or remove is a sentence, and so is a failed ticker search in the "Follow a name" field. On a phone the quote
+  sits at the right of the name, the facts take the full width under both (each fact whole, so a line breaks
+  only between two) and Remove has its own 44px row; from 768px the row is one line, as above.
 - **Sectors by IV rank:** one white card, a row per sector in the API's order: the name bold with "IV rank 42.0
   (3)" at the right, then "3 names · +1.50% today", then "Best MSFT +2.00% · worst AAPL -1.00%", all in muted ink
   apart from the names; no green or red. Loading holds its place; empty and failed are sentences.
@@ -1202,6 +1204,12 @@ sibling keys; re-run the check after edits.
 
 ## Decision Log
 
+- 2026-11-07: **da-vinci finish of Research, Universe and search** (web overhaul Part 6, Task 15). Reviewed
+  rendered at 320, 390 and 1440 px in both themes. Your watchlist's row was recomposed on a phone (the quote beside
+  the name, the facts on the full width, Remove on its own 44px row; at 320px the facts had been squeezed to a
+  word a line and "Delayed" collided with them), the palette says "Searching tickers." while a first answer is
+  pending, and a failed ticker search in either Follow field says so instead of "No ticker matches yet." No new
+  token, colour, font, radius or elevation.
 - 2026-11-06: **Research, Universe and the search palette on the payslip** (web overhaul Part 6). Added the Search
   palette component (one dialog in the root layout: pages and tickers, the arrow keys, a status line in words),
   the rail's Search row (Research's icon became a telescope so the magnifier means search alone), More's Search

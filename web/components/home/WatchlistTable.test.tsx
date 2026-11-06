@@ -223,4 +223,34 @@ describe("WatchlistTable", () => {
     fireEvent.click(await screen.findByText("Apple Inc."));
     expect(await screen.findByText("That name could not be added. Nothing changed.")).toBeDefined();
   });
+  it("hides the separator dots from a screen reader, so a row's name reads as words", async () => {
+    const { apiFetch } = await import("@/lib/api");
+    (apiFetch as any).mockResolvedValue({
+      as_of: "x",
+      items: [
+        {
+          symbol: "NVDA", name: "NVIDIA",
+          price: { value: 120.0, source: "yfinance", as_of: "x", stale: false },
+          change_pct: 1.5, iv_rank: 80.0, checks: { passed: 3, evaluable: 5, unknown: 1 },
+          next_earnings: "2026-11-19",
+        },
+      ],
+    });
+    withClient(<WatchlistTable />);
+    const link = await screen.findByRole("link", { name: /NVDA/ });
+    expect(link.textContent).toContain("·");
+    expect(link).not.toHaveAccessibleName(/·/);
+  });
+
+  it("says a failed ticker search in words, not 'no ticker matches'", async () => {
+    const { apiFetch } = await import("@/lib/api");
+    (apiFetch as any).mockImplementation(async (path: string) => {
+      if (path.startsWith("/research/search")) throw new Error("down");
+      return { as_of: "x", items: [] };
+    });
+    withClient(<WatchlistTable />);
+    fireEvent.change(screen.getByPlaceholderText(/add a symbol/i), { target: { value: "AAP" } });
+    expect(await screen.findByText("Tickers could not be searched right now.")).toBeDefined();
+    expect(screen.queryByText("No ticker matches yet.")).toBeNull();
+  });
 });

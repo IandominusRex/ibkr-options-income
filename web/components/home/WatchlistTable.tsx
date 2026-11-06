@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/Card";
@@ -136,25 +136,34 @@ function WatchRow({ item, removing, onRemove }: { item: WatchlistItem; removing:
   ];
   if (item.next_earnings) facts.push(<span key="earn">{`Earnings ${shortDate(item.next_earnings)}`}</span>);
 
+  // One link holds the name, the quote and the facts, so the whole row opens the stock page. On a phone the
+  // quote sits at the right of the name and the facts get the full width under both (a 256px card cannot
+  // hold facts beside a quote and a Remove); from 768px the facts sit under the name and the quote's
+  // second line under its price. Each fact stays whole, so a line only ever breaks between two of them.
   return (
-    <li className="flex items-center gap-3 border-t border-border py-2.5 first:border-t-0">
-      <Link href={`/stock/${item.symbol}`} className="min-w-0 flex-1 py-1">
-        <span className="flex items-baseline gap-2">
+    <li className="flex flex-col border-t border-border py-2.5 first:border-t-0 md:flex-row md:items-center md:gap-3">
+      <Link
+        href={`/stock/${item.symbol}`}
+        className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] gap-x-3 py-1"
+      >
+        <span className="col-start-1 row-start-1 flex min-w-0 items-baseline gap-2">
           <span className="font-bold">{item.symbol}</span>
           <span className="truncate text-[0.8125rem] text-muted">{item.name}</span>
         </span>
-        <span className="mt-0.5 block text-[0.8125rem] text-muted">
+        <span className="tabular col-start-2 row-start-1 text-right font-semibold">
+          {price == null ? <Hatched /> : formatMoneyCell(price)}
+        </span>
+        <span className="col-span-2 row-start-3 mt-0.5 text-[0.8125rem] text-muted md:col-span-1 md:col-start-1 md:row-start-2">
           {facts.map((f, i) => (
-            <span key={i}>
-              {i > 0 && " · "}
-              {f}
-            </span>
+            <Fragment key={i}>
+              <span className="whitespace-nowrap">
+                {f}
+                {i < facts.length - 1 && <span aria-hidden="true">{" \u00b7"}</span>}
+              </span>{" "}
+            </Fragment>
           ))}
         </span>
-      </Link>
-      <div className="shrink-0 text-right">
-        <div className="tabular font-semibold">{price == null ? <Hatched /> : formatMoneyCell(price)}</div>
-        <div className="mt-0.5 flex items-center justify-end gap-1.5 text-[0.8125rem] text-muted">
+        <span className="col-start-2 row-start-2 mt-0.5 flex flex-col items-end text-[0.8125rem] text-muted md:flex-row md:items-center md:gap-1.5">
           {item.price?.stale && <StatusWord tone="flag">Delayed</StatusWord>}
           {item.change_pct == null ? (
             <span>
@@ -163,14 +172,14 @@ function WatchRow({ item, removing, onRemove }: { item: WatchlistItem; removing:
           ) : (
             <span className="tabular">{`${signedPct(item.change_pct)} today`}</span>
           )}
-        </div>
-      </div>
+        </span>
+      </Link>
       <button
         type="button"
         disabled={removing}
         onClick={onRemove}
         aria-label={`Remove ${item.symbol}`}
-        className="inline-flex min-h-11 shrink-0 items-center rounded-full px-3 text-[0.8125rem] font-semibold text-muted enabled:hover:bg-sunk enabled:hover:text-content disabled:opacity-50 md:min-h-9"
+        className="-ml-3 inline-flex min-h-11 shrink-0 items-center self-start rounded-full px-3 text-[0.8125rem] font-semibold text-muted enabled:hover:bg-sunk enabled:hover:text-content disabled:opacity-50 md:ml-0 md:-mr-3 md:min-h-9 md:self-auto"
       >
         Remove
       </button>
@@ -188,9 +197,11 @@ function WatchRow({ item, removing, onRemove }: { item: WatchlistItem; removing:
 function AddSymbol({ onPick, disabled = false }: { onPick: (symbol: string) => void; disabled?: boolean }) {
   const [term, setTerm] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
+  const [failed, setFailed] = useState(false);
   const id = useId();
 
   useEffect(() => {
+    setFailed(false);
     if (!term.trim()) {
       setHits([]);
       return;
@@ -201,6 +212,7 @@ function AddSymbol({ onPick, disabled = false }: { onPick: (symbol: string) => v
         setHits(data.results);
       } catch {
         setHits([]);
+        setFailed(true);
       }
     }, 200);
     return () => clearTimeout(t);
@@ -241,7 +253,9 @@ function AddSymbol({ onPick, disabled = false }: { onPick: (symbol: string) => v
           ))}
         </ul>
       )}
-      {term.trim() && hits.length === 0 && <p className="mt-1 text-[0.8125rem] text-muted">No ticker matches yet.</p>}
+      {term.trim() && hits.length === 0 && (
+        <p className="mt-1 text-[0.8125rem] text-muted">{failed ? "Tickers could not be searched right now." : "No ticker matches yet."}</p>
+      )}
     </div>
   );
 }
