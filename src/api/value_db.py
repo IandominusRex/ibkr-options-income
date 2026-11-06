@@ -184,7 +184,10 @@ def read_top(session: Session, list_name: str, limit: int = 10) -> list[dict] | 
         "e.verdict, e.decided_by, e.fair_value, e.entry_ceiling, e.margin_of_safety, "
         "(SELECT MAX(x.entry_ceiling) FROM value_effective x WHERE x.symbol = t.symbol "
         " AND x.verdict IN ('READY', 'WATCH', 'WAIT') AND x.entry_ceiling IS NOT NULL) "
-        "AS put_ceiling "
+        "AS put_ceiling, "
+        "(SELECT v.why FROM value_claude_verdicts v WHERE v.symbol = t.symbol "
+        " AND v.list_name = :list AND v.superseded = 0 AND v.backend = 'cli' "
+        " ORDER BY v.id DESC LIMIT 1) AS claude_why "
         "FROM value_ticker_files t JOIN value_effective e "
         "ON e.symbol = t.symbol AND e.list_name = :list "
         "WHERE t.universe = 'trading' AND e.verdict IN ('READY', 'WATCH', 'WAIT') "
@@ -248,7 +251,8 @@ def read_positions(session: Session, status: str) -> list[dict] | None:
     realised dollars (None until a sale has filled), newest first."""
     positions = _rows(
         session,
-        "SELECT id, symbol, list_name, status, opened_on, closed_on, plan_json, decided_by "
+        "SELECT id, symbol, list_name, status, opened_on, closed_on, plan_json, decided_by, "
+        "tranches_done, last_tranche_on "
         "FROM value_positions WHERE status = :s ORDER BY id DESC",
         {"s": status},
     )
@@ -306,6 +310,8 @@ def read_positions(session: Session, status: str) -> list[dict] | None:
                 "realised_usd": realised if sold > 0 else None,
                 "decided_by": str(p["decided_by"] or "python"),
                 "plan_json": p["plan_json"],
+                "tranches_done": None if p["tranches_done"] is None else int(p["tranches_done"]),
+                "last_tranche_on": day(p["last_tranche_on"]),
             }
         )
     return out

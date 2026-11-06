@@ -38,6 +38,10 @@ class ValueTopItem(BaseModel):
     reasons: list[str] = Field(default_factory=list)
     put_ceiling: float | None = None  # the wheel's value-suggested put ceiling
     age_days: int | None = None
+    # Claude's own why for this list, as one line (value_claude_verdicts, the CLI backend only: a
+    # local model's verdict never decides and is not Claude's). Labelled as Claude's on the web,
+    # never on a button. None when Claude has not read the name for this list.
+    claude_note: str | None = None
 
 
 class ValueTopResponse(Envelope):
@@ -155,6 +159,11 @@ class ValueListOut(BaseModel):
     mos_review: bool = False
     methods: list[ValueMethodOut] = Field(default_factory=list)
     gates: list[ValueGateOut] = Field(default_factory=list)  # this list's entry and timing checks
+    # The size tier the effective margin of safety reaches (value.book.tiers, spec section 9.5), in
+    # percent of the book's ceiling and capped at the name cap: 0.0 below the first tier, None when
+    # the margin is unknown (never 0). A buy aims at it in ``tranches`` steps.
+    size_pct: float | None = None
+    tranches: int = 3  # value.book.tranches
 
 
 class ValueFileOut(BaseModel):
@@ -249,6 +258,10 @@ class ValuePlanOut(BaseModel):
     half_sold: bool = False
     fair_value: float | None = None
     effective_fair_value: float | None = None
+    tranches_done: int | None = None  # how many of the tranches have been bought
+    tranches: int = 3  # value.book.tranches
+    tranche_min_sessions: int = 5  # value.book.tranche_min_sessions: sessions between two
+    last_tranche_on: date | None = None
 
 
 class ValueTickerResponse(Envelope):

@@ -495,3 +495,94 @@ def test_a_re_entry_starts_the_average_cost_again(value_book_db) -> None:
         fills = vdb.read_fills(s)
     assert fills is not None
     assert [f["realised_usd"] for f in fills] == [None, 1000.0, None, 1000.0]
+
+
+# --- web overhaul Part 5: the size tier, the tranche plan, Claude's one-line note ----------------
+
+
+def _seed_why(symbol: str, why: str, *, backend: str = "cli", superseded: bool = False) -> None:
+    with value_session() as s:
+        s.add(
+            ValueClaudeVerdictRow(
+                read_id=1,
+                symbol=symbol,
+                list_name="deep_value",
+                verdict="READY",
+                why=why,
+                drivers_json="{}",
+                clamps_json="[]",
+                fair_value=150.0,
+                python_fair_value=140.0,
+                clamp_bound=False,
+                fingerprint_key="k" * 16,
+                backend=backend,
+                created_at=NOW,
+                superseded=superseded,
+            )
+        )
+
+
+def test_top_carries_claudes_one_line_note_from_the_cli_only(client, vdb_file) -> None:
+    for sym in ("CLI", "LOCAL", "NONE", "LONG", "OLD"):
+        _seed_file(sym)
+    _seed_why("CLI", "Cheap on free cash flow,\n  below the ceiling.")
+    _seed_why("LOCAL", "A local model wrote this.", backend="ollama")
+    _seed_why("LONG", "word " * 60)
+    _seed_why("OLD", "An older read.", superseded=True)
+    items = {
+        i["symbol"]: i
+        for i in client.get("/value/top?list=deep_value", headers=OWNER).json()["items"]
+    }
+    assert items["CLI"]["claude_note"] == "Cheap on free cash flow, below the ceiling."
+    assert items["LOCAL"]["claude_note"] is None  # not Claude's: never labelled as Claude's
+    assert items["NONE"]["claude_note"] is None
+    assert items["OLD"]["claude_note"] is None
+    long = items["LONG"]["claude_note"]
+    assert len(long) <= 200 and long.endswith("…") and not long.endswith(" …")
+
+
+def test_ticker_lists_carry_the_size_tier_and_the_tranche_count(client, vdb_file) -> None:
+    _seed_file(
+        "GOOGL"
+    )  # effective margin of safety 0.3; deep_value tiers 25 -> 3, 35 -> 5, 45 -> 8
+    deep = client.get("/value/GOOGL", headers=OWNER).json()["file"]["lists"][0]
+    assert deep["size_pct"] == 3.0 and deep["tranches"] == 3
+
+
+def test_an_unknown_margin_has_no_size_never_zero(client, vdb_file) -> None:
+    _seed_file("GOOGL")
+    with value_session() as s:
+        row = s.query(ValueEffectiveRow).filter_by(symbol="GOOGL").one()
+        row.margin_of_safety = None
+    deep = client.get("/value/GOOGL", headers=OWNER).json()["file"]["lists"][0]
+    assert deep["size_pct"] is None
+
+
+@pytest.mark.parametrize("list_name", ["deep_value", "quality_growth"])
+@pytest.mark.parametrize(
+    "mos", [None, -0.2, 0.0, 0.09, 0.1, 0.249, 0.25, 0.3, 0.35, 0.44, 0.45, 0.9]
+)
+def test_the_size_tier_is_the_value_books_own_rule(list_name, mos) -> None:
+    from src.api.routers.value import _size_pct
+    from src.common.config import get_config
+    from src.value.sizing import tier_pct
+
+    book = get_config().value.book
+    expected = (
+        None
+        if mos is None
+        else min(tier_pct(mos * 100.0, getattr(book.tiers, list_name)), book.name_cap_pct)
+    )
+    assert _size_pct(list_name, mos) == expected
+
+
+def test_a_held_names_plan_carries_its_tranches(client, vdb_file) -> None:
+    _seed_file("GOOGL")
+    _seed_position("GOOGL", status="open", sells=False)
+    with value_session() as s:
+        pos = s.query(ValuePositionRow).filter_by(symbol="GOOGL").one()
+        pos.tranches_done = 1
+        pos.last_tranche_on = date(2026, 10, 20)
+    plan = client.get("/value/GOOGL", headers=OWNER).json()["plan"]
+    assert plan["tranches_done"] == 1 and plan["tranches"] == 3
+    assert plan["tranche_min_sessions"] == 5 and plan["last_tranche_on"] == "2026-10-20"

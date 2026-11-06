@@ -107,9 +107,9 @@ Progress log row; a "Section X entry" row rides in the next task's commit. A rev
 | Section / task | Status | Commits | Gate | Date | Rulings |
 |---|---|---|---|---|---|
 | **Plan written** | done | (plan file only) | Prototyped on a code-only copy of `main` at `6347dd9` (`git archive`, `.venv` and `web/node_modules` symlinked, session scratchpad), then replayed as a per-task git history from which every patch was generated; each task's commit re-checked: `tsc --noEmit` clean at T2-T9; the targeted suites 79 -> 79 -> 86 -> 89 -> 94 -> 97 -> 100 -> 103 -> 105 across T1-T10. **Full gates on the final tree:** pytest **5703 passed, 1 skipped** (5675 + 28); `ruff check .` clean; the four touched Python files `ruff format`-clean; `mypy src` 361 files clean; `test_openapi_current`, `test_web_fence`, `test_value_fence` green; vitest **1557 in 152 files** (1531 + 26); `tsc --noEmit` and `npm run lint` clean; da-vinci `lint.py` over the touched folders: no finding; `design_md_check.py web/DESIGN.md` exit 0; scratch `npm run build` green (19 routes plus `/_not-found`; the first try hit the known Google-font fetch error, the retry passed). **Red checks run** (each new test against the old code): Task 1 28 failed / 16 passed; Task 4 3 failed; Task 6 3 failed / 35 passed; Task 7 3 / 18; Task 8 3 / 12; Task 9 2 / 6; Tasks 3 and 5 are new modules (red = module missing). **Rendered** with `next start` from the prototype's build against the `mock5` API and a headless Chromium (`capture5`): `/stock/GOOGL`, `/KO`, `/SPY`, `/ZZZZ` at 320, 390 and 1440 px, light and dark: no page error, no horizontal scroll, the value block second for GOOGL and after the statements for KO and SPY, the 404 sentence for ZZZZ, the chart's levels "Fair value, Half sale $215.00" and "Entry ceiling $190.00". One fix came from looking: the volume bars drew a "1M" axis label and a heavy band, so they are now the perforation tone with no label (in the T4 patch). **Not run:** a fresh-eyes da-vinci critique and audit (Task 11 does it), the live API. | 2026-11-06 | Written from the HANDOFF (updated 2026-11-06) section 5's Part 5 row; rulings 1-21 below. |
-| **A0 setup** | pending | | | | |
-| **Section A entry** | pending | | | | |
-| **Task 1: size tier, tranche plan and Claude's note in the API** | pending | | | | |
+| **A0 setup** | done | `7981584` (docs: plan + handoff, on `main` over `6347dd9`) | Worktree `/Users/ianlim/Desktop/IBKR Investments/.claude/worktrees/web-overhaul-5` on `feat/web-overhaul-5`; `.venv` and `web/node_modules` symlinked; `init_db()` ok; patch helper written; all 12 block hashes match the table; 22 GiB free | 2026-11-06 | none |
+| **Section A entry** | done | (rides in Task 1's commit) | A1 clean at `7981584`; A2 `T1` applies; A3 baseline: pytest 5675 passed, 1 skipped; ruff clean; mypy 361 files clean; vitest 1531 in 149 files; tsc and lint clean | 2026-11-06 | none |
+| **Task 1: size tier, tranche plan and Claude's note in the API** | done | this commit (hash recorded in Task 2's commit) | `T1` applied clean (hash c7b47420...). Red check: `tests/test_api_value.py` 28 failed, 16 passed with the three source files stashed, as the plan says. Targeted: 100 passed (test_api_value, test_api_value_lookup, test_value_fence, test_web_fence); `ruff format --check` 4 files already formatted; `ruff check .` clean; `mypy src` 361 files clean. Full pytest: 1 failed, 5702 passed, 1 skipped, the one failure `tests/test_openapi_current.py` as expected (Task 2 regenerates the contract) | 2026-11-06 | none. (The Section A entry row and the A0 row ride in this commit.) |
 | **Task 2: the contract, regenerated** | pending | | | | |
 | **Section A exit** | pending | | | | |
 | **Section B entry** | pending | | | | |
@@ -398,17 +398,17 @@ ruff, mypy clean; G1, G2, G6; `git status --short` clean.
 cut at a word under 200 characters), the size tier on a list, an unknown margin is `null`, the parity with
 `tier_pct` (24 cases), a held name's tranche fields.
 
-- [ ] **Step 1: Check and apply `T1`.** `git status --short` shows exactly the four files above as `M`.
-- [ ] **Step 2: Red check.** `git stash push -- src/api/models/value.py src/api/routers/value.py src/api/value_db.py`,
+- [x] **Step 1: Check and apply `T1`.** `git status --short` shows exactly the four files above as `M`.
+- [x] **Step 2: Red check.** `git stash push -- src/api/models/value.py src/api/routers/value.py src/api/value_db.py`,
   then `IBKR_CONFIG_USE_EXAMPLES=1 python -m pytest -q tests/test_api_value.py` ends `28 failed, 16 passed`, then
   `git stash pop` (the three files come back; `git status --short` shows the four `M` files again).
-- [ ] **Step 3: Targeted gate.** `IBKR_CONFIG_USE_EXAMPLES=1 python -m pytest -q tests/test_api_value.py tests/test_api_value_lookup.py tests/test_value_fence.py tests/test_web_fence.py`
+- [x] **Step 3: Targeted gate.** `IBKR_CONFIG_USE_EXAMPLES=1 python -m pytest -q tests/test_api_value.py tests/test_api_value_lookup.py tests/test_value_fence.py tests/test_web_fence.py`
   passes; `ruff format --check src/api/models/value.py src/api/routers/value.py src/api/value_db.py tests/test_api_value.py`
   prints `4 files already formatted`; `ruff check .` clean; `mypy src` 361 files clean.
-- [ ] **Step 4: Full gate.** `python -m pytest -q`: **1 failed, 5702 passed, 1 skipped**, the one failure being
+- [x] **Step 4: Full gate.** `python -m pytest -q`: **1 failed, 5702 passed, 1 skipped**, the one failure being
   `tests/test_openapi_current.py` (the committed contract does not name the new fields until Task 2 regenerates it;
   checked in the prototype). Any other failure: stop.
-- [ ] **Step 5: Commit** `feat(api): the value book's size tier, tranche plan and Claude's note, read-only` with the
+- [x] **Step 5: Commit** `feat(api): the value book's size tier, tranche plan and Claude's note, read-only` with the
   Progress log row (and the A0 row).
 
 <!-- block T1 -->

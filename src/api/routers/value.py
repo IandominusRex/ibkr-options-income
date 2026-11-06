@@ -50,6 +50,7 @@ router = APIRouter(prefix="/value", tags=["value"])
 _DEEP_FINANCIAL = ("bank", "insurer")
 _NOTE_KINDS = ("profile", "why_cheap", "thesis", "bear_case")
 _PRICED = ("READY", "WATCH", "WAIT")
+_NOTE_MAX = 200  # characters of Claude's why a Top opportunities card carries
 
 
 def _now() -> datetime:
@@ -59,6 +60,35 @@ def _now() -> datetime:
 
 def _next_exit_out(raw: dict[str, Any] | None) -> ValueNextExit | None:
     return None if raw is None else ValueNextExit(kind=raw["kind"], level=raw["level"])
+
+
+def _one_line(text: Any) -> str | None:
+    """Claude's why as one line for a card: whitespace collapsed, at most ``_NOTE_MAX``
+    characters (cut at a word, ended with an ellipsis); None when there is none."""
+    if not isinstance(text, str):
+        return None
+    line = " ".join(text.split())
+    if not line:
+        return None
+    if len(line) <= _NOTE_MAX:
+        return line
+    return line[: _NOTE_MAX - 1].rsplit(" ", 1)[0] + "\u2026"
+
+
+def _size_pct(list_name: str, mos: float | None) -> float | None:
+    """The size tier the margin of safety (a fraction) reaches, in percent of the book's ceiling:
+    the highest ``value.book.tiers`` row it reaches, capped at ``name_cap_pct``; 0.0 below the
+    first row; None when the margin is unknown, never 0. The rule of
+    ``src.value.sizing.tier_pct``, which the API may not import (the value fence);
+    ``tests/test_api_value.py`` holds the two equal."""
+    if mos is None:
+        return None
+    book = get_config().value.book
+    size = 0.0
+    for start, pct in getattr(book.tiers, list_name):
+        if mos * 100.0 >= start:
+            size = pct
+    return min(size, book.name_cap_pct)
 
 
 def _position_out(p: dict[str, Any]) -> ValuePositionOut:
@@ -109,6 +139,7 @@ def value_top(
             reasons=r["reasons"],
             put_ceiling=r["put_ceiling"],
             age_days=vdb.age_days(vdb.day(r["as_of"]), now),
+            claude_note=_one_line(r["claude_why"]),
         )
         for r in rows
     ]
@@ -305,6 +336,7 @@ def _list_out(
     if ev is None:
         return None
     baseline = card.verdict_for(name)
+    mos = eff["margin_of_safety"] if eff else ev.margin_of_safety
     return ValueListOut(
         list_name=name,
         baseline_verdict=baseline,
@@ -312,7 +344,7 @@ def _list_out(
         decided_by="claude" if eff and eff["decided_by"] == "claude" else "python",
         fair_value=ev.fair_value,
         effective_fair_value=eff["fair_value"] if eff else ev.fair_value,
-        mos=eff["margin_of_safety"] if eff else ev.margin_of_safety,
+        mos=mos,
         required_mos_pct=ev.required_mos_pct,
         entry_ceiling=eff["entry_ceiling"] if eff else ev.entry_ceiling,
         entry=ev.entry,
@@ -324,6 +356,8 @@ def _list_out(
             *(_gate(c, "entry") for c in ev.entry_checks),
             *(_gate(c, "timing") for c in ev.timing_checks),
         ],
+        size_pct=_size_pct(name, mos),
+        tranches=get_config().value.book.tranches,
     )
 
 
@@ -487,6 +521,7 @@ def _plan(session: Any, symbol: str) -> ValuePlanOut | None:
     p = held[0]
     plan = vdb.jsonish(p["plan_json"], {})
     plan = plan if isinstance(plan, dict) else {}
+    book = get_config().value.book
     return ValuePlanOut(
         position_id=p["id"],
         list_name=p["list_name"],
@@ -498,6 +533,10 @@ def _plan(session: Any, symbol: str) -> ValuePlanOut | None:
         half_sold=bool(plan.get("half_sold")),
         fair_value=plan.get("fair_value"),
         effective_fair_value=plan.get("effective_fair_value"),
+        tranches_done=p["tranches_done"],
+        tranches=book.tranches,
+        tranche_min_sessions=book.tranche_min_sessions,
+        last_tranche_on=p["last_tranche_on"],
     )
 
 
