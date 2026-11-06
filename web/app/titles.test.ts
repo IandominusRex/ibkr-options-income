@@ -81,6 +81,21 @@ describe("route titles (web overhaul Part 4, ruling 23)", () => {
     expect((await proposal({ params: Promise.resolve({ approvalId: "42" }) })).title).toBe("Proposal 42");
   });
 
+  // A stray "%" in a hand-typed URL is a malformed escape: the title falls back to the raw segment
+  // instead of throwing (web overhaul Part 6).
+  it.each([
+    ["stock", () => stock({ params: Promise.resolve({ symbol: "ab%zz" }) }), "AB%ZZ"],
+    ["news ticker", () => newsTicker({ params: Promise.resolve({ symbol: "ab%zz" }) }), "AB%ZZ news"],
+    ["ledger ticker", () => ledgerTicker({ params: Promise.resolve({ symbol: "ab%zz" }) }), "AB%ZZ ledger"],
+    ["position", () => position({ params: Promise.resolve({ underlying: "ab%zz", slug: "x" }) }), "AB%ZZ position"],
+    ["proposal", () => proposal({ params: Promise.resolve({ approvalId: "4%2" }) }), "Proposal 4%2"],
+  ] as [string, () => Promise<Metadata>, string][])(
+    "a %s title survives a malformed escape and keeps the raw segment",
+    async (_name, meta, title) => {
+      expect((await meta()).title).toBe(title);
+    },
+  );
+
   it("no title carries an em dash", async () => {
     const all = [activity, explain, ledgerImport, ledgerTrades, news, portfolio, trades, more, claude, research, universe];
     for (const m of all) expect(String(m.title)).not.toContain("—");

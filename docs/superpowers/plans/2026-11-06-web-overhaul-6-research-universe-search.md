@@ -113,9 +113,9 @@ Progress log row; a "Section X entry" row rides in the next task's commit. A rev
 | Section / task | Status | Commits | Gate | Date | Rulings |
 |---|---|---|---|---|---|
 | **Plan written** | done | (plan file only) | Prototyped on a code-only copy of `main` at `d3d1e28` (`git archive`, `.venv` and `web/node_modules` symlinked, session scratchpad), as a per-task git history from which every patch was generated (two fixes found by looking were folded back into T6 and T8 with `--fixup`). **Each task's commit re-checked in a second worktree:** `tsc --noEmit` clean at T1-T14; full vitest 1567, 1571, 1573, 1575, 1583, 1591, 1593, 1597, 1601, 1603, 1605, 1608, 1611, 1611 across T1-T14 (152 files to T4, 153 to T8, 154 to T11, 155 at T12, 156 from T13). **Full gates on the final tree:** vitest **1611 in 156 files** (1562 + 49); `tsc --noEmit` and `npm run lint` clean; pytest **5767 passed, 1 skipped** (no Python file changes; equal to `main`); `ruff check .` clean; `mypy src` 361 files clean; da-vinci `lint.py` over every touched folder: no finding (it first flagged the palette input's `outline-none`, now a `focus-visible` outline); `design_md_check.py web/DESIGN.md` exit 0; G1 empty, G2 the four files, G7 the one layout line; scratch `npm run build` green on the first try (18 routes plus `/_not-found`; `○ /research` 9.8 kB, `○ /research/universe` 3.87 kB). **Red checks run** (each new test against the old code, by stashing the task's source files): T1 5 failed / 20 passed; T2 by mutation of the two protected save calls, then restored (4 failed / 33 passed, ruling 16); T3 1 / 7; T4 2 / 15; T6 12 / 5; T7 3 / 12; T8 6 / 7; T9 4 / 4; T11 1 / 10; T12 2 / 19; T13 3 / 0; T5 and T10 are new modules (red = module missing). **Rendered** with `next start` from the prototype's build against `mock6` and a headless Chromium (`capture6`): Research, Universe and More at 320, 390 and 1440 px, light and dark, plus the palette with "a" typed: `hscroll` measured on `main` 0 everywhere, no page error, the `h2` orders as Task 15 expects, the palette's two groups and 7 options. **Two fixes came from looking** (both in the patches): the palette input's focus ring sat 2 px off the input and clipped against Close (now offset 0); the watchlist's facts line doubled the space before each dot and began a wrapped line with a dot (now one inline run). **Not run:** a fresh-eyes da-vinci critique and audit (Task 15 does it), the live API, the stock and position pages rendered (Tasks 3 and 4 are pinned by tests only), the Opus review. | 2026-11-06 | Written from the HANDOFF (updated 2026-11-06 after Part 5) section 5's Part 6 row and the operator's three answers (HANDOFF 5.4); rulings 1-20 below. |
-| **A0 setup** | | | | | |
-| **Section A entry** | | | | | |
-| **Task 1: the title guard** | | | | | |
+| **A0 setup** | done | plan commit affa316 on main over d3d1e28 | worktree <W> with .venv and web/node_modules symlinks, init_db run; free disk 21 GiB (floor 10) | 2026-11-07 | all 16 block hashes match the table |
+| **Section A entry** | done | - | A1 git log shows affa316 over d3d1e28, status clean; A2 git apply --check silent for T1-T4; A3 baseline: pytest 5767 passed 1 skipped, ruff clean, mypy 361 files clean, vitest 1562 in 152 files, tsc and lint clean | 2026-11-07 | none |
+| **Task 1: the title guard** | done | (this commit; hash in the Section A exit commit) | red check (5 layouts stashed): titles.test.ts 5 failed / 20 passed; with the patch 25 passed; full vitest 1567 in 152 files; tsc and lint clean | 2026-11-07 | none: patch applied as given |
 | **Task 2: the save-side tests** | | | | | |
 | **Task 3: the value block mounts once** | | | | | |
 | **Task 4: the position page's column and headline links** | | | | | |
@@ -368,7 +368,7 @@ page's trade column is one `minmax(0,1fr)` track and a headline link is a 44px r
 
 **A0. Setup (orchestrator, before the entry checks).**
 
-- [ ] In the main checkout (`/Users/ianlim/Desktop/IBKR Investments`, on `main`): `git status --short` shows only
+- [x] In the main checkout (`/Users/ianlim/Desktop/IBKR Investments`, on `main`): `git status --short` shows only
   ` M docs/superpowers/plans/2026-11-05-web-overhaul-HANDOFF.md`,
   `?? docs/superpowers/plans/2026-11-06-web-overhaul-6-research-universe-search.md` and `?? data/value_filing_reads.json`
   (a runtime file: leave it alone). Commit the two docs:
@@ -376,15 +376,15 @@ page's trade column is one `minmax(0,1fr)` track and a headline link is a 44px r
   then `git commit -m "docs(plan): web overhaul Part 6 plan and the updated handoff"` (with the session's attribution
   lines). `git log --oneline -2` shows it over `d3d1e28` (if `main` moved past `d3d1e28`, stop and ask: the patches were
   cut against it).
-- [ ] `df -h .` shows at least 10 GiB free (23 GiB at 95% on 2026-11-06). Below that, stop and ask.
-- [ ] Create the worktree, one command per call:
+- [x] `df -h .` shows at least 10 GiB free (23 GiB at 95% on 2026-11-06). Below that, stop and ask.
+- [x] Create the worktree, one command per call:
   `git worktree add .claude/worktrees/web-overhaul-6 -b feat/web-overhaul-6 main`;
   `ln -s "/Users/ianlim/Desktop/IBKR Investments/.venv" "/Users/ianlim/Desktop/IBKR Investments/.claude/worktrees/web-overhaul-6/.venv"`;
   `ln -s "/Users/ianlim/Desktop/IBKR Investments/web/node_modules" "/Users/ianlim/Desktop/IBKR Investments/.claude/worktrees/web-overhaul-6/web/node_modules"`;
   then from the worktree root
   `IBKR_CONFIG_USE_EXAMPLES=1 .venv/bin/python -c "from src.storage.db import init_db; init_db()"`.
   `<W>` = `/Users/ianlim/Desktop/IBKR Investments/.claude/worktrees/web-overhaul-6`.
-- [ ] Write the patch helper (`<S>` = this session's scratchpad, absolute):
+- [x] Write the patch helper (`<S>` = this session's scratchpad, absolute):
 
 ```bash
 mkdir -p <S>/p6 && cat > <S>/p6/plan_block.py <<'PY'
@@ -410,18 +410,18 @@ sys.stdout.write("\n".join(lines) + "\n")
 PY
 ```
 
-- [ ] From `<W>`, extract all fourteen patches and the two other blocks, and check every hash against the table:
+- [x] From `<W>`, extract all fourteen patches and the two other blocks, and check every hash against the table:
   `for b in T1 T2 T3 T4 T5 T6 T7 T8 T9 T10 T11 T12 T13 T14 mock6 capture6; do python3 <S>/p6/plan_block.py docs/superpowers/plans/2026-11-06-web-overhaul-6-research-universe-search.md $b > <S>/p6/$b.out; done; shasum -a 256 <S>/p6/*.out`
   Every line matches the table. Any mismatch: stop.
-- [ ] Record A0 in the Progress log (commit hash, worktree path, hashes OK) in Task 1's commit.
+- [x] Record A0 in the Progress log (commit hash, worktree path, hashes OK) in Task 1's commit.
 
 **Entry checks:**
 
-- [ ] **A1. Starting point.** In `<W>`: `git log --oneline -2` shows the A0 commit over `d3d1e28`; `git status --short`
+- [x] **A1. Starting point.** In `<W>`: `git log --oneline -2` shows the A0 commit over `d3d1e28`; `git status --short`
   is empty.
-- [ ] **A2. Every patch of the section applies on the tree as it is** (they touch disjoint files):
+- [x] **A2. Every patch of the section applies on the tree as it is** (they touch disjoint files):
   `git apply --check <S>/p6/T1.out`, `T2.out`, `T3.out`, `T4.out`: each prints nothing.
-- [ ] **A3. Baseline green.** `python -m pytest -q && ruff check . && mypy src`;
+- [x] **A3. Baseline green.** `python -m pytest -q && ruff check . && mypy src`;
   `cd web && npx vitest run && npx tsc --noEmit && npm run lint`. Expected on 2026-11-06: pytest **5767 passed, 1
   skipped**; mypy **361 files**; vitest **1562 in 152 files**. Record the counts.
 
@@ -436,13 +436,13 @@ plan (Progress log).
 **What it does (ruling 15):** a stray `%` in a hand-typed URL no longer throws in a page title; the title keeps the raw
 segment. Five new cases, one per layout.
 
-- [ ] **Step 1: Check and apply `T1`.** `git status --short` shows six `M` files and `?? web/lib/segment.ts`.
-- [ ] **Step 2: Red check.** `git stash push -- web/app/ledger web/app/news web/app/positions web/app/stock web/app/trades`,
+- [x] **Step 1: Check and apply `T1`.** `git status --short` shows six `M` files and `?? web/lib/segment.ts`.
+- [x] **Step 2: Red check.** `git stash push -- web/app/ledger web/app/news web/app/positions web/app/stock web/app/trades`,
   then `cd web && npx vitest run app/titles.test.ts` ends `5 failed | 20 passed (25)`, then `git stash pop` (the five
   layouts come back).
-- [ ] **Step 3: Gate.** `npx vitest run app/titles.test.ts`: 25 passed. Full vitest **1567 in 152 files**; tsc, lint
+- [x] **Step 3: Gate.** `npx vitest run app/titles.test.ts`: 25 passed. Full vitest **1567 in 152 files**; tsc, lint
   clean.
-- [ ] **Step 4: Commit** `fix(web): a malformed escape in a URL keeps the raw segment in the page title` with the
+- [x] **Step 4: Commit** `fix(web): a malformed escape in a URL keeps the raw segment in the page title` with the
   Progress log row (and the A0 and Section A entry rows).
 
 <!-- block T1 -->
