@@ -128,9 +128,9 @@ Progress log row; a "Section X entry" row rides in the next task's commit. A rev
 | **Section C entry** | done | - | C1 Section B landed (76a3093, ad30440, b613c9b plus docs commit 45d8781), vitest 1593 in 153 files, tsc and lint clean, G1 empty, G2 four files, G7 prints `web/app/layout.tsx:55:          <CommandPalette />`; C2 `git apply --check` of T8 printed nothing; C3 test counts 6, 4, 9 as written and ResearchPage.tsx does not exist. No Python file changed since the green A3 baseline | 2026-11-07 | none |
 | **Task 8: Your watchlist** | done | b1f29b3 | red check (WatchlistTable.tsx, research/page.tsx stashed): 6 failed / 7 passed (13); with patch components/home + app/research 17 passed; full vitest 1597 in 153 files; tsc, lint clean; G5 no non-test line | 2026-11-07 | da-vinci invoked with the section Spec (DESIGN.md ratified, extending an existing surface): no change to the patch |
 | **Task 9: the Sectors card** | done | bdbb71d | red check (SectorCard.tsx, SectorGrid.tsx stashed): components/home/Sector 4 failed / 4 passed (8); with patch components/home + app/research 21 passed; full vitest 1601 in 154 files; tsc, lint clean; G5 no non-test line | 2026-11-07 | da-vinci invoked with the section Spec: no change to the patch. Task 8's row hash filled in (b1f29b3) |
-| **Task 10: the Research page** | done | (next commit) | features/research 34 passed (ResearchPage is a new module: red = module missing); full vitest 1603 in 154 files; tsc, lint clean; G3 exit 0; G4 green first try (19 rows: 18 routes plus /_not-found, `○ /research` 10.3 kB, `○ /research/universe` 2.89 kB; scratch build removed); G5 no non-test line | 2026-11-07 | da-vinci invoked with the section Spec (reads the Research surface in the T10 patch): no change to the patch. Task 9's row hash filled in (bdbb71d) |
-| **Task 11: Claude's note** | | | | | |
-| **Section C exit** | | | | | |
+| **Task 10: the Research page** | done | 76db0fa | features/research 34 passed (ResearchPage is a new module: red = module missing); full vitest 1603 in 154 files; tsc, lint clean; G3 exit 0; G4 green first try (19 rows: 18 routes plus /_not-found, `○ /research` 10.3 kB, `○ /research/universe` 2.89 kB; scratch build removed); G5 no non-test line | 2026-11-07 | da-vinci invoked with the section Spec (reads the Research surface in the T10 patch): no change to the patch. Task 9's row hash filled in (bdbb71d) |
+| **Task 11: Claude's note** | done | (docs commit, see Section C exit) | red check (OpportunityCard.tsx stashed): 1 failed / 10 passed (11); with patch features/research 36 passed; full vitest 1605 in 154 files; tsc, lint clean; G1 empty, G2 the four files, G3 exit 0, G5 no non-test line, G7 the one layout line | 2026-11-07 | da-vinci invoked with the section Spec (reads the Top opportunities sentence in the T11 patch): no change to the patch |
+| **Section C exit** | done | the section's last hashes in one docs commit (Task 11's hash below) | four task commits (b1f29b3, bdbb71d, 76db0fa and Task 11's, filled by the docs commit); vitest 1605 in 154 files; tsc and lint clean; G1 empty; G2 the four files; G3 exit 0; G4 green again at exit (19 route rows, `○ /research` 10.3 kB, `○ /research/universe` 2.89 kB; scratch build removed); G5 no non-test finding; G6 `pytest -q tests/test_web_fence.py tests/test_value_fence.py tests/test_eval_skills.py tests/test_openapi_current.py` 55 passed; G7 `web/app/layout.tsx:55:          <CommandPalette />`; the Research surface is in `web/DESIGN.md` (line 981) | 2026-11-07 | G5 run without web/features/universe (folder does not exist until Task 12; cost if wrong: none). Hash-fill for Tasks 10 and 11 in one trailing docs commit (cost if wrong: none, log cells) |
 | **Section D entry** | | | | | |
 | **Task 12: the Universe page** | | | | | |
 | **Task 13: the add field and the override badge** | | | | | |
@@ -3128,14 +3128,14 @@ index 0000000..3fda9dd
 
 **What it does (ruling 13):** the note after Python's reasons, labelled, never on a link or button; nothing when null.
 
-- [ ] **Step 1: da-vinci** with the Spec above.
-- [ ] **Step 2: Check and apply `T11`.** `git status --short` shows three `M` files.
-- [ ] **Step 3: Red check.** `git stash push -- web/features/research/OpportunityCard.tsx`, then
+- [x] **Step 1: da-vinci** with the Spec above.
+- [x] **Step 2: Check and apply `T11`.** `git status --short` shows three `M` files.
+- [x] **Step 3: Red check.** `git stash push -- web/features/research/OpportunityCard.tsx`, then
   `cd web && npx vitest run features/research/OpportunityCard.test.tsx` ends `1 failed | 10 passed (11)`, then
   `git stash pop`.
-- [ ] **Step 4: Gate.** `npx vitest run features/research`: 36 passed. Full vitest **1605 in 154 files**; tsc, lint
+- [x] **Step 4: Gate.** `npx vitest run features/research`: 36 passed. Full vitest **1605 in 154 files**; tsc, lint
   clean; G1, G2, G3, G5, G7.
-- [ ] **Step 5: Commit** `feat(web): Claude's one-line note on Top opportunities, labelled as Claude's`.
+- [x] **Step 5: Commit** `feat(web): Claude's one-line note on Top opportunities, labelled as Claude's`.
 
 <!-- block T11 -->
 ````diff

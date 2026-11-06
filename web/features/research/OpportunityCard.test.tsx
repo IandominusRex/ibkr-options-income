@@ -109,4 +109,19 @@ describe("OpportunityCard", () => {
     const age = screen.getByText(/^Scorecard/);
     expect(within(age).getByText("n/a").className).toContain("hatch");
   });
+
+  it("shows Claude's one-line note after Python's reasons, labelled as Claude's and never on a link or button", () => {
+    render(<OpportunityCard item={item({ claude_note: "Search share is holding; the cloud margin carries the bear case." })} canSellPut />);
+    const note = screen.getByText("Search share is holding; the cloud margin carries the bear case.");
+    expect(screen.getByText("Claude's note")).toBeTruthy();
+    expect(screen.getByText("its reading, not a gate")).toBeTruthy();
+    expect(note.closest("a, button")).toBeNull();
+    const reasons = screen.getByText("Python's reasons");
+    expect(reasons.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("shows no note, and no empty label, when Claude has not read the name for this list", () => {
+    render(<OpportunityCard item={item({ claude_note: null })} canSellPut={false} />);
+    expect(screen.queryByText("Claude's note")).toBeNull();
+  });
 });

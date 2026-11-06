@@ -1019,8 +1019,10 @@ overhaul Part 6) on the Stock page's frame.
   nothing: "See the value file" (READY only) goes to the stock page's value block, which reads the file (the book's decide flow lives on Home's Value card, not here);
   "Sell a put up to $190.00" appears only when the book has a put ceiling and the latest scan has a passed
   cash-secured put at or under it, and opens Trades, Assessed on that name. The strip sends no command and has no
-  button but the two tabs. Claude's one-line note is not shown yet: the API carries it since web overhaul Part 5
-  (`claude_note`, from Claude's own reads only) and the card shows it from Part 6. Unavailable
+  button but the two tabs. Since web overhaul Part 6 Claude's one-line note (`claude_note`, from Claude's own
+  reads only) follows Python's reasons in a pressed-sage block labelled "Claude's note" with "its reading, not a
+  gate" beside it, at most 65 characters wide; a name Claude has not read for the list shows no label at all. It
+  is never on a button. Unavailable
   reads "The value book has not written anything yet."; an empty list names the list. No new token, colour,
   font, radius or elevation.
 

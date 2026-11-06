@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Card } from "@/components/ui/Card";
 import { StatusWord } from "@/components/ui/StatusWord";
 import { price } from "@/components/value/format";
-import { Hatched } from "@/features/stock-value/parts";
+import { ClaudeLabel, Hatched } from "@/features/stock-value/parts";
 import { PriceBar } from "./PriceBar";
 import { ageWords, assessedHref, fractionPct, layoutBar, listWords, reasonSentence, stockValueHref, verdictWords } from "./format";
 import type { TopItem } from "./types";
@@ -14,7 +14,9 @@ const LINK =
 /**
  * One name on a Top opportunities list. It reads and links; it sends nothing. "See the value file" goes to
  * the stock page's value block, where the book's own decide flow lives; the put link goes to the
- * name's passed cash-secured puts in Trades, and exists only when the parent found one.
+ * name's passed cash-secured puts in Trades, and exists only when the parent found one. Claude's one-line
+ * note (`claude_note`, Claude's own reads only) sits after Python's reasons in a pressed-sage block labelled
+ * as Claude's, never on a button (web overhaul Part 6).
  */
 export function OpportunityCard({ item, canSellPut }: { item: TopItem; canSellPut: boolean }) {
   const titleId = `opp-${item.list_name}-${item.symbol}`;
@@ -61,6 +63,13 @@ export function OpportunityCard({ item, canSellPut }: { item: TopItem; canSellPu
               <li key={r}>{reasonSentence(r)}</li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {item.claude_note && (
+        <div className="mt-3 rounded-xl bg-sunk px-3 py-2">
+          <ClaudeLabel label="Claude's note" note="its reading, not a gate" />
+          <p className="mt-0.5 max-w-[65ch] text-sm">{item.claude_note}</p>
         </div>
       )}
 
