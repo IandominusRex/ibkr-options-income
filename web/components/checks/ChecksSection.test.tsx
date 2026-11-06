@@ -101,4 +101,16 @@ describe("ChecksSection", () => {
     render(<ChecksSection data={payload()} />);
     expect(screen.queryByTestId("warning")).toBeNull();
   });
+
+  it("names a caution warning in words, not by a red border", () => {
+    render(
+      <ChecksSection
+        data={payload({
+          warnings: [{ level: "caution", title: "Daily-reset decay risk", detail: "Leveraged ETFs compound daily." }],
+        })}
+      />,
+    );
+    expect(screen.getByText("Caution").dataset.tone).toBe("flag");
+    expect(screen.getByTestId("warning").className).not.toContain("border-loss");
+  });
 });

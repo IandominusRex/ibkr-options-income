@@ -68,14 +68,16 @@ function buildSegments(
 
 function segmentClass(state: SegmentState): string {
   switch (state) {
+    // Pass filled and fail hollow, both in ink: the state is the shape (and the data attribute and the
+    // label), never a colour (web overhaul Part 5; DESIGN.md keeps green and red for signed money).
     case "pass":
-      return "bg-gain";
+      return "bg-content";
     case "fail":
-      return "border border-loss";
+      return "border border-content";
     case "unknown":
       return "hatch";
     case "na":
-      return "bg-surface opacity-50";
+      return "bg-sunk";
   }
 }
 

@@ -1,6 +1,9 @@
 "use client";
 
+import clsx from "clsx";
+import { ChevronDown } from "lucide-react";
 import { useState } from "react";
+import { StatusWord } from "@/components/ui/StatusWord";
 import { CheckRibbon } from "./CheckRibbon";
 import { CheckRow, type CheckRowState } from "./CheckRow";
 
@@ -55,19 +58,20 @@ export function ChecksSection({ data }: { data: ChecksPayloadData }) {
       {data.warnings.length > 0 && (
         <div className="space-y-2">
           {data.warnings.map((w, i) => (
-            <div
-              key={i}
-              data-testid="warning"
-              className="rounded-md border border-loss/40 bg-surface px-4 py-3 text-sm"
-            >
-              <p className="font-medium text-content">{w.title}</p>
-              <p className="mt-1 text-muted">{w.detail}</p>
+            <div key={i} data-testid="warning" className="rounded-xl bg-sunk px-3 py-2.5 text-sm">
+              <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <StatusWord tone={w.level === "caution" ? "flag" : "neutral"}>
+                  {w.level === "caution" ? "Caution" : "Note"}
+                </StatusWord>
+                <span className="font-semibold">{w.title}</span>
+              </p>
+              <p className="mt-1 text-[0.8125rem] text-muted">{w.detail}</p>
             </div>
           ))}
         </div>
       )}
 
-      <div className="divide-y divide-border rounded-md border border-border">
+      <div className="divide-y divide-border">
         {data.categories.map((cat) => {
           const isOpen = expanded === cat.category && !cat.not_applicable;
           return (
@@ -79,25 +83,35 @@ export function ChecksSection({ data }: { data: ChecksPayloadData }) {
                 onClick={() =>
                   setExpanded((current) => (current === cat.category ? null : cat.category))
                 }
-                className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left disabled:cursor-default"
+                className="flex min-h-11 w-full flex-wrap items-center justify-between gap-x-4 gap-y-1 py-2.5 text-left disabled:cursor-default"
               >
-                <span className="text-sm text-content">
-                  {CATEGORY_LABEL[cat.category] ?? cat.category}
+                <span className="text-sm font-semibold">{CATEGORY_LABEL[cat.category] ?? cat.category}</span>
+                <span className="flex items-center gap-2.5">
+                  <CheckRibbon
+                    category={cat.category}
+                    passed={cat.passed}
+                    failed={cat.failed}
+                    unknown={cat.unknown}
+                    total={cat.total}
+                    notApplicable={cat.not_applicable}
+                  />
+                  {!cat.not_applicable && (
+                    <span
+                      aria-hidden="true"
+                      className={clsx(
+                        "grid h-[22px] w-[22px] flex-none place-items-center rounded-full bg-sunk",
+                        "transition-transform duration-[180ms] ease-out motion-reduce:transition-none",
+                        isOpen && "rotate-180",
+                      )}
+                    >
+                      <ChevronDown size={14} strokeWidth={2.25} />
+                    </span>
+                  )}
                 </span>
-                <CheckRibbon
-                  category={cat.category}
-                  passed={cat.passed}
-                  failed={cat.failed}
-                  unknown={cat.unknown}
-                  total={cat.total}
-                  notApplicable={cat.not_applicable}
-                />
               </button>
-              {cat.not_applicable && cat.note && (
-                <p className="px-4 pb-3 text-xs text-muted">{cat.note}</p>
-              )}
+              {cat.not_applicable && cat.note && <p className="pb-2.5 text-[0.8125rem] text-muted">{cat.note}</p>}
               {isOpen && (
-                <div className="border-t border-border px-4 pb-3">
+                <div className="pb-2.5">
                   {cat.checks.map((chk) => (
                     <CheckRow
                       key={chk.id}

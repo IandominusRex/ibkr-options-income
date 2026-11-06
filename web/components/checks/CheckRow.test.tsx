@@ -59,4 +59,18 @@ describe("CheckRow", () => {
     );
     expect(screen.getByTestId("check-row").dataset.state).toBe("fail");
   });
+
+  it("says Fail as a flag word and the bar beside the reading, never by colour alone", () => {
+    render(<CheckRow statement="Is the P/E ratio below 22?" state="FAIL" actual={30} threshold={22} />);
+    const word = screen.getByText("Fail");
+    expect(word.dataset.tone).toBe("flag");
+    expect(screen.getByText("Is the P/E ratio below 22?").closest("[data-testid=check-row]")?.textContent).toContain(
+      "Reads 30 · bar 22",
+    );
+  });
+
+  it("hatches an unknown bar too", () => {
+    render(<CheckRow statement="Is the yield above its average?" state="UNKNOWN" actual={2} threshold={null} />);
+    expect(screen.getByText("n/a").className).toContain("hatch");
+  });
 });

@@ -1,3 +1,4 @@
+import { StatusWord } from "@/components/ui/StatusWord";
 import { UNKNOWN } from "@/lib/format";
 
 export type CheckRowState = "PASS" | "FAIL" | "UNKNOWN" | "NOT_APPLICABLE";
@@ -29,43 +30,31 @@ function formatThreshold(threshold: number | number[] | null): string {
   return formatNumber(threshold);
 }
 
+/**
+ * One check (web overhaul Part 5): the question, its state as a word (a flag word for Fail), then
+ * what it read against the bar on a line of its own, so a phone never squeezes the question into a
+ * column. An unknown reading is a hatched n/a, never 0.
+ */
 export function CheckRow({ statement, state, actual, threshold, note }: CheckRowProps) {
-  const isUnknown = state === "UNKNOWN";
-
   return (
     <div
       data-testid="check-row"
       data-state={state.toLowerCase()}
-      className="flex items-center gap-4 border-t border-border py-2 text-sm first:border-t-0"
+      className="border-t border-border py-2.5 text-sm first:border-t-0"
     >
-      <div className="flex-1">
-        <p className="text-content">{statement}</p>
-        {note && <p className="mt-0.5 text-xs text-unknown">{note}</p>}
+      <div className="flex items-start justify-between gap-3">
+        <p className="min-w-0">{statement}</p>
+        <StatusWord tone={state === "FAIL" ? "flag" : "neutral"}>{STATE_LABEL[state]}</StatusWord>
       </div>
-      <span
-        className={`tabular w-16 shrink-0 text-right ${isUnknown ? "text-unknown" : "text-content"}`}
-      >
-        {actual === null ? UNKNOWN : formatNumber(actual)}
-      </span>
-      <span className="tabular w-24 shrink-0 text-right text-xs text-muted">
-        {formatThreshold(threshold)}
-      </span>
-      <span className={`w-24 shrink-0 text-right text-xs ${stateClass(state)}`}>
-        {STATE_LABEL[state]}
-      </span>
+      <p className="tabular mt-0.5 text-[0.8125rem] text-muted">
+        Reads{" "}
+        <span className={actual === null ? "hatch px-1 text-unknown" : "font-semibold text-content"}>
+          {actual === null ? UNKNOWN : formatNumber(actual)}
+        </span>
+        {" · bar "}
+        <span className={threshold === null ? "hatch px-1 text-unknown" : "text-content"}>{formatThreshold(threshold)}</span>
+      </p>
+      {note && <p className="mt-0.5 text-[0.8125rem] text-muted">{note}</p>}
     </div>
   );
-}
-
-function stateClass(state: CheckRowState): string {
-  switch (state) {
-    case "PASS":
-      return "text-gain";
-    case "FAIL":
-      return "text-loss";
-    case "UNKNOWN":
-      return "text-unknown";
-    case "NOT_APPLICABLE":
-      return "text-muted";
-  }
 }
