@@ -29,9 +29,9 @@ describe("Home — visible search bar", () => {
 
   it("opens the same command palette as ⌘K when clicked", () => {
     withClient(<Home />);
-    expect(screen.queryByPlaceholderText(/search a ticker or company/i)).toBeNull();
+    expect(screen.queryByPlaceholderText(/search a ticker, company or page/i)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /search a ticker/i }));
-    expect(screen.getByPlaceholderText(/search a ticker or company/i)).toBeDefined();
+    expect(screen.getByPlaceholderText(/search a ticker, company or page/i)).toBeDefined();
   });
 
   it("puts Top opportunities above the watchlist", () => {

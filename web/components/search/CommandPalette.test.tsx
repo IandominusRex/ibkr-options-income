@@ -1,20 +1,32 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { apiFetch } from "@/lib/api";
+import { openSearch } from "@/lib/search";
 import { CommandPalette } from "./CommandPalette";
 
 vi.mock("@/lib/api", () => ({
-  apiFetch: vi.fn(async () => ({
+  apiFetch: vi.fn(async (path: string) => ({
     as_of: "2026-09-02T00:00:00Z",
-    query: "AAP",
-    results: [
-      { symbol: "AAP", name: "Advance Auto Parts", exchange: "NYSE", is_etf: false },
-      { symbol: "AAPL", name: "Apple Inc.", exchange: "Nasdaq", is_etf: false },
-    ],
+    query: path,
+    results: path.includes("q=AAP")
+      ? [
+          { symbol: "AAP", name: "Advance Auto Parts", exchange: "NYSE", is_etf: false },
+          { symbol: "AAPL", name: "Apple Inc.", exchange: "Nasdaq", is_etf: false },
+        ]
+      : path.includes("q=SPY")
+        ? [{ symbol: "SPY", name: "SPDR S&P 500 ETF", exchange: "NYSE Arca", is_etf: true }]
+        : [],
   })),
 }));
 
 const push = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+
+const input = () => screen.getByRole("combobox", { name: "Search a ticker, company or page" });
+
+function openWithShortcut() {
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+}
 
 describe("CommandPalette", () => {
   beforeEach(() => push.mockClear());
@@ -24,42 +36,112 @@ describe("CommandPalette", () => {
     expect(screen.queryByPlaceholderText(/search/i)).toBeNull();
   });
 
-  it("opens on meta+k", () => {
+  it("opens on meta+k and on ctrl+k", () => {
+    const { unmount } = render(<CommandPalette />);
+    openWithShortcut();
+    expect(screen.getByPlaceholderText(/search/i)).toBeDefined();
+    unmount();
     render(<CommandPalette />);
-    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     expect(screen.getByPlaceholderText(/search/i)).toBeDefined();
   });
 
-  it("shows results and navigates on select", async () => {
+  it("opens when anything calls openSearch(), so the rail, More and Research reach this one dialog", () => {
     render(<CommandPalette />);
-    fireEvent.keyDown(window, { key: "k", metaKey: true });
-    fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: "AAP" } });
+    act(() => openSearch());
+    expect(input()).toHaveFocus();
+  });
+
+  it("shows ticker results and navigates on select", async () => {
+    render(<CommandPalette />);
+    openWithShortcut();
+    fireEvent.change(input(), { target: { value: "AAP" } });
     await waitFor(() => expect(screen.getByText("Apple Inc.")).toBeDefined());
     fireEvent.click(screen.getByText("Apple Inc."));
     expect(push).toHaveBeenCalledWith("/stock/AAPL");
   });
 
+  it("lists the console's pages above the tickers, and opens a page", async () => {
+    render(<CommandPalette />);
+    openWithShortcut();
+    fireEvent.change(input(), { target: { value: "trades" } });
+    const pages = screen.getByRole("group", { name: "Pages" });
+    expect(pages).toHaveTextContent("Trades");
+    fireEvent.click(screen.getAllByRole("option")[0]!);
+    expect(push).toHaveBeenCalledWith("/trades");
+  });
+
+  it("marks an ETF in words", async () => {
+    render(<CommandPalette />);
+    openWithShortcut();
+    fireEvent.change(input(), { target: { value: "SPY" } });
+    expect(await screen.findByText("ETF")).toBeInTheDocument();
+  });
+
+  it("moves through the results with the arrow keys and opens the active one with Enter", async () => {
+    render(<CommandPalette />);
+    openWithShortcut();
+    fireEvent.change(input(), { target: { value: "AAP" } });
+    await screen.findByText("Apple Inc.");
+    const options = screen.getAllByRole("option");
+    expect(options[0]).toHaveAttribute("aria-selected", "true");
+    expect(input()).toHaveAttribute("aria-activedescendant", options[0]!.id);
+    fireEvent.keyDown(input(), { key: "ArrowDown" });
+    expect(input()).toHaveAttribute("aria-activedescendant", options[1]!.id);
+    fireEvent.keyDown(input(), { key: "ArrowDown" });
+    expect(input()).toHaveAttribute("aria-activedescendant", options[0]!.id);
+    fireEvent.keyDown(input(), { key: "ArrowUp" });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(push).toHaveBeenCalledWith("/stock/AAPL");
+  });
+
+  it("says nothing matches only once the search has answered", async () => {
+    render(<CommandPalette />);
+    openWithShortcut();
+    expect(screen.getByRole("status")).toHaveTextContent("Type a ticker, a company or a page.");
+    fireEvent.change(input(), { target: { value: "zzzz" } });
+    expect(screen.getByRole("status")).toHaveTextContent("");
+    expect(await screen.findByText('No ticker or page matches "zzzz".')).toBeInTheDocument();
+  });
+
+  it("says the ticker search failed in words, and still lists the pages", async () => {
+    vi.mocked(apiFetch).mockRejectedValueOnce(new Error("down"));
+    render(<CommandPalette />);
+    openWithShortcut();
+    fireEvent.change(input(), { target: { value: "news" } });
+    expect(await screen.findByText("Tickers could not be searched right now.")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Pages" })).toHaveTextContent("News");
+  });
+
+  it("closes on a tap on the scrim and on Close, which a phone has instead of Escape", () => {
+    render(<CommandPalette />);
+    openWithShortcut();
+    fireEvent.mouseDown(screen.getByTestId("search-scrim"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    openWithShortcut();
+    fireEvent.mouseDown(screen.getByRole("dialog"));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("renders as a labelled dialog", () => {
     render(<CommandPalette />);
-    fireEvent.keyDown(window, { key: "k", metaKey: true });
-    const dialog = screen.getByRole("dialog");
+    openWithShortcut();
+    const dialog = screen.getByRole("dialog", { name: "Search the console" });
     expect(dialog.getAttribute("aria-modal")).toBe("true");
-    expect(dialog.hasAttribute("aria-labelledby")).toBe(true);
   });
 
   it("clears the search term and results on reopen, not stale from last time", async () => {
-    // Regression: the component never unmounts on close (it renders `null`,
-    // not a conditional mount), so term/hits used to persist across a
-    // close/reopen — reopening showed the previous search.
     render(<CommandPalette />);
-    fireEvent.keyDown(window, { key: "k", metaKey: true });
-    fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: "AAP" } });
+    openWithShortcut();
+    fireEvent.change(input(), { target: { value: "AAP" } });
     await waitFor(() => expect(screen.getByText("Apple Inc.")).toBeDefined());
 
     fireEvent.keyDown(window, { key: "Escape" });
-    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    openWithShortcut();
 
-    expect((screen.getByPlaceholderText(/search/i) as HTMLInputElement).value).toBe("");
+    expect((input() as HTMLInputElement).value).toBe("");
     expect(screen.queryByText("Apple Inc.")).toBeNull();
   });
 
@@ -72,17 +154,22 @@ describe("CommandPalette", () => {
     );
     const trigger = screen.getByRole("button", { name: "Trigger" });
     trigger.focus();
-    expect(document.activeElement).toBe(trigger);
-
-    fireEvent.keyDown(window, { key: "k", metaKey: true });
-    expect(screen.getByPlaceholderText(/search/i)).toBeDefined();
-
+    openWithShortcut();
+    expect(input()).toHaveFocus();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(document.activeElement).toBe(trigger);
   });
+
+  it("carries no em dash in what it says", async () => {
+    render(<CommandPalette />);
+    openWithShortcut();
+    fireEvent.change(input(), { target: { value: "zzzz" } });
+    await screen.findByText('No ticker or page matches "zzzz".');
+    expect(screen.getByRole("dialog").textContent).not.toContain("—");
+  });
 });
 
-describe("CommandPalette — controlled open (visible search bar trigger)", () => {
+describe("CommandPalette, controlled open", () => {
   it("renders open when the open prop is true, with no shortcut needed", () => {
     render(<CommandPalette open onOpenChange={() => {}} />);
     expect(screen.getByPlaceholderText(/search/i)).toBeDefined();

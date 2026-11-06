@@ -121,8 +121,8 @@ Progress log row; a "Section X entry" row rides in the next task's commit. A rev
 | **Task 4: the position page's column and headline links** | done | 8104abd | red check: PositionPage 2 failed / 15 passed; with patch 17 passed; full vitest 1575 in 152 files; tsc, lint clean; G1 empty, G2 the four files, G5 no non-test line | 2026-11-07 | da-vinci invoked with the section Spec: no change |
 | **Section A exit** | done | - | vitest 1575 in 152 files; tsc and lint clean; G1 empty; G2 the four files; G5 no non-test finding (lint.py rejects the not-yet-created paths web/features/search and web/features/universe, so it was run over the existing ones); status clean after commit | 2026-11-07 | G5 run on existing paths only (cost if wrong: none, those folders do not exist yet) |
 | **Section B entry** | done | - | B1 `git log main..HEAD` shows the four Section A commits (725f26b, 61f503a, 496127f, 8104abd), vitest 1575 in 152 files, tsc and lint clean, G1 empty, G2 four files; B2 `git apply --check` printed nothing for T5 and T6; B3 neither web/features/search nor web/lib/search.ts exists and the openSearch grep printed nothing. Baseline pytest/ruff/mypy green at A3, no Python file changed | 2026-11-07 | none |
-| **Task 5: pages and the open event** | done | (this commit) | features/search 8 passed (new module: red = module missing); full vitest 1583 in 153 files; tsc, lint clean | 2026-11-07 | patch applied as given; Task 4's row hash filled in (8104abd, was "(this commit)"; cost if wrong: none, a log cell) |
-| **Task 6: the palette** | | | | | |
+| **Task 5: pages and the open event** | done | 76a3093 | features/search 8 passed (new module: red = module missing); full vitest 1583 in 153 files; tsc, lint clean | 2026-11-07 | patch applied as given; Task 4's row hash filled in (8104abd, was "(this commit)"; cost if wrong: none, a log cell) |
+| **Task 6: the palette** | done | ef087bb | red check (CommandPalette.tsx stashed): components/search 12 failed / 5 passed (17); with patch 17 + 3 passed (components/search, app/research); full vitest 1591 in 153 files; tsc, lint clean; G5 no non-test line | 2026-11-07 | da-vinci invoked with the section Spec (DESIGN.md ratified, extending an existing surface): no change to the patch; Task 5's row hash filled in (76a3093) |
 | **Task 7: the palette in the shell** | | | | | |
 | **Section B exit** | | | | | |
 | **Section C entry** | | | | | |
@@ -1067,13 +1067,13 @@ Tickers (`GET /research/search`, debounced 200 ms, an answer kept per term so a 
 Enter, Escape, a tap on the scrim, Close on a phone, the status line, the `openSearch` event. The ⌘K toggle, the focus
 return, the Tab trap and the controlled props are kept. Seventeen cases.
 
-- [ ] **Step 1: da-vinci** with the Spec above.
-- [ ] **Step 2: Check and apply `T6`.** `git status --short` shows the three files as `M`.
-- [ ] **Step 3: Red check.** `git stash push -- web/components/search/CommandPalette.tsx`, then
+- [x] **Step 1: da-vinci** with the Spec above.
+- [x] **Step 2: Check and apply `T6`.** `git status --short` shows the three files as `M`.
+- [x] **Step 3: Red check.** `git stash push -- web/components/search/CommandPalette.tsx`, then
   `cd web && npx vitest run components/search` ends `12 failed | 5 passed (17)`, then `git stash pop`.
-- [ ] **Step 4: Gate.** `npx vitest run components/search app/research`: 17 + 3 passed. Full vitest **1591 in 153
+- [x] **Step 4: Gate.** `npx vitest run components/search app/research`: 17 + 3 passed. Full vitest **1591 in 153
   files**; tsc, lint clean; G5.
-- [ ] **Step 5: Commit** `feat(web): the search palette finds pages and tickers, by keyboard or touch`.
+- [x] **Step 5: Commit** `feat(web): the search palette finds pages and tickers, by keyboard or touch`.
 
 <!-- block T6 -->
 ````diff
