@@ -221,7 +221,7 @@ components:
     backgroundColor: "{colors.ink}"
     textColor: "{colors.ground}"
 ---
-<!-- da-vinci schema=1 status=ratified updated=2026-11-05 -->
+<!-- da-vinci schema=1 status=ratified updated=2026-11-06 -->
 # Design System: IBKR Income
 
 ## Overview
@@ -981,7 +981,8 @@ Read. Search, watchlist, sectors, the stock page, and Universe. VARIANCE 3, DENS
   nothing: "See the value file" (READY only) goes to the stock page's value block, which reads the file (the book's decide flow lives on Home's Value card, not here);
   "Sell a put up to $190.00" appears only when the book has a put ceiling and the latest scan has a passed
   cash-secured put at or under it, and opens Trades, Assessed on that name. The strip sends no command and has no
-  button but the two tabs. Claude's one-line note is not shown, because the API does not carry one. Unavailable
+  button but the two tabs. Claude's one-line note is not shown yet: the API carries it since web overhaul Part 5
+  (`claude_note`, from Claude's own reads only) and the card shows it from Part 6. Unavailable
   reads "The value book has not written anything yet."; an empty list names the list. No new token, colour,
   font, radius or elevation.
 
@@ -1011,8 +1012,49 @@ Read. Search, watchlist, sectors, the stock page, and Universe. VARIANCE 3, DENS
   in config." answers a `claude_off` reply, and an applied one says the read is queued and that the card looks
   again for ten minutes. A name the book cannot score says why in one sentence ("The value book does not score
   GOOGL: ..."); unavailable reads "The value book has not written anything yet."; unknown figures are hatched
-  n/a. The tranche plan and the size tier are not in the API yet, so the card does not show them. No new
+  n/a. Since web overhaul Part 5, "How much, and when?" also says the size tier per priced list ("At this margin of
+  safety a buy aims at 5% of the book's ceiling, in 3 tranches."; a hatched "Size if bought n/a" when the margin is
+  unknown) and a held name's tranche plan ("1 of 3 tranches bought (the last on Oct 20, 2026). Tranche 2 waits for
+  a higher low, at least 5 sessions after the last, and passes the value gate again first."). No new
   token, colour, font, radius or elevation.
+
+### Stock
+Read. One name, and everything the system knows about it. VARIANCE 3, DENSITY 6. Recomposed 2026-11-06 (web
+overhaul Part 5) on the Position page's frame.
+- **THESIS:** a name is a price and the verdicts on it. The chart leads, with the value book's levels drawn
+  across it; the value book's verdict comes straight after when the book would buy the name at a price (Ready,
+  Watch or Wait on a list) or holds it.
+- **OWN-WORLD:** the payslip. Sage paper; ink candles (an up day hollow, a down day filled: direction by shape,
+  never by colour), the 50-day average as a thin ink line and the 200-day as a thin muted one, volume as light
+  bars along the foot (the perforation tone), and the value book's fair value, entry ceiling, half sale and stop as dashed muted rules
+  labelled on the price axis (two levels at one price share a label: "Fair value, Half sale $215.00"). White
+  cards for every section. No lime: the page's one command, "Run Claude's analysis" in the value block, is
+  secondary.
+- **STORY:** the price and how fresh it is; where it sits against the value book's levels; the value book's
+  verdict; the checks; the technicals; the statements as filed; then the news service's notes, the headlines,
+  the crowd's tone and a model's written summary.
+- **FIRST VIEWPORT:** desktop: a back link to Research, the ticker as the title (24px, 800), the name, exchange
+  and "ETF" on a muted line, then the last price at 24px with "Delayed" as a flag word when it is stale and its
+  age beside it (a hatched "Last price n/a" when there is none); then two columns: the chart (280px tall, on the
+  paper) with one line of words under it naming every series, and the news service's notes in the 340px column on
+  the right. Phone: title, price, chart, then the cards in DOM order.
+- **FORM:** one grid as Position's (content left, a 340px column right from 1024px; the DOM order is the phone
+  order). Left: chart, the value block when it leads, Checks, Technicals, Financial statements (the tables
+  behind a closed disclosure, "Revenue, profit, balance sheet and cash flow, as filed"), the value block when it
+  does not lead. Right: the notes, News, Sentiment, Model summary. Each section is a white card titled at
+  17px/700; one still being built says "Building this section. It will appear shortly." and one that cannot be
+  shown says the API's reason as written.
+- **Words, not colours:** a check's state is a word (Fail is a flag word); the ribbon fills a passed check and
+  outlines a failed one, both in ink; a warning carries "Caution" (flag) or "Note". Headline tone and the
+  sentiment change are words and signs, never green or red, because they are not money. An unknown figure is a
+  hatched n/a.
+- **Model summary:** labelled by the model that wrote it ("Written by <model>, a language model that decides
+  nothing"), because the summary backend can be Claude or another model; Claude's own words on this page are in
+  the value block, each labelled as Claude's. "Generate summary" is a secondary button.
+- **Errors:** a name the research service does not know reads "The research service does not know ZZZZ. Check
+  the ticker, or add it to the watchlist on Research."; any other failure reads "This page could not be loaded.
+  It tries again when you reopen it."
+- No new token, colour, font, radius or elevation.
 
 ### News
 Read. Feed and calendar; ticker briefs. The feed opens with the Market card: regimes, up to six stories
@@ -1101,6 +1143,12 @@ sibling keys; re-run the check after edits.
 
 ## Decision Log
 
+- 2026-11-06: **The stock page on the payslip** (web overhaul Part 5). Added the Stock surface. The chart keeps its
+  candles (the HANDOFF's call: keep `PriceChart`, add the value book's levels) but draws them in ink with direction
+  by shape, and the levels as dashed rules; every section is a card; the value block leads for a priced or held
+  name; checks, headline tone and sentiment say their state in words, never in green or red, which stay for signed
+  money. The written summary is labelled by its model, not as Claude's. No new token, colour, font, radius or
+  elevation.
 - 2026-11-05: **Not-found and error pages** (web overhaul Part 4, Task 15). Added the paragraph under
   Components and the two root boundaries (`app/not-found.tsx`, `app/error.tsx`). The rule that shaped them: a
   page that failed to draw is not a place to act, so each has one secondary action and no lime. No new token,

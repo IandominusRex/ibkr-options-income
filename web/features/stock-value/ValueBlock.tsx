@@ -139,41 +139,32 @@ export function ValueBlock({ symbol }: { symbol: string }) {
   const titleId = `value-block-${sym}`;
   if (!data) {
     return isError ? (
-      <div className="mt-4">
-        <Card as="div">
-          <p className="text-sm text-muted">The value book&apos;s view of {sym} could not be loaded.</p>
-        </Card>
-      </div>
+      <Card as="div">
+        <p className="text-sm text-muted">The value book&apos;s view of {sym} could not be loaded.</p>
+      </Card>
     ) : (
-      <div
-        role="status"
-        aria-busy="true"
-        aria-label="Loading the value book's view"
-        className="mt-4 h-28 rounded-[18px] bg-surface"
-      />
+      <div role="status" aria-busy="true" aria-label="Loading the value book's view" className="h-28 rounded-[18px] bg-surface" />
     );
   }
   return (
-    <div className="mt-4">
-      <Card aria-labelledby={titleId}>
-        <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-          <h2 id={titleId} className="text-[1.0625rem] font-bold">
-            Value book on {sym}
-          </h2>
-          {data.available && (
-            <span className="tabular text-[0.8125rem] text-muted">{fileAgeWords(data, data.file?.as_of)}</span>
-          )}
-        </div>
-        {data.available ? (
-          <Body
-            sym={sym}
-            t={data}
-            onQueued={() => setWatch({ since: Date.now(), readAt: data.claude?.read_at ?? null })}
-          />
-        ) : (
-          <p className="mt-2 text-sm">The value book has not written anything yet.</p>
+    <Card aria-labelledby={titleId}>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+        <h2 id={titleId} className="text-[1.0625rem] font-bold">
+          Value book on {sym}
+        </h2>
+        {data.available && (
+          <span className="tabular text-[0.8125rem] text-muted">{fileAgeWords(data, data.file?.as_of)}</span>
         )}
-      </Card>
-    </div>
+      </div>
+      {data.available ? (
+        <Body
+          sym={sym}
+          t={data}
+          onQueued={() => setWatch({ since: Date.now(), readAt: data.claude?.read_at ?? null })}
+        />
+      ) : (
+        <p className="mt-2 text-sm">The value book has not written anything yet.</p>
+      )}
+    </Card>
   );
 }

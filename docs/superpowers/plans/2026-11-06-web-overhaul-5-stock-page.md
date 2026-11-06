@@ -114,8 +114,8 @@ Progress log row; a "Section X entry" row rides in the next task's commit. A rev
 | **Section A exit** | done | `3323cb1` | Verified by the orchestrator: two task commits over A0; vitest 1531 in 149 files; tsc clean; G1 empty; G2 the four files; fences/contract tests green; the subagent's full pytest 5703 passed + 1 skipped, ruff and mypy 361 clean; status clean | 2026-11-06 | none |
 | **Section B entry** | done | (rides in Task 3's commit) | B1 two task commits; B2 T3-T6 apply; B3 no `web/features/stock`, no `valueLines`/`sizeSegment`/`trancheWords` | 2026-11-06 | none |
 | **Task 3: `features/stock/stock.ts`** | done | `7bcb301` | da-vinci loaded (ratified DESIGN.md, sync OK; nothing visual in the task). All four B patches hash-match the table and `git apply --check` clean. `T3` (80b1879c...) applied clean: two new files. `stock.test.ts` 7 passed; full vitest 1538 in 150 files; `tsc --noEmit` clean; `npm run lint` clean. (The Section A exit and Section B entry rows ride in this commit.) | 2026-11-06 | none |
-| **Task 4: the chart draws the value book's levels** | done | (this commit; hash filled in Task 5's commit) | `T4` (f9642237...) applied clean: `M PriceChart.tsx`, `?? PriceChart.test.tsx`. Red check: with `PriceChart.tsx` stashed, `PriceChart.test.tsx` 3 failed; popped. Gate: 3 passed; full vitest 1541 in 151 files; tsc clean; lint clean. da-vinci contrast of the muted price-line labels (`--text-muted` on `--bg-background`, the paper the chart sits on): light `#575d55` on `#f2f4ef` 6.11 (AA), dark `#a3aa9f` on `#0f110f` 7.95 (AAA) | 2026-11-06 | none |
-| **Task 5: the page frame** | pending | | | | |
+| **Task 4: the chart draws the value book's levels** | done | `f90f66a` | `T4` (f9642237...) applied clean: `M PriceChart.tsx`, `?? PriceChart.test.tsx`. Red check: with `PriceChart.tsx` stashed, `PriceChart.test.tsx` 3 failed; popped. Gate: 3 passed; full vitest 1541 in 151 files; tsc clean; lint clean. da-vinci contrast of the muted price-line labels (`--text-muted` on `--bg-background`, the paper the chart sits on): light `#575d55` on `#f2f4ef` 6.11 (AA), dark `#a3aa9f` on `#0f110f` 7.95 (AAA) | 2026-11-06 | none |
+| **Task 5: the page frame** | done | (this commit; hash filled in Task 6's commit) | `T5` (9305fe95...) applied clean: `M DESIGN.md`, `M app/stock/[symbol]/page.tsx`, `D SectionShell.tsx`, `M ValueBlock.tsx`, three new `features/stock/` files. `vitest run features/stock features/stock-value` 47 passed; full vitest 1546 in 152 files; tsc clean; lint clean; G3 exit 0 (marker `updated=2026-11-06`); G5 no finding; no `SectionShell` left outside `node_modules`; G4 scratch build green on the first try (`ƒ /stock/[symbol]` 16.2 kB; the table lists 18 routes plus `/_not-found`, and `find web/app -name page.tsx -o -name route.ts` finds 18, so the plan's "19 routes plus `/_not-found`" counts `/_not-found` in the 19), scratch copy removed. da-vinci reviewed the frame against the spec and the Position page (same shell and grid classes): the spec's `gap-y-4` (Position uses `gap-y-5`) kept as specified | 2026-11-06 | none (da-vinci changed no spacing; the build could not be viewed in a browser here, the plan's rendered check was done on the prototype) |
 | **Task 6: size tier and tranche plan in the value block** | pending | | | | |
 | **Section B exit** | pending | | | | |
 | **Section C entry** | pending | | | | |
@@ -1378,15 +1378,15 @@ value block loses its outer `mt-4` wrapper because it now sits in a grid; `page.
 `web/DESIGN.md` gains the Stock surface paragraph, the size-and-tranche sentence in the Value block paragraph, the
 `claude_note` sentence in Top opportunities, a Decision Log entry and `updated=2026-11-06`.
 
-- [ ] **Step 1: da-vinci** with the Spec above; it reads the new Stock paragraph from the T5 patch (or after Step 2).
-- [ ] **Step 2: Check and apply `T5`.** `git status --short` shows `M web/DESIGN.md`,
+- [x] **Step 1: da-vinci** with the Spec above; it reads the new Stock paragraph from the T5 patch (or after Step 2).
+- [x] **Step 2: Check and apply `T5`.** `git status --short` shows `M web/DESIGN.md`,
   `M web/app/stock/[symbol]/page.tsx`, `D web/components/stock/SectionShell.tsx`,
   `M web/features/stock-value/ValueBlock.tsx` and the three new `web/features/stock/` files.
-- [ ] **Step 3: Gate.** `cd web && npx vitest run features/stock features/stock-value`: 47 passed (StockPage 5,
+- [x] **Step 3: Gate.** `cd web && npx vitest run features/stock features/stock-value`: 47 passed (StockPage 5,
   stock 7, format 12, ValueBlock 15, AnalyseButton 8). Full vitest **1546 in 152 files**; tsc, lint clean; G3 exit 0;
   G4 green; G5 no finding; `grep -rn "SectionShell" web --include=*.tsx --include=*.ts` prints nothing outside
   `node_modules`.
-- [ ] **Step 4: Commit** `feat(web): the stock page on the payslip: one grid, every section a card, the value block where it matters`.
+- [x] **Step 4: Commit** `feat(web): the stock page on the payslip: one grid, every section a card, the value block where it matters`.
 
 <!-- block T5 -->
 ````diff
