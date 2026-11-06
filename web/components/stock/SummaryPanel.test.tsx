@@ -177,4 +177,17 @@ describe("SummaryPanel", () => {
     // The action to retry is still there — a failed generation doesn't wipe the panel.
     expect(screen.getByRole("button", { name: /Generate summary/i })).toBeInTheDocument();
   });
+
+  it("says a language model wrote it and decides nothing, in plain ink (web overhaul Part 5)", async () => {
+    mockFetch({ as_of: "2026-09-05T12:00:00Z", symbol: "AAPL", state: "ready", summary: SUMMARY });
+    render(withProviders(<SummaryPanel symbol="AAPL" />));
+    expect(await screen.findByText(/Written by claude-sonnet-4-6, a language model that decides nothing/)).toBeInTheDocument();
+    expect(screen.getByText("ROE above 15%").className).not.toMatch(/text-(gain|loss)/);
+  });
+
+  it("asks for a summary with a secondary button, never lime", async () => {
+    mockFetch({ as_of: "2026-09-05T12:00:00Z", symbol: "AAPL", state: "unavailable", summary: null, reason: null });
+    render(withProviders(<SummaryPanel symbol="AAPL" />));
+    expect(await screen.findByRole("button", { name: "Generate summary" })).toHaveAttribute("data-variant", "secondary");
+  });
 });

@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Button } from "@/components/ui/Button";
 import { apiFetch } from "@/lib/api";
 import { relativeAge } from "@/lib/format";
 
@@ -22,14 +23,14 @@ type SummaryResponse = {
   reason: string | null;
 };
 
-function List({ label, items, accent }: { label: string; items: string[]; accent?: string }) {
+function List({ label, items }: { label: string; items: string[] }) {
   if (!items.length) return null;
   return (
     <div className="space-y-1">
-      <span className="text-xs font-medium tracking-wide text-muted">{label}</span>
-      <ul className="space-y-1">
+      <span className="text-xs font-semibold tracking-[0.04em] text-muted">{label}</span>
+      <ul className="max-w-[65ch] list-disc space-y-1 pl-5">
         {items.map((item, i) => (
-          <li key={i} className={`text-sm ${accent ?? "text-content"}`}>
+          <li key={i} className="text-sm">
             {item}
           </li>
         ))}
@@ -64,16 +65,11 @@ export function SummaryPanel({ symbol }: { symbol: string }) {
         <p className="text-sm text-muted">
           {data?.reason ?? "No summary yet. Generate one on demand."}
         </p>
-        <button
-          type="button"
-          disabled={generating}
-          onClick={() => generate.mutate()}
-          className="rounded-md bg-elevated px-4 py-2 text-sm text-content transition-opacity hover:opacity-80 disabled:opacity-50"
-        >
+        <Button variant="secondary" disabled={generating} onClick={() => generate.mutate()}>
           {generating ? "Generating..." : "Generate summary"}
-        </button>
+        </Button>
         {generate.isError && (
-          <p className="text-sm text-loss">
+          <p role="alert" className="text-sm">
             Generation failed. The rest of the page is unaffected; try again later.
           </p>
         )}
@@ -82,12 +78,12 @@ export function SummaryPanel({ symbol }: { symbol: string }) {
   }
 
   return (
-    <div className="space-y-5">
-      <p className="text-sm text-content">{summary.thesis}</p>
+    <div className="space-y-4">
+      <p className="max-w-[65ch] text-sm">{summary.thesis}</p>
 
-      <div className="grid gap-5 sm:grid-cols-2">
-        <List label="Bull points" items={summary.bull_points} accent="text-gain" />
-        <List label="Bear points" items={summary.bear_points} accent="text-loss" />
+      <div className="grid gap-4">
+        <List label="Bull points" items={summary.bull_points} />
+        <List label="Bear points" items={summary.bear_points} />
       </div>
 
       {summary.watch_items.length > 0 && (
@@ -95,8 +91,8 @@ export function SummaryPanel({ symbol }: { symbol: string }) {
       )}
 
       {summary.caveats.length > 0 && (
-        <div className="space-y-1 rounded-md bg-surface px-4 py-3">
-          <span className="text-xs font-medium tracking-wide text-muted">Caveats</span>
+        <div className="space-y-1 rounded-xl bg-sunk px-3 py-2.5">
+          <span className="text-xs font-semibold tracking-[0.04em] text-muted">Caveats</span>
           <ul className="space-y-1">
             {summary.caveats.map((c, i) => (
               <li key={i} className="text-sm text-muted">
@@ -108,7 +104,7 @@ export function SummaryPanel({ symbol }: { symbol: string }) {
       )}
 
       <p className="text-xs text-muted">
-        {summary.model} · data as of {relativeAge(summary.data_as_of)}
+        Written by {summary.model}, a language model that decides nothing · data as of {relativeAge(summary.data_as_of)}
         {state === "stale" ? " · stale" : ""}
       </p>
     </div>

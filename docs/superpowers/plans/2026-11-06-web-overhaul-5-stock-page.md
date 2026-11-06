@@ -120,8 +120,8 @@ Progress log row; a "Section X entry" row rides in the next task's commit. A rev
 | **Section B exit** | done | `c296632` | Verified by the orchestrator: four task commits after Section A; vitest 1549 in 152 files; tsc and lint clean; G1 empty; G2 the four files; G3 exit 0; G5 no finding; status clean. G4 (scratch build green, 18 routes + `/_not-found`) and the vitest-per-task counts are the section agent's report | 2026-11-06 | none |
 | **Section C entry** | done | (rides in Task 7's commit) | C1 four task commits since Section A, vitest 1549 in 152 files; C2 T7-T9 apply; C3 test counts 5/6/2/5/5/6 as written | 2026-11-06 | none |
 | **Task 7: Checks** | done | `7e3c5ab` | da-vinci loaded with the Section C spec. `T7` (5e04a7f7...) applied clean: five `M` files in `web/components/checks/`. Red check: with the three source files stashed, `components/checks` 3 failed, 18 passed; popped. Gate: 21 passed; full vitest 1552 in 152 files; tsc clean; lint clean. (The Task 6 hash, Section B exit and Section C entry rows ride in this commit.) | 2026-11-06 | none (da-vinci changed no spacing; patch classes kept; cost if wrong: none) |
-| **Task 8: Technicals, Sentiment, News, statements** | done | (filled in Task 9's commit) | `T8` (27fbf9a2...) applied clean: seven `M` files in `web/components/stock/`. Red check: with the four source files stashed, the three panel suites 3 failed, 12 passed; popped. Gate: panels + StatementsTable 23 passed (panels 15, StatementsTable unchanged); full vitest 1555 in 152 files; tsc clean; lint clean; `git diff --stat main -- web/features/position` prints nothing. | 2026-11-06 | none (da-vinci changed no spacing; cost if wrong: none) |
-| **Task 9: the model summary** | pending | | | | |
+| **Task 8: Technicals, Sentiment, News, statements** | done | `416fe2d` | `T8` (27fbf9a2...) applied clean: seven `M` files in `web/components/stock/`. Red check: with the four source files stashed, the three panel suites 3 failed, 12 passed; popped. Gate: panels + StatementsTable 23 passed (panels 15, StatementsTable unchanged); full vitest 1555 in 152 files; tsc clean; lint clean; `git diff --stat main -- web/features/position` prints nothing. | 2026-11-06 | none (da-vinci changed no spacing; cost if wrong: none) |
+| **Task 9: the model summary** | done | (the orchestrator fills this hash) | `T9` (455f0cb3...) applied clean: `M SummaryPanel.tsx`, `M SummaryPanel.test.tsx`. Red check: with `SummaryPanel.tsx` stashed, 2 failed, 6 passed; popped. Gate: 8 passed; full vitest 1557 in 152 files; tsc clean; lint clean; G1 prints nothing; G2 lists exactly the four expected files; G3 exit 0; G4 scratch build compiled, `ƒ /stock/[symbol]` 16.4 kB, scratch copy removed; G5 no finding | 2026-11-06 | none (da-vinci changed no spacing; cost if wrong: none) |
 | **Section C exit** | pending | | | | |
 | **Section D entry** | pending | | | | |
 | **Task 10: docs** | pending | | | | |
@@ -2885,13 +2885,13 @@ index 5c4d093..9db6fe2 100644
 `role="alert"` sentence in ink, not red; bull and bear points are plain ink bullets at a 65-character measure; caveats
 sit on `bg-sunk`; the foot line reads "Written by <model>, a language model that decides nothing · data as of ...".
 
-- [ ] **Step 1: da-vinci.**
-- [ ] **Step 2: Check and apply `T9`.**
-- [ ] **Step 3: Red check.** `git stash push -- web/components/stock/SummaryPanel.tsx`, then
+- [x] **Step 1: da-vinci.**
+- [x] **Step 2: Check and apply `T9`.**
+- [x] **Step 3: Red check.** `git stash push -- web/components/stock/SummaryPanel.tsx`, then
   `cd web && npx vitest run components/stock/SummaryPanel` shows `2 failed | 6 passed`; `git stash pop`.
-- [ ] **Step 4: Gate.** `npx vitest run components/stock/SummaryPanel`: 8 passed. Full vitest **1557 in 152 files**;
+- [x] **Step 4: Gate.** `npx vitest run components/stock/SummaryPanel`: 8 passed. Full vitest **1557 in 152 files**;
   tsc, lint; G1-G5.
-- [ ] **Step 5: Commit** `fix(web): the stock page's summary names the model that wrote it`.
+- [x] **Step 5: Commit** `fix(web): the stock page's summary names the model that wrote it`.
 
 <!-- block T9 -->
 ````diff
