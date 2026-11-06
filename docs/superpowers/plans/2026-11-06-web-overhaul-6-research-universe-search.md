@@ -118,10 +118,10 @@ Progress log row; a "Section X entry" row rides in the next task's commit. A rev
 | **Task 1: the title guard** | done | 725f26b | red check (5 layouts stashed): titles.test.ts 5 failed / 20 passed; with the patch 25 passed; full vitest 1567 in 152 files; tsc and lint clean | 2026-11-07 | none: patch applied as given |
 | **Task 2: the save-side tests** | done | 61f503a | 37 passed in the two files; full vitest 1571 in 152 files; tsc, lint clean; G1 prints nothing; no red check (ruling 16) | 2026-11-07 | none |
 | **Task 3: the value block mounts once** | done | 496127f | red check: StockPage 1 failed / 7 passed; with patch 8 passed; features/stock 53 passed; full vitest 1573 in 152 files; tsc, lint clean | 2026-11-07 | da-vinci invoked with the section Spec: no change |
-| **Task 4: the position page's column and headline links** | done | (this commit) | red check: PositionPage 2 failed / 15 passed; with patch 17 passed; full vitest 1575 in 152 files; tsc, lint clean; G1 empty, G2 the four files, G5 no non-test line | 2026-11-07 | da-vinci invoked with the section Spec: no change |
+| **Task 4: the position page's column and headline links** | done | 8104abd | red check: PositionPage 2 failed / 15 passed; with patch 17 passed; full vitest 1575 in 152 files; tsc, lint clean; G1 empty, G2 the four files, G5 no non-test line | 2026-11-07 | da-vinci invoked with the section Spec: no change |
 | **Section A exit** | done | - | vitest 1575 in 152 files; tsc and lint clean; G1 empty; G2 the four files; G5 no non-test finding (lint.py rejects the not-yet-created paths web/features/search and web/features/universe, so it was run over the existing ones); status clean after commit | 2026-11-07 | G5 run on existing paths only (cost if wrong: none, those folders do not exist yet) |
-| **Section B entry** | | | | | |
-| **Task 5: pages and the open event** | | | | | |
+| **Section B entry** | done | - | B1 `git log main..HEAD` shows the four Section A commits (725f26b, 61f503a, 496127f, 8104abd), vitest 1575 in 152 files, tsc and lint clean, G1 empty, G2 four files; B2 `git apply --check` printed nothing for T5 and T6; B3 neither web/features/search nor web/lib/search.ts exists and the openSearch grep printed nothing. Baseline pytest/ruff/mypy green at A3, no Python file changed | 2026-11-07 | none |
+| **Task 5: pages and the open event** | done | (this commit) | features/search 8 passed (new module: red = module missing); full vitest 1583 in 153 files; tsc, lint clean | 2026-11-07 | patch applied as given; Task 4's row hash filled in (8104abd, was "(this commit)"; cost if wrong: none, a log cell) |
 | **Task 6: the palette** | | | | | |
 | **Task 7: the palette in the shell** | | | | | |
 | **Section B exit** | | | | | |
@@ -900,11 +900,11 @@ font, radius, shadow or lime, change copy, or change the keyboard model.
 
 **Entry checks:**
 
-- [ ] **B1. Section A landed.** `git log --oneline main..HEAD` shows the four task commits; vitest 1575 in 152 files at
+- [x] **B1. Section A landed.** `git log --oneline main..HEAD` shows the four task commits; vitest 1575 in 152 files at
   the last gate.
-- [ ] **B2. The first two patches apply** (T7 edits a file T6 edits, so it is checked at its own Step 1):
+- [x] **B2. The first two patches apply** (T7 edits a file T6 edits, so it is checked at its own Step 1):
   `git apply --check <S>/p6/T5.out` and `T6.out`: each prints nothing.
-- [ ] **B3. Nothing already named what B adds.** `ls web/features/search web/lib/search.ts` fails (no such file);
+- [x] **B3. Nothing already named what B adds.** `ls web/features/search web/lib/search.ts` fails (no such file);
   `grep -rn "openSearch\|OPEN_SEARCH_EVENT" web/app web/components web/features web/lib` prints nothing (the shell is
   zsh: never pass an unquoted `--include=*.ts`, which zsh expands and refuses).
 
@@ -918,10 +918,10 @@ font, radius, shadow or lime, change copy, or change the keyboard model.
 might type), `matchPages(term)`, and `openSearch()`, which dispatches `ibkr:open-search`. The test also pins that every
 page links to a route the console has and that no label carries an em dash.
 
-- [ ] **Step 1: Check and apply `T5`.** `git status --short` shows `?? web/features/search/` and `?? web/lib/search.ts`.
-- [ ] **Step 2: Gate.** `cd web && npx vitest run features/search`: 8 passed (a new module: red is "module missing").
+- [x] **Step 1: Check and apply `T5`.** `git status --short` shows `?? web/features/search/` and `?? web/lib/search.ts`.
+- [x] **Step 2: Gate.** `cd web && npx vitest run features/search`: 8 passed (a new module: red is "module missing").
   Full vitest **1583 in 153 files**; tsc, lint clean.
-- [ ] **Step 3: Commit** `feat(web): the console's pages for search, and one event that opens it`.
+- [x] **Step 3: Commit** `feat(web): the console's pages for search, and one event that opens it`.
 
 <!-- block T5 -->
 ````diff
