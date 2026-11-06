@@ -110,10 +110,10 @@ Progress log row; a "Section X entry" row rides in the next task's commit. A rev
 | **A0 setup** | done | `7981584` (docs: plan + handoff, on `main` over `6347dd9`) | Worktree `/Users/ianlim/Desktop/IBKR Investments/.claude/worktrees/web-overhaul-5` on `feat/web-overhaul-5`; `.venv` and `web/node_modules` symlinked; `init_db()` ok; patch helper written; all 12 block hashes match the table; 22 GiB free | 2026-11-06 | none |
 | **Section A entry** | done | (rides in Task 1's commit) | A1 clean at `7981584`; A2 `T1` applies; A3 baseline: pytest 5675 passed, 1 skipped; ruff clean; mypy 361 files clean; vitest 1531 in 149 files; tsc and lint clean | 2026-11-06 | none |
 | **Task 1: size tier, tranche plan and Claude's note in the API** | done | `0a9ed58` | `T1` applied clean (hash c7b47420...). Red check: `tests/test_api_value.py` 28 failed, 16 passed with the three source files stashed, as the plan says. Targeted: 100 passed (test_api_value, test_api_value_lookup, test_value_fence, test_web_fence); `ruff format --check` 4 files already formatted; `ruff check .` clean; `mypy src` 361 files clean. Full pytest: 1 failed, 5702 passed, 1 skipped, the one failure `tests/test_openapi_current.py` as expected (Task 2 regenerates the contract) | 2026-11-06 | none. (The Section A entry row and the A0 row ride in this commit.) |
-| **Task 2: the contract, regenerated** | done | this commit (hash in the report; Task 1 is `0a9ed58`) | Regenerated offline: `docs/web/openapi.json` +60, `web/lib/api-types.ts` +23 (83 insertions, no deletions), the added keys exactly as the step lists. Red: `tsc --noEmit` failed with the three expected errors (format.test.ts 17, ValueBlock.test.tsx 19 and 73). `T2` (hash a7852848...) applied clean; tsc clean; `vitest run features/stock-value` 35 passed; full vitest 1531 in 149 files; `npm run lint` clean; `ruff check .` clean; `mypy src` 361 files clean; full pytest 5703 passed, 1 skipped (`test_openapi_current` green); G1 prints nothing; G2 lists exactly the four expected files; G6 (web_fence, value_fence, eval_skills, openapi_current) 55 passed | 2026-11-06 | none |
-| **Section A exit** | pending | | | | |
-| **Section B entry** | pending | | | | |
-| **Task 3: `features/stock/stock.ts`** | pending | | | | |
+| **Task 2: the contract, regenerated** | done | `3323cb1` (Task 1 is `0a9ed58`) | Regenerated offline: `docs/web/openapi.json` +60, `web/lib/api-types.ts` +23 (83 insertions, no deletions), the added keys exactly as the step lists. Red: `tsc --noEmit` failed with the three expected errors (format.test.ts 17, ValueBlock.test.tsx 19 and 73). `T2` (hash a7852848...) applied clean; tsc clean; `vitest run features/stock-value` 35 passed; full vitest 1531 in 149 files; `npm run lint` clean; `ruff check .` clean; `mypy src` 361 files clean; full pytest 5703 passed, 1 skipped (`test_openapi_current` green); G1 prints nothing; G2 lists exactly the four expected files; G6 (web_fence, value_fence, eval_skills, openapi_current) 55 passed | 2026-11-06 | none |
+| **Section A exit** | done | `3323cb1` | Verified by the orchestrator: two task commits over A0; vitest 1531 in 149 files; tsc clean; G1 empty; G2 the four files; fences/contract tests green; the subagent's full pytest 5703 passed + 1 skipped, ruff and mypy 361 clean; status clean | 2026-11-06 | none |
+| **Section B entry** | done | (rides in Task 3's commit) | B1 two task commits; B2 T3-T6 apply; B3 no `web/features/stock`, no `valueLines`/`sizeSegment`/`trancheWords` | 2026-11-06 | none |
+| **Task 3: `features/stock/stock.ts`** | done | (this commit; hash filled in Task 4's commit) | da-vinci loaded (ratified DESIGN.md, sync OK; nothing visual in the task). All four B patches hash-match the table and `git apply --check` clean. `T3` (80b1879c...) applied clean: two new files. `stock.test.ts` 7 passed; full vitest 1538 in 150 files; `tsc --noEmit` clean; `npm run lint` clean. (The Section A exit and Section B entry rows ride in this commit.) | 2026-11-06 | none |
 | **Task 4: the chart draws the value book's levels** | pending | | | | |
 | **Task 5: the page frame** | pending | | | | |
 | **Task 6: size tier and tranche plan in the value block** | pending | | | | |
@@ -800,12 +800,12 @@ fair value and entry ceiling, for a held name the half sale (the plan's fair val
 merged when two levels share a price ("Fair value, Half sale $215.00"), each list named when two are priced;
 `nameLine(a)` ("Alphabet Inc. · NASDAQ · ETF"); and the `Analysis` alias over the generated `AnalysisResponse`.
 
-- [ ] **Step 1: da-vinci** (it reads the spec above; nothing visual in this task beyond the label words, which are
+- [x] **Step 1: da-vinci** (it reads the spec above; nothing visual in this task beyond the label words, which are
   fixed).
-- [ ] **Step 2: Check and apply `T3`.** `git status --short` shows the two new files.
-- [ ] **Step 3: Gate.** `cd web && npx vitest run features/stock/stock.test.ts`: 7 passed. Full vitest **1538 in 150
+- [x] **Step 2: Check and apply `T3`.** `git status --short` shows the two new files.
+- [x] **Step 3: Gate.** `cd web && npx vitest run features/stock/stock.test.ts`: 7 passed. Full vitest **1538 in 150
   files**; tsc, lint clean.
-- [ ] **Step 4: Commit** `feat(web): the stock page's helpers: where the value block goes and the levels it draws`.
+- [x] **Step 4: Commit** `feat(web): the stock page's helpers: where the value block goes and the levels it draws`.
 
 <!-- block T3 -->
 ````diff
