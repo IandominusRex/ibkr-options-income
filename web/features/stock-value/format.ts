@@ -280,3 +280,38 @@ export function triggerWords(triggers: ValueReevaluation["triggers"]): string {
 export function claudeFor(lists: ValueClaudeList[] | undefined, name: string): ValueClaudeList | undefined {
   return (lists ?? []).find((c) => c.list_name === name);
 }
+
+const SIZED = new Set(["READY", "WATCH", "WAIT"]);
+
+/**
+ * The size tier a list's margin of safety reaches, as one line (web overhaul Part 5): only for a list
+ * the book would buy at a price; a hatched n/a when the margin is unknown, never 0.
+ */
+export function sizeSegment(l: Pick<ValueList, "verdict" | "size_pct" | "tranches">): Segment | null {
+  if (!SIZED.has(l.verdict)) return null;
+  if (l.size_pct == null) return { text: "Size if bought n/a", unknown: true };
+  if (l.size_pct <= 0) return { text: "This margin of safety is below the first size tier, so the book would not buy." };
+  return {
+    text: `At this margin of safety a buy aims at ${pointsPct(l.size_pct)} of the book's ceiling, in ${l.tranches} tranches.`,
+  };
+}
+
+/**
+ * A held name's tranche plan in words (spec section 9.5): what is bought, and what the next tranche
+ * waits for. The second waits for a higher low, any later one for a close above the 50-day average,
+ * each at least `tranche_min_sessions` after the last and gated again. Null when the count is unknown.
+ */
+export function trancheWords(
+  plan: Pick<ValuePlan, "tranches_done" | "tranches" | "tranche_min_sessions" | "last_tranche_on"> | null | undefined,
+): string | null {
+  if (!plan || plan.tranches_done == null) return null;
+  const done = plan.tranches_done;
+  const total = plan.tranches;
+  if (done >= total) return `All ${total} tranches are bought.`;
+  const last = plan.last_tranche_on ? ` (the last on ${shortDate(plan.last_tranche_on)})` : "";
+  const bought = done === 0 ? `None of the ${total} tranches is bought yet` : `${done} of ${total} tranches bought${last}`;
+  const next = done + 1;
+  const waits = done <= 1 ? "a higher low" : "a close above the 50-day average";
+  const gap = done === 0 ? "" : `, at least ${plan.tranche_min_sessions} sessions after the last`;
+  return `${bought}. Tranche ${next} waits for ${done === 0 ? "a Ready verdict" : waits}${gap}, and passes the value gate again first.`;
+}

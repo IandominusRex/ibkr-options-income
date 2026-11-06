@@ -162,6 +162,14 @@ describe("ValueBlock", () => {
     expect(within(size).getByText(/20 shares at an average cost of \$150\.00/)).toBeInTheDocument();
   });
 
+  it("says the size tier per priced list and a held name's tranche plan", async () => {
+    show();
+    const size = await screen.findByRole("region", { name: "How much, and when?" });
+    expect(within(size).getByText("At this margin of safety a buy aims at 3% of the book's ceiling, in 3 tranches.")).toBeInTheDocument();
+    expect(within(size).getByText(/^1 of 3 tranches bought \(the last on Oct 20, 2026\)\. Tranche 2 waits for a higher low/)).toBeInTheDocument();
+    expect(within(size).queryByText(/Size if bought/)).toBeNull(); // the No list carries no size line
+  });
+
   it("lists a held name's re-evaluations as a short dated list", async () => {
     show();
     const list = await screen.findByRole("list", { name: "Re-evaluations" });

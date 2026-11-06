@@ -7,17 +7,21 @@ import {
   pointsPct,
   price,
   reasonCodeWords,
+  sizeSegment,
+  trancheWords,
 } from "./format";
-import { Hatched, Subhead } from "./parts";
+import { Hatched, Segments, Subhead } from "./parts";
 import type { ValueFile, ValuePlan } from "./types";
 
 /**
  * "How much, and when?": per list the timing state, the margin of safety the regime asks against
  * what this name has, the entry ceiling and why the baseline said what it said; for a held name,
- * what the book holds. The size tier and tranche plan are not in the API yet, so they are not shown.
+ * what the book holds and its tranche plan; per priced list the size tier its margin of safety
+ * reaches (web overhaul Part 5).
  */
 export function SizeBlock({ file, plan }: { file: ValueFile; plan: ValuePlan | null | undefined }) {
   const lists = file.lists ?? [];
+  const tranches = trancheWords(plan);
   return (
     <section aria-labelledby="vb-size" className="mt-4 border-t border-border pt-3">
       <h3 id="vb-size" className="text-sm font-bold">
@@ -30,8 +34,17 @@ export function SizeBlock({ file, plan }: { file: ValueFile; plan: ValuePlan | n
           list.
         </p>
       )}
+      {plan &&
+        (tranches ? (
+          <p className="mt-1 text-sm">{tranches}</p>
+        ) : (
+          <p className="mt-1 text-sm">
+            Tranches bought <Hatched />
+          </p>
+        ))}
       {lists.map((l) => {
         const timing = gateStateWord(l.timing ?? "unknown");
+        const size = sizeSegment(l);
         return (
           <div key={l.list_name} className="mt-4 first:mt-2">
             <Subhead>{listWords(l.list_name)}</Subhead>
@@ -46,6 +59,11 @@ export function SizeBlock({ file, plan }: { file: ValueFile; plan: ValuePlan | n
             <p className="tabular mt-1 text-sm">
               Entry ceiling {l.entry_ceiling == null ? <Hatched /> : price(l.entry_ceiling)}
             </p>
+            {size && (
+              <p className="tabular mt-1 text-sm">
+                <Segments parts={[size]} />
+              </p>
+            )}
             {(l.reasons ?? []).length > 0 && (
               <p className="mt-1 text-[0.8125rem] text-muted">
                 Why the baseline says {l.baseline_verdict.toLowerCase()}: {(l.reasons ?? []).map(reasonCodeWords).join("; ")}.

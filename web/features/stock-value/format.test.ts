@@ -11,6 +11,8 @@ import {
   readWords,
   refetchMs,
   shortDate,
+  sizeSegment,
+  trancheWords,
 } from "./format";
 import type { ValuePlan, ValueTicker } from "./types";
 
@@ -90,5 +92,26 @@ describe("stock-value format", () => {
   it("reads dates without shifting them by time zone", () => {
     expect(shortDate("2026-11-03")).toBe("Nov 3, 2026");
     expect(shortDate(null)).toBe("n/a");
+  });
+  it("words the size tier for a priced list only, hatched when the margin is unknown", () => {
+    expect(sizeSegment({ verdict: "READY", size_pct: 5, tranches: 3 })).toEqual({
+      text: "At this margin of safety a buy aims at 5% of the book's ceiling, in 3 tranches.",
+    });
+    expect(sizeSegment({ verdict: "WAIT", size_pct: 0, tranches: 3 })?.text).toBe(
+      "This margin of safety is below the first size tier, so the book would not buy.",
+    );
+    expect(sizeSegment({ verdict: "WATCH", size_pct: null, tranches: 3 })).toEqual({ text: "Size if bought n/a", unknown: true });
+    expect(sizeSegment({ verdict: "NO", size_pct: 8, tranches: 3 })).toBeNull();
+  });
+  it("words the tranche plan: what is bought and what the next one waits for", () => {
+    expect(trancheWords(plan())).toBe(
+      "1 of 3 tranches bought (the last on Oct 20, 2026). Tranche 2 waits for a higher low, at least 5 sessions after the last, and passes the value gate again first.",
+    );
+    expect(trancheWords(plan({ tranches_done: 2 }))).toBe(
+      "2 of 3 tranches bought (the last on Oct 20, 2026). Tranche 3 waits for a close above the 50-day average, at least 5 sessions after the last, and passes the value gate again first.",
+    );
+    expect(trancheWords(plan({ tranches_done: 3 }))).toBe("All 3 tranches are bought.");
+    expect(trancheWords(plan({ tranches_done: null }))).toBeNull();
+    expect(trancheWords(null)).toBeNull();
   });
 });
