@@ -113,8 +113,8 @@ Progress log row; a "Section X entry" row rides in the next task's commit. A rev
 | **Task 2: the contract, regenerated** | done | `3323cb1` (Task 1 is `0a9ed58`) | Regenerated offline: `docs/web/openapi.json` +60, `web/lib/api-types.ts` +23 (83 insertions, no deletions), the added keys exactly as the step lists. Red: `tsc --noEmit` failed with the three expected errors (format.test.ts 17, ValueBlock.test.tsx 19 and 73). `T2` (hash a7852848...) applied clean; tsc clean; `vitest run features/stock-value` 35 passed; full vitest 1531 in 149 files; `npm run lint` clean; `ruff check .` clean; `mypy src` 361 files clean; full pytest 5703 passed, 1 skipped (`test_openapi_current` green); G1 prints nothing; G2 lists exactly the four expected files; G6 (web_fence, value_fence, eval_skills, openapi_current) 55 passed | 2026-11-06 | none |
 | **Section A exit** | done | `3323cb1` | Verified by the orchestrator: two task commits over A0; vitest 1531 in 149 files; tsc clean; G1 empty; G2 the four files; fences/contract tests green; the subagent's full pytest 5703 passed + 1 skipped, ruff and mypy 361 clean; status clean | 2026-11-06 | none |
 | **Section B entry** | done | (rides in Task 3's commit) | B1 two task commits; B2 T3-T6 apply; B3 no `web/features/stock`, no `valueLines`/`sizeSegment`/`trancheWords` | 2026-11-06 | none |
-| **Task 3: `features/stock/stock.ts`** | done | (this commit; hash filled in Task 4's commit) | da-vinci loaded (ratified DESIGN.md, sync OK; nothing visual in the task). All four B patches hash-match the table and `git apply --check` clean. `T3` (80b1879c...) applied clean: two new files. `stock.test.ts` 7 passed; full vitest 1538 in 150 files; `tsc --noEmit` clean; `npm run lint` clean. (The Section A exit and Section B entry rows ride in this commit.) | 2026-11-06 | none |
-| **Task 4: the chart draws the value book's levels** | pending | | | | |
+| **Task 3: `features/stock/stock.ts`** | done | `7bcb301` | da-vinci loaded (ratified DESIGN.md, sync OK; nothing visual in the task). All four B patches hash-match the table and `git apply --check` clean. `T3` (80b1879c...) applied clean: two new files. `stock.test.ts` 7 passed; full vitest 1538 in 150 files; `tsc --noEmit` clean; `npm run lint` clean. (The Section A exit and Section B entry rows ride in this commit.) | 2026-11-06 | none |
+| **Task 4: the chart draws the value book's levels** | done | (this commit; hash filled in Task 5's commit) | `T4` (f9642237...) applied clean: `M PriceChart.tsx`, `?? PriceChart.test.tsx`. Red check: with `PriceChart.tsx` stashed, `PriceChart.test.tsx` 3 failed; popped. Gate: 3 passed; full vitest 1541 in 151 files; tsc clean; lint clean. da-vinci contrast of the muted price-line labels (`--text-muted` on `--bg-background`, the paper the chart sits on): light `#575d55` on `#f2f4ef` 6.11 (AA), dark `#a3aa9f` on `#0f110f` 7.95 (AAA) | 2026-11-06 | none |
 | **Task 5: the page frame** | pending | | | | |
 | **Task 6: size tier and tranche plan in the value block** | pending | | | | |
 | **Section B exit** | pending | | | | |
@@ -982,15 +982,15 @@ tokens at mount and again on a theme change (a `MutationObserver` on `data-theme
 a line of words naming every series; loading (`role="status"` skeleton, `bg-sunk`), empty ("No price history for X
 yet.") and failed ("The price chart could not be loaded. It tries again when you reopen this page.") in words.
 
-- [ ] **Step 1: da-vinci** (the chart's look is fixed by ruling 6; da-vinci checks contrast of the muted price line
+- [x] **Step 1: da-vinci** (the chart's look is fixed by ruling 6; da-vinci checks contrast of the muted price line
   labels in both themes with `contrast.py` and records the numbers).
-- [ ] **Step 2: Check and apply `T4`.** `git status --short`: `M web/components/stock/PriceChart.tsx`,
+- [x] **Step 2: Check and apply `T4`.** `git status --short`: `M web/components/stock/PriceChart.tsx`,
   `?? web/components/stock/PriceChart.test.tsx`.
-- [ ] **Step 3: Red check.** `git stash push -- web/components/stock/PriceChart.tsx`, then
+- [x] **Step 3: Red check.** `git stash push -- web/components/stock/PriceChart.tsx`, then
   `cd web && npx vitest run components/stock/PriceChart` shows `3 failed`; `git stash pop`.
-- [ ] **Step 4: Gate.** `npx vitest run components/stock/PriceChart`: 3 passed. Full vitest **1541 in 151 files**;
+- [x] **Step 4: Gate.** `npx vitest run components/stock/PriceChart`: 3 passed. Full vitest **1541 in 151 files**;
   tsc, lint clean.
-- [ ] **Step 5: Commit** `feat(web): the stock chart in ink, with the value book's levels drawn across it`.
+- [x] **Step 5: Commit** `feat(web): the stock chart in ink, with the value book's levels drawn across it`.
 
 <!-- block T4 -->
 ````diff
