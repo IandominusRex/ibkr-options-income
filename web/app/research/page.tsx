@@ -31,12 +31,9 @@ export default function Home() {
         <WatchlistTable />
       </div>
 
-      <section className="mt-10">
-        <h2 className="mb-3 text-sm font-medium tracking-wide text-muted">
-          Sectors by IV rank
-        </h2>
+      <div className="mt-10">
         <SectorGrid />
-      </section>
+      </div>
     </div>
   );
 }

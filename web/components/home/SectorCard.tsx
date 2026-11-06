@@ -1,4 +1,4 @@
-import clsx from "clsx";
+import { Hatched } from "@/features/stock-value/parts";
 
 type SectorMover = { symbol: string; change_pct: number | null };
 
@@ -12,82 +12,61 @@ type Props = {
   ivRankCount: number;
 };
 
-export function SectorCard({
-  sector,
-  count,
-  changePct,
-  best,
-  worst,
-  avgIvRank,
-  ivRankCount,
-}: Props) {
+/**
+ * One sector as a row of the Sectors card (web overhaul Part 6, restyled in place): the name and its
+ * average IV rank with how many names it averages, then the day's move and the count, then the best and
+ * worst movers. A move is signed but never green or red, because a sector's move is a price, not money
+ * (web/DESIGN.md Colors). Unknown is a hatched n/a, never 0.
+ */
+export function SectorCard({ sector, count, changePct, best, worst, avgIvRank, ivRankCount }: Props) {
   return (
-    <div className="bg-surface p-4">
-      <header className="flex items-baseline justify-between">
-        <h3 className="text-sm font-medium text-content">{sector}</h3>
-        <span className="text-xs text-muted">{count} names</span>
-      </header>
-
-      <div className="mt-3 flex items-baseline gap-2">
-        {changePct == null ? (
-          <span className="tabular text-sm text-unknown">n/a</span>
-        ) : (
-          <span className={clsx("tabular text-sm", changeClass(changePct))}>
-            {signedPct(changePct)}
-          </span>
-        )}
-        <span className="text-xs text-muted">day</span>
+    <li className="border-t border-border py-3 first:border-t-0">
+      <div className="flex items-baseline justify-between gap-3">
+        <h3 className="min-w-0 truncate text-[0.9375rem] font-bold">{sector}</h3>
+        <span className="shrink-0 text-sm">
+          IV rank{" "}
+          {avgIvRank == null ? (
+            <Hatched />
+          ) : (
+            <>
+              <span className="tabular font-semibold">{avgIvRank.toFixed(1)}</span>{" "}
+              <span className="tabular text-[0.8125rem] text-muted">{ivRankCount === 1 ? "(1 name)" : `(${ivRankCount})`}</span>
+            </>
+          )}
+        </span>
       </div>
-
-      <dl className="mt-3 space-y-1 text-xs text-muted">
-        <div className="flex justify-between">
-          <dt>best</dt>
-          <dd className="flex items-center gap-1">
-            <span className="font-mono text-content">{best.symbol}</span>
-            <ChangePct value={best.change_pct} />
-          </dd>
-        </div>
-        <div className="flex justify-between">
-          <dt>worst</dt>
-          <dd className="flex items-center gap-1">
-            <span className="font-mono text-content">{worst.symbol}</span>
-            <ChangePct value={worst.change_pct} />
-          </dd>
-        </div>
-        <div className="flex justify-between">
-          <dt>avg IV rank</dt>
-          <dd>
-            {avgIvRank == null ? (
-              <span className="text-unknown">n/a</span>
-            ) : (
-              <>
-                <span className="tabular text-content">{avgIvRank.toFixed(1)}</span>
-                <span className="ml-1 text-unknown">
-                  {ivRankCount === 1 ? "(1 name)" : `(${ivRankCount})`}
-                </span>
-              </>
-            )}
-          </dd>
-        </div>
-      </dl>
-    </div>
+      <p className="mt-0.5 text-[0.8125rem] text-muted">
+        <span className="tabular">{count === 1 ? "1 name" : `${count} names`}</span>
+        {" · "}
+        {changePct == null ? (
+          <>
+            day <Hatched />
+          </>
+        ) : (
+          <>
+            <span className="tabular">{signedPct(changePct)}</span> today
+          </>
+        )}
+      </p>
+      <p className="mt-0.5 text-[0.8125rem] text-muted">
+        Best <Mover m={best} />
+        {" · "}
+        worst <Mover m={worst} />
+      </p>
+    </li>
   );
 }
 
-function ChangePct({ value }: { value: number | null }) {
-  if (value == null) return <span className="text-unknown">n/a</span>;
+function Mover({ m }: { m: SectorMover }) {
   return (
-    <span className={clsx("tabular", changeClass(value))}>{signedPct(value)}</span>
+    <>
+      <span className="font-semibold text-content">{m.symbol}</span>{" "}
+      {m.change_pct == null ? <Hatched /> : <span className="tabular">{signedPct(m.change_pct)}</span>}
+    </>
   );
 }
 
 function signedPct(v: number): string {
   const sign = v > 0 ? "+" : "";
   return `${sign}${v.toFixed(2)}%`;
-}
-
-function changeClass(v: number): string {
-  if (v > 0) return "text-gain";
-  if (v < 0) return "text-loss";
-  return "text-muted";
 }

@@ -66,3 +66,42 @@ describe("SectorCard", () => {
     expect(screen.getByText("(3)")).toBeDefined();
   });
 });
+describe("SectorCard, restyled (web overhaul Part 6)", () => {
+  it("never colours a move green or red: a sector's move is a price, not money", () => {
+    const { container } = render(
+      <ul>
+        <SectorCard
+          sector="tech"
+          count={3}
+          changePct={-1.5}
+          best={{ symbol: "MSFT", change_pct: 2.0 }}
+          worst={{ symbol: "AAPL", change_pct: -1.0 }}
+          avgIvRank={42.0}
+          ivRankCount={3}
+        />
+      </ul>,
+    );
+    expect(container.querySelector(".text-gain, .text-loss")).toBeNull();
+    expect(screen.getByRole("heading", { level: 3, name: "tech" })).toBeDefined();
+    expect(container.textContent).toContain("3 names · -1.50% today");
+    expect(container.textContent).toContain("Best MSFT +2.00% · worst AAPL -1.00%");
+  });
+
+  it("hatches every unknown, so n/a never reads as zero", () => {
+    const { container } = render(
+      <ul>
+        <SectorCard
+          sector="bonds"
+          count={1}
+          changePct={null}
+          best={{ symbol: "TLT", change_pct: null }}
+          worst={{ symbol: "TLT", change_pct: null }}
+          avgIvRank={null}
+          ivRankCount={0}
+        />
+      </ul>,
+    );
+    expect(container.querySelectorAll(".hatch").length).toBe(4);
+    expect(container.textContent).toContain("1 name");
+  });
+});

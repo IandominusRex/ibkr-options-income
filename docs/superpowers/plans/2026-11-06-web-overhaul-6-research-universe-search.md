@@ -126,8 +126,8 @@ Progress log row; a "Section X entry" row rides in the next task's commit. A rev
 | **Task 7: the palette in the shell** | done | b613c9b | red check (Rail.tsx, more/page.tsx, research/page.tsx stashed): 3 failed / 12 passed (15); with patch components/shell, app/more, app/research, app/titles, lib/nav: 89 passed; full vitest 1593 in 153 files; tsc, lint clean; G1 empty, G2 the four files, G3 exit 0, G4 green (19 rows: 18 routes plus /_not-found, `○ /research` 8.88 kB, `○ /research/universe` 2.89 kB; first try), G5 no non-test line, G7 exactly `web/app/layout.tsx:55:          <CommandPalette />` | 2026-11-07 | da-vinci invoked with the section Spec (DESIGN.md ratified, extending an existing surface): no change to the patch. Task 6's row hash corrected to ad30440 (the commit was amended once, before Task 7, to carry its own plan edits; cost if wrong: none, a log cell). G5 run without web/features/universe (folder does not exist until Task 12; cost if wrong: none) |
 | **Section B exit** | done | - | three task commits (76a3093, ad30440, b613c9b); vitest 1593 in 153 files; tsc and lint clean; G1 empty; G2 the four files; G3 exit 0; G4 green (19 route rows); G5 no non-test finding; G6 `pytest -q tests/test_web_fence.py tests/test_value_fence.py tests/test_eval_skills.py tests/test_openapi_current.py` 55 passed; G7 the one layout line; scratch build removed; status clean after commit | 2026-11-07 | recorded in Task 7's commit (the plan allows it; cost if wrong: none) |
 | **Section C entry** | done | - | C1 Section B landed (76a3093, ad30440, b613c9b plus docs commit 45d8781), vitest 1593 in 153 files, tsc and lint clean, G1 empty, G2 four files, G7 prints `web/app/layout.tsx:55:          <CommandPalette />`; C2 `git apply --check` of T8 printed nothing; C3 test counts 6, 4, 9 as written and ResearchPage.tsx does not exist. No Python file changed since the green A3 baseline | 2026-11-07 | none |
-| **Task 8: Your watchlist** | done | (next commit) | red check (WatchlistTable.tsx, research/page.tsx stashed): 6 failed / 7 passed (13); with patch components/home + app/research 17 passed; full vitest 1597 in 153 files; tsc, lint clean; G5 no non-test line | 2026-11-07 | da-vinci invoked with the section Spec (DESIGN.md ratified, extending an existing surface): no change to the patch |
-| **Task 9: the Sectors card** | | | | | |
+| **Task 8: Your watchlist** | done | b1f29b3 | red check (WatchlistTable.tsx, research/page.tsx stashed): 6 failed / 7 passed (13); with patch components/home + app/research 17 passed; full vitest 1597 in 153 files; tsc, lint clean; G5 no non-test line | 2026-11-07 | da-vinci invoked with the section Spec (DESIGN.md ratified, extending an existing surface): no change to the patch |
+| **Task 9: the Sectors card** | done | (next commit) | red check (SectorCard.tsx, SectorGrid.tsx stashed): components/home/Sector 4 failed / 4 passed (8); with patch components/home + app/research 21 passed; full vitest 1601 in 154 files; tsc, lint clean; G5 no non-test line | 2026-11-07 | da-vinci invoked with the section Spec: no change to the patch. Task 8's row hash filled in (b1f29b3) |
 | **Task 10: the Research page** | | | | | |
 | **Task 11: Claude's note** | | | | | |
 | **Section C exit** | | | | | |
@@ -2469,13 +2469,13 @@ index 2e856c0..8bbac64 100644
 **What it does (ruling 12):** one "Sectors by IV rank" card; each sector a row; no green or red; loading, empty and
 failure in words. The research page drops its sectors heading.
 
-- [ ] **Step 1: da-vinci** with the Spec above.
-- [ ] **Step 2: Check and apply `T9`.** `git status --short` shows four `M` files and `?? web/components/home/SectorGrid.test.tsx`.
-- [ ] **Step 3: Red check.** `git stash push -- web/components/home/SectorCard.tsx web/components/home/SectorGrid.tsx`,
+- [x] **Step 1: da-vinci** with the Spec above.
+- [x] **Step 2: Check and apply `T9`.** `git status --short` shows four `M` files and `?? web/components/home/SectorGrid.test.tsx`.
+- [x] **Step 3: Red check.** `git stash push -- web/components/home/SectorCard.tsx web/components/home/SectorGrid.tsx`,
   then `cd web && npx vitest run components/home/Sector` ends `4 failed | 4 passed (8)`, then `git stash pop`.
-- [ ] **Step 4: Gate.** `npx vitest run components/home app/research`: 21 passed. Full vitest **1601 in 154 files**;
+- [x] **Step 4: Gate.** `npx vitest run components/home app/research`: 21 passed. Full vitest **1601 in 154 files**;
   tsc, lint clean; G5.
-- [ ] **Step 5: Commit** `feat(web): the sectors as one card of rows, moves signed and never green or red`.
+- [x] **Step 5: Commit** `feat(web): the sectors as one card of rows, moves signed and never green or red`.
 
 <!-- block T9 -->
 ````diff
