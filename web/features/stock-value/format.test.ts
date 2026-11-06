@@ -105,11 +105,16 @@ describe("stock-value format", () => {
   });
   it("words the tranche plan: what is bought and what the next one waits for", () => {
     expect(trancheWords(plan())).toBe(
-      "1 of 3 tranches bought (the last on Oct 20, 2026). Tranche 2 waits for a higher low, at least 5 sessions after the last, and passes the value gate again first.",
+      "1 of 3 tranches bought (the last on Oct 20, 2026). Tranche 2 waits for a higher low, at least 10 sessions after the last, and passes the value gate again first.",
     );
     expect(trancheWords(plan({ tranches_done: 2 }))).toBe(
       "2 of 3 tranches bought (the last on Oct 20, 2026). Tranche 3 waits for a close above the 50-day average, at least 5 sessions after the last, and passes the value gate again first.",
     );
+    // The second tranche needs ten sessions of lows (src/value/sizing.py::tranche_due), so the wait is
+    // the larger of the setting and ten; a later tranche waits the setting alone.
+    expect(trancheWords(plan({ tranche_min_sessions: 12 }))).toContain("at least 12 sessions after the last");
+    expect(trancheWords(plan({ tranche_min_sessions: 3 }))).toContain("at least 10 sessions after the last");
+    expect(trancheWords(plan({ tranches_done: 2, tranche_min_sessions: 3 }))).toContain("at least 3 sessions after the last");
     expect(trancheWords(plan({ tranches_done: 3 }))).toBe("All 3 tranches are bought.");
     expect(trancheWords(plan({ tranches_done: null }))).toBeNull();
     expect(trancheWords(null)).toBeNull();

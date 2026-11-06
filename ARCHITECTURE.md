@@ -1634,10 +1634,13 @@ reskinned without an edit. The structure it added:
 - **`features/stock/`** — web overhaul Part 5: the stock page (`/stock/[symbol]`; `page.tsx` only mounts
   `StockPage`). A back link to Research, the ticker, name and last price ("Delayed" in words when stale), then one
   grid as the position page's: the chart (`components/stock/PriceChart`, ink candles with the value book's fair
-  value, entry ceiling, half sale and stop as dashed lines from `stock.ts::valueLines`), the value block
+  value, entry ceiling, half sale and stop as dashed lines from `stock.ts::valueLines`; the candle series'
+  `autoscaleInfoProvider` widens the price scale to every named level, since price lines stay out of
+  lightweight-charts' autoscale range), the value block
   (`features/stock-value/ValueBlock`, first when `valueLeads` says the book would buy the name at a price or holds
   it), Checks, Technicals and the statements (behind a disclosure) on the left; the news service's notes, News,
-  Sentiment and the model summary on the right. Each section is a `StockSection` card. It reads
+  Sentiment and the model summary on the right, each column one `grid-cols-1` track so a wide statements table
+  scrolls inside its card. Each section is a `StockSection` card. It reads
   `GET /research/{symbol}` and `GET /value/{symbol}` (the value block's own query key, so one fetch); its only
   command is the value block's `AnalyseButton`.
 

@@ -576,6 +576,37 @@ def test_the_size_tier_is_the_value_books_own_rule(list_name, mos) -> None:
     assert _size_pct(list_name, mos) == expected
 
 
+@pytest.mark.parametrize("cap", [2.0, 4.0, 6.0, 8.0])
+@pytest.mark.parametrize("list_name", ["deep_value", "quality_growth"])
+@pytest.mark.parametrize("mos", [None, -0.2, 0.0, 0.12, 0.27, 0.36, 0.5, 0.9])
+def test_the_size_tier_equals_the_books_target_cost_even_when_the_name_cap_binds(
+    monkeypatch, list_name, mos, cap
+) -> None:
+    """The example config's cap (8) equals its top tier, so it never binds there. Lower the cap
+    and hold the API's number to the value book's own ``target_cost`` (cost / ceiling), so a change
+    to how the sizer applies the cap turns this red."""
+    from types import SimpleNamespace
+
+    import src.api.routers.value as router
+    from src.common.config import get_config
+    from src.value.sizing import ceiling_usd, target_cost
+
+    book = get_config().value.book.model_copy(update={"name_cap_pct": cap})
+    monkeypatch.setattr(
+        router, "get_config", lambda: SimpleNamespace(value=SimpleNamespace(book=book))
+    )
+    net_liq = 250_000.0
+    ceiling = ceiling_usd(net_liq, book, trend_brake=False)
+    cost = target_cost(list_name, mos, net_liq, book, trend_brake=False)
+    got = router._size_pct(list_name, mos)
+    if mos is None:
+        assert got is None
+    else:
+        assert got is not None
+        assert got == pytest.approx(cost / ceiling * 100.0)
+        assert got <= cap
+
+
 def test_a_held_names_plan_carries_its_tranches(client, vdb_file) -> None:
     _seed_file("GOOGL")
     _seed_position("GOOGL", status="open", sells=False)

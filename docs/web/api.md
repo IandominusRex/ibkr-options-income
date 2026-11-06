@@ -1643,8 +1643,9 @@ else `{ source: "claude", read_at, lists[] (a verdict per list with `why`, `fair
 Claude's text and numbers as Python bounded them and is always labelled; no Python field carries it. `reevaluations`
 are a held name's; `plan` is its open position's exit plan (`null` for a name not held), with, since web overhaul
 Part 5, `tranches_done`, `tranches`, `tranche_min_sessions` and `last_tranche_on` (the tranche plan: the second
-tranche waits for a higher low, any later one for a close above the 50-day average, each at least
-`tranche_min_sessions` after the last and gated again).
+tranche waits for a higher low and at least the larger of `tranche_min_sessions` and ten sessions after the last
+(`tranche_due` needs ten sessions of lows), any later one for a close above the 50-day average and at least
+`tranche_min_sessions` after the last, each gated again).
 
 `computed` (ruling 24, `src/api/value_lookup.py`): **`stored`** when the file's freshness key (the newest accession
 and bar in `research.db`, the regime, the ruleset: `src/common/value_freshness.py`) equals the key of the cheap

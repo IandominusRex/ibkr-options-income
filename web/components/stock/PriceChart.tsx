@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
-import { ColorType, CrosshairMode, LineStyle, createChart, type IChartApi } from "lightweight-charts";
+import { ColorType, CrosshairMode, LineStyle, createChart, type AutoscaleInfo, type IChartApi } from "lightweight-charts";
 import { apiFetch } from "@/lib/api";
 import { formatMoneyCell } from "@/lib/money";
 
@@ -72,6 +72,20 @@ export function PriceChart({ symbol, lines = [] }: { symbol: string; lines?: Pri
       wickDownColor: ink(),
       priceLineVisible: false,
       lastValueVisible: true,
+      // Price lines stay out of the autoscale range, so a level far from the year's bars (a fair value
+      // 40% above the price) would fall off the canvas; widen the scale to take every named level in.
+      autoscaleInfoProvider: (original: () => AutoscaleInfo | null) => {
+        const base = original();
+        if (base === null || lines.length === 0) return base;
+        const prices = lines.map((l) => l.price).filter((p) => Number.isFinite(p));
+        return {
+          ...base,
+          priceRange: {
+            minValue: Math.min(base.priceRange.minValue, ...prices),
+            maxValue: Math.max(base.priceRange.maxValue, ...prices),
+          },
+        };
+      },
     });
     candles.setData(data.bars.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close })));
     const volume = chart.addHistogramSeries({

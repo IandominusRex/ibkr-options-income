@@ -350,8 +350,8 @@ Operator to-dos: re-copy `config/examples/value.yaml`'s `telegram:` and `prompt_
 ## Built (2026-11-06 — web overhaul Part 5: the stock page)
 
 Plan: `docs/superpowers/plans/2026-11-06-web-overhaul-5-stock-page.md` (branch `feat/web-overhaul-5`; the plan's
-Progress log holds each task's commit, gate and rulings; commits `0a9ed58` to `d74ad70` on the branch, no ruling changed
-behaviour). Part 5 recomposes `/stock/[symbol]` on the payslip and
+Progress log holds each task's commit, gate and rulings; commits `0a9ed58` to `c845334` on the branch, then the review fix pass; no ruling changed
+behaviour apart from the changes listed under "After the build" below). Part 5 recomposes `/stock/[symbol]` on the payslip and
 gives the value book's figures their place on it. It adds no command site (the page's only one is still the value
 block's `AnalyseButton`) and no token, colour, font, radius or elevation; the protected decide, confirm, receipt,
 halt, autonomy and roll-mode components, `lib/commands.ts` and `lib/receipt.ts` are byte-identical to `main`.
@@ -377,6 +377,23 @@ halt, autonomy and roll-mode components, `lib/commands.ts` and `lib/receipt.ts` 
 - **The sections (Tasks 7-9):** Checks, Technicals, Sentiment, News, the statements and the model summary restyled
   in place: state words (Fail as a flag word, "Caution" on a warning), hatched n/a, no green or red on anything that
   is not money, "Generate summary" a secondary button, the summary labelled by its model.
+
+**After the build (Task 11 and the review fix pass), what changed:**
+
+- **Task 11 (`c845334`, found by looking at 320 and 390 px):** both columns of the page's grid are one
+  `grid-cols-1` (`minmax(0,1fr)`) track, so a wide statements table scrolls inside its card and never widens the
+  page; the statements card says "Scroll sideways to see every column." on a phone (hidden from 768 px up); the News
+  headline link is a 44 px target on a phone and says "(opens in a new tab)" to a screen reader.
+- **Chart scale (review fix pass):** the candle series takes an `autoscaleInfoProvider` that widens the price scale
+  to every named level, because lightweight-charts keeps price lines out of the autoscale range and a fair value far
+  from the year's bars (1.43x the price) fell off the canvas while the label said it was drawn. The volume bars and
+  the averages are unaffected.
+- **Tranche wording (review fix pass):** for the second tranche the sentence says "at least" the larger of
+  `tranche_min_sessions` and ten sessions after the last, because `tranche_due` needs ten sessions of lows before its
+  higher-low test can run; a later tranche still says `tranche_min_sessions`.
+- **A test only (review fix pass):** `tests/test_api_value.py` now holds the API's size tier to
+  `src.value.sizing.target_cost` divided by the ceiling at name caps of 2, 4, 6 and 8, so the cap binds in the test
+  (the example config's cap equals its top tier).
 
 **Deferred:**
 

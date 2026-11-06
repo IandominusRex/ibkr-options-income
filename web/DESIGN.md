@@ -1015,7 +1015,7 @@ Read. Search, watchlist, sectors, the stock page, and Universe. VARIANCE 3, DENS
   n/a. Since web overhaul Part 5, "How much, and when?" also says the size tier per priced list ("At this margin of
   safety a buy aims at 5% of the book's ceiling, in 3 tranches."; a hatched "Size if bought n/a" when the margin is
   unknown) and a held name's tranche plan ("1 of 3 tranches bought (the last on Oct 20, 2026). Tranche 2 waits for
-  a higher low, at least 5 sessions after the last, and passes the value gate again first."). No new
+  a higher low, at least 10 sessions after the last, and passes the value gate again first."). No new
   token, colour, font, radius or elevation.
 
 ### Stock

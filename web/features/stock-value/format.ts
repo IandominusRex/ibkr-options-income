@@ -296,10 +296,15 @@ export function sizeSegment(l: Pick<ValueList, "verdict" | "size_pct" | "tranche
   };
 }
 
+/** Sessions of lows `tranche_due` needs before the second tranche's higher-low test can run. */
+const SECOND_TRANCHE_LOW_SESSIONS = 10;
+
 /**
  * A held name's tranche plan in words (spec section 9.5): what is bought, and what the next tranche
  * waits for. The second waits for a higher low, any later one for a close above the 50-day average,
- * each at least `tranche_min_sessions` after the last and gated again. Null when the count is unknown.
+ * each gated again. The second needs ten sessions of lows since the last tranche (`tranche_due` in
+ * src/value/sizing.py), so its wait is the larger of `tranche_min_sessions` and ten; a later one waits
+ * `tranche_min_sessions`. Null when the count is unknown.
  */
 export function trancheWords(
   plan: Pick<ValuePlan, "tranches_done" | "tranches" | "tranche_min_sessions" | "last_tranche_on"> | null | undefined,
@@ -312,6 +317,7 @@ export function trancheWords(
   const bought = done === 0 ? `None of the ${total} tranches is bought yet` : `${done} of ${total} tranches bought${last}`;
   const next = done + 1;
   const waits = done <= 1 ? "a higher low" : "a close above the 50-day average";
-  const gap = done === 0 ? "" : `, at least ${plan.tranche_min_sessions} sessions after the last`;
+  const wait = done === 1 ? Math.max(plan.tranche_min_sessions, SECOND_TRANCHE_LOW_SESSIONS) : plan.tranche_min_sessions;
+  const gap = done === 0 ? "" : `, at least ${wait} sessions after the last`;
   return `${bought}. Tranche ${next} waits for ${done === 0 ? "a Ready verdict" : waits}${gap}, and passes the value gate again first.`;
 }

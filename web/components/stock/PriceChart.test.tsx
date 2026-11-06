@@ -73,6 +73,34 @@ describe("PriceChart", () => {
     expect(screen.getByText(/Dashed lines are the value book's levels\./)).toBeInTheDocument();
   });
 
+  it("widens the candle scale so every named level is on the canvas", async () => {
+    renderWithQuery(
+      <PriceChart symbol="GOOGL" lines={[{ price: 215, title: "Fair value $215.00" }, { price: 190, title: "Entry ceiling $190.00" }]} />,
+      { "/research/GOOGL/bars": BARS },
+    );
+    await screen.findByRole("img");
+    type Info = { priceRange: { minValue: number; maxValue: number }; margins?: { above: number; below: number } } | null;
+    const provider = chart.candles[0]?.autoscaleInfoProvider as ((original: () => Info) => Info) | undefined;
+    expect(provider).toBeTypeOf("function");
+    const margins = { above: 4, below: 2 };
+    const out = provider!(() => ({ priceRange: { minValue: 179, maxValue: 186 }, margins }));
+    expect(out?.priceRange).toEqual({ minValue: 179, maxValue: 215 });
+    expect(out?.margins).toEqual(margins);
+    // A level below the bars widens the low end, and no range at all stays no range.
+    const low = provider!(() => ({ priceRange: { minValue: 191, maxValue: 200 } }));
+    expect(low?.priceRange).toEqual({ minValue: 190, maxValue: 215 });
+    expect(provider!(() => null)).toBeNull();
+  });
+
+  it("leaves the scale alone when there are no levels", async () => {
+    renderWithQuery(<PriceChart symbol="GOOGL" />, { "/research/GOOGL/bars": BARS });
+    await screen.findByRole("img");
+    const provider = chart.candles[0]?.autoscaleInfoProvider as ((original: () => unknown) => unknown) | undefined;
+    const original = { priceRange: { minValue: 179, maxValue: 186 } };
+    expect(provider).toBeTypeOf("function");
+    expect(provider!(() => original)).toEqual(original);
+  });
+
   it("draws candles by shape, not colour, with no logo on the canvas", async () => {
     renderWithQuery(<PriceChart symbol="GOOGL" />, { "/research/GOOGL/bars": BARS });
     await screen.findByRole("img");
