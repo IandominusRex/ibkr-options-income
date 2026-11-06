@@ -179,6 +179,42 @@ describe("DecideControls — localStorage persistence (no initialCommand, e.g. t
   });
 });
 
+describe("DecideControls - saving an in-flight command (web overhaul Part 6)", () => {
+  // The cases above restore what a test wrote to storage by hand; these pin the write itself.
+  it("saves a pending approve command under the approval id once it is confirmed", async () => {
+    localStorage.clear();
+    submitCommand.mockResolvedValueOnce({
+      id: 41, kind: "approve", status: "pending", result: null,
+      needs_confirmation: false, confirm_token: null,
+      created_at: "x", applied_at: null, as_of: "x", created: true,
+    });
+    withClient(<DecideControls approval={approval()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    fireEvent.click(dialogConfirm());
+    await screen.findByTestId("command-receipt");
+    const { loadPersistedCommand } = await import("@/lib/commands");
+    await waitFor(() => expect(loadPersistedCommand(42)).toMatchObject({ id: 41, status: "pending" }));
+  });
+
+  it("saves the open live confirmation, with its token, before it is released", async () => {
+    localStorage.clear();
+    submitCommand.mockResolvedValueOnce({
+      id: 41, kind: "approve", status: "pending", result: null,
+      needs_confirmation: true, confirm_token: "tok-abc",
+      created_at: "x", applied_at: null, as_of: "x", created: true,
+    });
+    withClient(<DecideControls approval={approval()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    fireEvent.click(dialogConfirm());
+    await screen.findAllByText(/LIVE/);
+    const { loadPersistedCommand } = await import("@/lib/commands");
+    await waitFor(() =>
+      expect(loadPersistedCommand(42)).toMatchObject({ id: 41, needs_confirmation: true, confirm_token: "tok-abc" }),
+    );
+    expect(confirmCommand).not.toHaveBeenCalled();
+  });
+});
+
 describe("DecideControls — decide controls (M3)", () => {
   it("opens ConfirmAction before any request is made", () => {
     withClient(<DecideControls approval={approval()} />);

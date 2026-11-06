@@ -116,7 +116,7 @@ Progress log row; a "Section X entry" row rides in the next task's commit. A rev
 | **A0 setup** | done | plan commit affa316 on main over d3d1e28 | worktree <W> with .venv and web/node_modules symlinks, init_db run; free disk 21 GiB (floor 10) | 2026-11-07 | all 16 block hashes match the table |
 | **Section A entry** | done | - | A1 git log shows affa316 over d3d1e28, status clean; A2 git apply --check silent for T1-T4; A3 baseline: pytest 5767 passed 1 skipped, ruff clean, mypy 361 files clean, vitest 1562 in 152 files, tsc and lint clean | 2026-11-07 | none |
 | **Task 1: the title guard** | done | (this commit; hash in the Section A exit commit) | red check (5 layouts stashed): titles.test.ts 5 failed / 20 passed; with the patch 25 passed; full vitest 1567 in 152 files; tsc and lint clean | 2026-11-07 | none: patch applied as given |
-| **Task 2: the save-side tests** | | | | | |
+| **Task 2: the save-side tests** | done | (this commit) | 37 passed in the two files; full vitest 1571 in 152 files; tsc, lint clean; G1 prints nothing; no red check (ruling 16) | 2026-11-07 | none |
 | **Task 3: the value block mounts once** | | | | | |
 | **Task 4: the position page's column and headline links** | | | | | |
 | **Section A exit** | | | | | |
@@ -582,11 +582,11 @@ plan.
 (`42` for an approval, `short:<symbol>` for a roll), and an open live confirmation is written with
 `needs_confirmation` and its token before it is released. The components are unchanged (one is protected).
 
-- [ ] **Step 1: Check and apply `T2`.** `git status --short` shows the two test files as `M`.
-- [ ] **Step 2: Gate.** `cd web && npx vitest run components/options/DecideControls.test.tsx features/position/RollCard.test.tsx`:
+- [x] **Step 1: Check and apply `T2`.** `git status --short` shows the two test files as `M`.
+- [x] **Step 2: Gate.** `cd web && npx vitest run components/options/DecideControls.test.tsx features/position/RollCard.test.tsx`:
   37 passed. Full vitest **1571 in 152 files**; tsc, lint clean; **G1 prints nothing** (the protected component did
   not change). No red check here (ruling 16: it was run in the prototype).
-- [ ] **Step 3: Commit** `test(web): pin that a pending decide or roll command is saved for a reload`.
+- [x] **Step 3: Commit** `test(web): pin that a pending decide or roll command is saved for a reload`.
 
 <!-- block T2 -->
 ````diff

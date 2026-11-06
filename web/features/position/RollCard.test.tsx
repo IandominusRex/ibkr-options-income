@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 // imports apiFetch (lib/commands, RollCard) resolves.
 import { apiFetchMock, renderWithQuery } from "@/lib/test-query";
 import { ApiError } from "@/lib/api";
-import { savePersistedCommand } from "@/lib/commands";
+import { loadPersistedCommand, savePersistedCommand } from "@/lib/commands";
 import { RollCard } from "./RollCard";
 
 const SYMBOL = "AAPL  261121P00180000";
@@ -268,6 +268,27 @@ describe("RollCard - the roll flow (ported from the Shorts table)", () => {
       mountRoll();
       const dialog = await screen.findByRole("dialog");
       expect(dialog.textContent).toContain("LIVE");
+    });
+
+    // The save side (web overhaul Part 6): the cases above only restore what a test wrote by hand.
+    it("saves a pending roll command under short:<symbol>, so a reload can restore it", async () => {
+      mountRoll();
+      await proposeAndConfirm();
+      await screen.findByTestId("command-receipt");
+      await waitFor(() => expect(loadPersistedCommand(`short:${SYMBOL}`)).toMatchObject({ id: 51, status: "pending" }));
+    });
+
+    it("saves an open live confirmation, needs_confirmation and its token, before it is released", async () => {
+      mountRoll({ post: async () => command({ needs_confirmation: true, confirm_token: "tok-abc" }) });
+      await proposeAndConfirm();
+      await screen.findAllByText(/LIVE/);
+      await waitFor(() =>
+        expect(loadPersistedCommand(`short:${SYMBOL}`)).toMatchObject({
+          id: 51,
+          needs_confirmation: true,
+          confirm_token: "tok-abc",
+        }),
+      );
     });
   });
 });
