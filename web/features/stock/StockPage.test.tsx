@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { apiFetchMock, renderWithQuery } from "@/lib/test-query";
@@ -10,9 +10,19 @@ vi.mock("@/components/stock/PriceChart", () => ({
     <div data-testid="chart">{`${symbol} chart: ${lines.map((l) => l.title).join("; ")}`}</div>
   ),
 }));
-vi.mock("@/features/stock-value/ValueBlock", () => ({
-  ValueBlock: ({ symbol }: { symbol: string }) => <section aria-label={`Value book on ${symbol}`} data-testid="value" />,
-}));
+// The stand-in counts its mounts, so a test can tell a block that moved (a remount) from one that did not.
+const valueMounts = vi.hoisted(() => ({ n: 0 }));
+vi.mock("@/features/stock-value/ValueBlock", async () => {
+  const { useEffect } = await import("react");
+  return {
+    ValueBlock: function ValueBlock({ symbol }: { symbol: string }) {
+      useEffect(() => {
+        valueMounts.n += 1;
+      }, []);
+      return <section aria-label={`Value book on ${symbol}`} data-testid="value" />;
+    },
+  };
+});
 vi.mock("@/features/market/NameNotes", () => ({ NameNotes: () => <section data-testid="notes" /> }));
 vi.mock("@/components/stock/SummaryPanel", () => ({ SummaryPanel: () => <p>summary stand-in</p> }));
 
@@ -82,10 +92,49 @@ describe("StockPage", () => {
     expect(order().slice(0, 3)).toEqual(["GOOGL price chart", "VALUE", "Checks"]);
   });
 
+  it("holds the value block until the value book answers, then mounts it once in the slot the answer picks", async () => {
+    let release: (v: unknown) => void = () => {};
+    apiFetchMock.mockImplementation(async (path: string) => {
+      if (path === "/research/GOOGL") return ANALYSIS;
+      if (path === "/value/GOOGL") return new Promise((r) => (release = r));
+      throw new Error(`unexpected fetch ${path}`);
+    });
+    valueMounts.n = 0;
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <StockPage symbol="GOOGL" />
+      </QueryClientProvider>,
+    );
+    await screen.findByText("Alphabet Inc. · NASDAQ");
+    expect(screen.queryByTestId("value")).toBeNull();
+    release(VALUE_READY);
+    await waitFor(() => expect(order().slice(0, 2)).toEqual(["GOOGL price chart", "VALUE"]));
+    expect(valueMounts.n).toBe(1);
+  });
+
+  it("places the value block at the foot when the value book cannot be read", async () => {
+    apiFetchMock.mockImplementation(async (path: string) => {
+      if (path === "/research/GOOGL") return ANALYSIS;
+      throw new ApiError(500, "value.db unreadable");
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <StockPage symbol="GOOGL" />
+      </QueryClientProvider>,
+    );
+    await screen.findByText("Alphabet Inc. · NASDAQ");
+    await waitFor(() => expect(screen.getByTestId("value")).toBeInTheDocument());
+    const o = order();
+    expect(o.indexOf("VALUE")).toBe(o.indexOf("Financial statements") + 1);
+  });
+
   it("puts the value block at the foot of the left column when every list is No", async () => {
     renderWithQuery(<StockPage symbol="GOOGL" />, { "/research/GOOGL": ANALYSIS, "/value/GOOGL": VALUE_NO });
     await screen.findByText("Alphabet Inc. · NASDAQ");
     expect(await screen.findByText("GOOGL chart:")).toBeInTheDocument();
+    await screen.findByTestId("value");
     const o = order();
     expect(o.indexOf("VALUE")).toBe(o.indexOf("Financial statements") + 1);
   });

@@ -117,7 +117,7 @@ Progress log row; a "Section X entry" row rides in the next task's commit. A rev
 | **Section A entry** | done | - | A1 git log shows affa316 over d3d1e28, status clean; A2 git apply --check silent for T1-T4; A3 baseline: pytest 5767 passed 1 skipped, ruff clean, mypy 361 files clean, vitest 1562 in 152 files, tsc and lint clean | 2026-11-07 | none |
 | **Task 1: the title guard** | done | (this commit; hash in the Section A exit commit) | red check (5 layouts stashed): titles.test.ts 5 failed / 20 passed; with the patch 25 passed; full vitest 1567 in 152 files; tsc and lint clean | 2026-11-07 | none: patch applied as given |
 | **Task 2: the save-side tests** | done | (this commit) | 37 passed in the two files; full vitest 1571 in 152 files; tsc, lint clean; G1 prints nothing; no red check (ruling 16) | 2026-11-07 | none |
-| **Task 3: the value block mounts once** | | | | | |
+| **Task 3: the value block mounts once** | done | (this commit) | red check: StockPage 1 failed / 7 passed; with patch 8 passed; features/stock 53 passed; full vitest 1573 in 152 files; tsc, lint clean | 2026-11-07 | da-vinci invoked with the section Spec: no change |
 | **Task 4: the position page's column and headline links** | | | | | |
 | **Section A exit** | | | | | |
 | **Section B entry** | | | | | |
@@ -687,14 +687,14 @@ index 256b12b..8225296 100644
 the slot the answer picks. The test stand-in for `ValueBlock` counts its mounts. Two new cases (held until the answer,
 mounted once under the chart; a failed read places it at the foot); the "every list No" case waits for the block.
 
-- [ ] **Step 1: da-vinci** with the section's Spec (no visual change).
-- [ ] **Step 2: Check and apply `T3`.** `git status --short` shows the two files as `M`.
-- [ ] **Step 3: Red check.** `git stash push -- web/features/stock/StockPage.tsx`, then
+- [x] **Step 1: da-vinci** with the section's Spec (no visual change).
+- [x] **Step 2: Check and apply `T3`.** `git status --short` shows the two files as `M`.
+- [x] **Step 3: Red check.** `git stash push -- web/features/stock/StockPage.tsx`, then
   `cd web && npx vitest run features/stock/StockPage.test.tsx` ends `1 failed | 7 passed (8)` (the hold case), then
   `git stash pop`.
-- [ ] **Step 4: Gate.** `npx vitest run features/stock`: StockPage 8 passed. Full vitest **1573 in 152 files**; tsc,
+- [x] **Step 4: Gate.** `npx vitest run features/stock`: StockPage 8 passed. Full vitest **1573 in 152 files**; tsc,
   lint clean.
-- [ ] **Step 5: Commit** `fix(web): the stock page's value block mounts once, where its answer puts it`.
+- [x] **Step 5: Commit** `fix(web): the stock page's value block mounts once, where its answer puts it`.
 
 <!-- block T3 -->
 ````diff

@@ -83,7 +83,7 @@ export function StockPage({ symbol }: { symbol: string }) {
     retry: (n, e) => !(e instanceof ApiError && e.status === 404) && n < 2,
   });
   // The value block reads the same request under the same key, so this costs no second fetch.
-  const { data: value } = useQuery({
+  const { data: value, isPending: valuePending } = useQuery({
     queryKey: ["value", "ticker", upper],
     queryFn: () => apiFetch<ValueTicker>(`/value/${upper}`),
   });
@@ -119,7 +119,10 @@ export function StockPage({ symbol }: { symbol: string }) {
     state: data?.[key]?.state ?? "pending",
     reason: data?.[key]?.reason ?? null,
   });
-  const valueBlock = <ValueBlock symbol={upper} />;
+  // Held back until GET /value/{symbol} has answered (or failed), so the block mounts once, in the
+  // slot its answer picks: before, it mounted at the foot and moved under the chart when a priced
+  // answer arrived, a layout shift and a remount (web overhaul Part 6).
+  const valueBlock = valuePending ? null : <ValueBlock symbol={upper} />;
 
   return (
     <Shell>
