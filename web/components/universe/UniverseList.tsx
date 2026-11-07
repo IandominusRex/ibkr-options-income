@@ -119,9 +119,9 @@ function listLabel(name: string): string {
 function listPurpose(name: string): string {
   switch (name) {
     case "indexes":
-      return "The indexes the regime and the market picture read.";
+      return "Tracked for nightly IV and price history, and shown on the console. Being here selects no trade.";
     case "watchlist":
-      return "Names the scan reports on. It never sells a put on them.";
+      return "Tracked for nightly IV and price history, and shown on the console. Being here selects no trade and does not allow a put; only Would own does.";
     case "would_own":
       return "The cash-secured-put allowlist: the system may sell puts on these names, so it may be assigned their shares.";
     case "actively_wheeling":

@@ -307,12 +307,12 @@ components/          Where new code goes (web overhaul Part 4, HANDOFF D4): `fea
                     (GET /research/search), is a combobox (aria-activedescendant; the arrow keys move,
                     Enter opens, Escape or a tap on the scrim closes, Close on a phone), and says its
                     state in one always-mounted `role="status"` line. The older notes follow: (⌘K/Escape as before; controlled if `open`/
-                    `onOpenChange` props are passed — the home page's visible search-bar
-                    button drives it that way — otherwise falls back to its own internal
-                    open state so ⌘K still works standalone anywhere it's mounted with
-                    no parent wiring it up. Renders `role="dialog"`/`aria-modal`/
+                    `onOpenChange` props are passed (nothing passes them now; the layout
+                    mount keeps its own open state, which the shortcut and `openSearch()`
+                    set). Renders `role="dialog"`/`aria-modal`/
                     `aria-labelledby` and traps Tab the same way `ConfirmAction` does
-                    (mirrors its focus-trap code exactly). The component itself never
+                    (the same trap, but it counts only the stops that have a box, since Close is
+                    `md:hidden`). The component itself never
                     unmounts on close — it renders `null` so the global ⌘K listener
                     keeps working — so unlike `ConfirmAction`'s unmount-cleanup trick it
                     watches the `open` prop's true→false edge directly: that edge clears
@@ -330,8 +330,8 @@ components/          Where new code goes (web overhaul Part 4, HANDOFF D4): `fea
                     card whose rows are SectorCard (an `li`, no green or red). The older notes follow:
                     SectorGrid (react-query on GET /research/sectors, renders SectorCard
                     ordered by avg_iv_rank desc; a sector with no IV history sorts last),
-                    SectorCard (sector name + count, daily change with sign + colour never
-                    colour alone, best/worst movers, avg IV rank with contributing count so a
+                    SectorCard (sector name + count, daily change signed and never
+                    coloured, best/worst movers, avg IV rank with contributing count so a
                     one-name average is visible), WatchlistTable (react-query on
                     GET /watchlist, add/remove via useMutation invalidating the list; the
                     add half is a typeahead over GET /research/search — the same pattern

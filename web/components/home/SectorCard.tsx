@@ -58,6 +58,8 @@ export function SectorCard({ sector, count, changePct, best, worst, avgIvRank, i
 }
 
 function Mover({ m }: { m: SectorMover }) {
+  // The API sends "-" for a sector with no priced name: that is unknown as a whole, not a ticker.
+  if (m.symbol === "-") return <Hatched />;
   return (
     <>
       <span className="font-semibold text-content">{m.symbol}</span>{" "}

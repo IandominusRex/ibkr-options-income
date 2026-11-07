@@ -148,15 +148,21 @@ describe("UniverseList — controls only render on overridable sections", () => 
     expect(screen.queryByTestId("override-badge")).toBeNull();
   });
 
-  it("renders the AddSymbol control below the entries on an overridable list, and not on a non-overridable one", () => {
+  it("renders the AddSymbol control above the entries on an overridable list, and not on a non-overridable one", () => {
     withClient(
       <UniverseList
-        list={list({ name: "watchlist", overridable: true, entries: [] })}
+        list={list({
+          name: "watchlist",
+          overridable: true,
+          entries: [{ symbol: "AAPL", overridden: false, removed: false, created_by: null, created_at: null }],
+        })}
         sectors={{}}
         strikeBands={{}}
       />,
     );
-    expect(screen.getByTestId("add-symbol-watchlist")).toBeDefined();
+    const add = screen.getByTestId("add-symbol-watchlist");
+    const entry = screen.getByTestId("remove-AAPL");
+    expect(add.compareDocumentPosition(entry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     cleanup();
 
@@ -168,6 +174,21 @@ describe("UniverseList — controls only render on overridable sections", () => 
       />,
     );
     expect(screen.queryByTestId("add-symbol-indexes")).toBeNull();
+  });
+});
+
+describe("UniverseList, what each list is for", () => {
+  it("says the Watchlist and Indexes select no trade, and that only Would own allows a put", () => {
+    withClient(<UniverseList list={list({ name: "watchlist" })} sectors={{}} strikeBands={{}} />);
+    const text = screen.getByTestId("universe-list-watchlist").textContent ?? "";
+    expect(text).not.toMatch(/never sells a put/i);
+    expect(text).not.toMatch(/scan reports on/i);
+    expect(text).toContain("does not allow a put; only Would own does");
+    cleanup();
+    withClient(<UniverseList list={list({ name: "indexes", overridable: false })} sectors={{}} strikeBands={{}} />);
+    const idx = screen.getByTestId("universe-list-indexes").textContent ?? "";
+    expect(idx).not.toMatch(/regime|market picture/i);
+    expect(idx).toContain("selects no trade");
   });
 });
 

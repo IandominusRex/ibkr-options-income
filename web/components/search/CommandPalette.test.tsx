@@ -178,6 +178,70 @@ describe("CommandPalette", () => {
   });
 });
 
+describe("CommandPalette, review fixes", () => {
+  beforeEach(() => push.mockClear());
+
+  /** jsdom has no layout, so model `md:hidden` (display:none from 768px): an element with that class has no boxes. */
+  function modelDesktopLayout() {
+    const spy = vi
+      .spyOn(HTMLElement.prototype, "getClientRects")
+      .mockImplementation(function (this: HTMLElement) {
+        return (this.classList.contains("md:hidden") ? [] : [{}]) as unknown as DOMRectList;
+      });
+    return () => spy.mockRestore();
+  }
+
+  it("keeps Tab inside the dialog on a desktop, where Close is hidden and the input is the only stop", () => {
+    const restore = modelDesktopLayout();
+    try {
+      render(<CommandPalette />);
+      openWithShortcut();
+      input().focus();
+      expect(fireEvent.keyDown(document, { key: "Tab" })).toBe(false);
+      expect(fireEvent.keyDown(document, { key: "Tab", shiftKey: true })).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
+  it("keeps a late older ticker answer from clearing the newer one", async () => {
+    type Resolve = (v: unknown) => void;
+    let resolveOld: Resolve = () => {};
+    let resolveNew: Resolve = () => {};
+    vi.mocked(apiFetch)
+      .mockImplementationOnce(() => new Promise((r) => (resolveOld = r)))
+      .mockImplementationOnce(() => new Promise((r) => (resolveNew = r)));
+    render(<CommandPalette />);
+    openWithShortcut();
+    fireEvent.change(input(), { target: { value: "AAP" } });
+    await waitFor(() => expect(apiFetch).toHaveBeenLastCalledWith("/research/search?q=AAP"));
+    fireEvent.change(input(), { target: { value: "SPY" } });
+    await waitFor(() => expect(apiFetch).toHaveBeenLastCalledWith("/research/search?q=SPY"));
+    await act(async () => {
+      resolveNew({
+        as_of: "x",
+        query: "SPY",
+        results: [{ symbol: "SPY", name: "SPDR S&P 500 ETF", exchange: "NYSE Arca", is_etf: true }],
+      });
+    });
+    expect(await screen.findByText("SPDR S&P 500 ETF")).toBeInTheDocument();
+    await act(async () => {
+      resolveOld({ as_of: "x", query: "AAP", results: [] });
+    });
+    expect(screen.getByText("SPDR S&P 500 ETF")).toBeInTheDocument();
+  });
+
+  it("does not open the highlighted result when Enter confirms an IME composition", () => {
+    render(<CommandPalette />);
+    openWithShortcut();
+    fireEvent.change(input(), { target: { value: "trades" } });
+    fireEvent.keyDown(input(), { key: "Enter", isComposing: true });
+    expect(push).not.toHaveBeenCalled();
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(push).toHaveBeenCalledWith("/trades");
+  });
+});
+
 describe("CommandPalette, controlled open", () => {
   it("renders open when the open prop is true, with no shortcut needed", () => {
     render(<CommandPalette open onOpenChange={() => {}} />);

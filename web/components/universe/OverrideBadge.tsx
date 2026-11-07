@@ -42,7 +42,8 @@ export function OverrideBadge({
       </span>
       <span>
         {removed ? "removed" : "added"} by {author ?? <span className="hatch px-1 text-unknown">n/a</span>}
-        {age ? ` · ${age}` : ""}
+        {" · "}
+        {age || <span className="hatch px-1 text-unknown">n/a</span>}
       </span>
       <button
         type="button"

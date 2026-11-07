@@ -40,8 +40,14 @@ describe("OverrideBadge, restyled", () => {
     render(<OverrideBadge author={null} timestamp={null} removed={false} onRevert={onRevert} />);
     const revert = screen.getByRole("button", { name: "Revert" });
     expect(revert).toHaveClass("min-h-11", "md:min-h-0");
-    expect(screen.getByText("n/a")).toHaveClass("hatch");
+    for (const na of screen.getAllByText("n/a")) expect(na).toHaveClass("hatch");
     fireEvent.click(revert);
     expect(onRevert).toHaveBeenCalledTimes(1);
+  });
+
+  it("hatches an unknown time too, so a known author never hides it", () => {
+    render(<OverrideBadge author="ian" timestamp={null} removed={false} onRevert={() => {}} />);
+    expect(screen.getByText("n/a")).toHaveClass("hatch");
+    expect(screen.getByTestId("override-badge")).toHaveTextContent("added by ian · n/a");
   });
 });

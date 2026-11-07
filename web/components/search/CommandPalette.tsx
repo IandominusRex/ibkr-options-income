@@ -95,9 +95,10 @@ export function CommandPalette({
       if (e.key !== "Tab") return;
       const dialog = dialogRef.current;
       if (!dialog) return;
-      const focusables = dialog.querySelectorAll<HTMLElement>(
-        "button:not([disabled]), input, [href], [tabindex]:not([tabindex='-1'])",
-      );
+      // Only what can take focus now: Close is `md:hidden`, so on a desktop it has no box and is no stop.
+      const focusables = Array.from(
+        dialog.querySelectorAll<HTMLElement>("button:not([disabled]), input, [href], [tabindex]:not([tabindex='-1'])"),
+      ).filter((el) => el.getClientRects().length > 0);
       if (focusables.length === 0) return;
       const first = focusables[0];
       const last = focusables[focusables.length - 1];
@@ -116,15 +117,20 @@ export function CommandPalette({
   useEffect(() => {
     const q = term.trim();
     if (!q) return;
+    // A reply for a term the box has since moved past is dropped, so a slow older answer never clears a newer one.
+    let stale = false;
     const id = setTimeout(async () => {
       try {
         const data = await apiFetch<SearchResponse>(`/research/search?q=${encodeURIComponent(q)}`);
-        setAnswer({ term: q, hits: data.results, failed: false });
+        if (!stale) setAnswer({ term: q, hits: data.results, failed: false });
       } catch {
-        setAnswer({ term: q, hits: [], failed: true });
+        if (!stale) setAnswer({ term: q, hits: [], failed: true });
       }
     }, 200);
-    return () => clearTimeout(id);
+    return () => {
+      stale = true;
+      clearTimeout(id);
+    };
   }, [term]);
 
   if (!open) return null;
@@ -158,7 +164,7 @@ export function CommandPalette({
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setActive((activeIndex - 1 + options.length) % options.length);
-    } else if (e.key === "Enter" && activeIndex >= 0) {
+    } else if (e.key === "Enter" && activeIndex >= 0 && !e.nativeEvent.isComposing) {
       e.preventDefault();
       go(options[activeIndex]!);
     }

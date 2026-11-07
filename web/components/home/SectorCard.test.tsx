@@ -104,4 +104,22 @@ describe("SectorCard, restyled (web overhaul Part 6)", () => {
     expect(container.querySelectorAll(".hatch").length).toBe(4);
     expect(container.textContent).toContain("1 name");
   });
+
+  it("shows one hatched n/a for a mover the API sent as '-', not '- n/a'", () => {
+    const { container } = render(
+      <ul>
+        <SectorCard
+          sector="bonds"
+          count={1}
+          changePct={null}
+          best={{ symbol: "-", change_pct: null }}
+          worst={{ symbol: "-", change_pct: null }}
+          avgIvRank={null}
+          ivRankCount={0}
+        />
+      </ul>,
+    );
+    expect(container.textContent).toContain("Best n/a · worst n/a");
+    expect(container.textContent).not.toMatch(/-\s*n\/a/);
+  });
 });
