@@ -27,7 +27,7 @@ export const PARTS: Part[] = [
     body: [
       "The Rules Engine is plain Python with no model in it, and it is the only path to an order.",
       "Claude reviews and ranks. It never places, prices or gates an order, and a malformed reply falls back to Python's list.",
-      "Two written exceptions: Claude may lower, never raise, the contract count of a cash-secured put the system opens on its own; and in the value book, on a name that already passed every Python gate, Claude's verdict decides Ready, Watch, Wait or No, with its fair value bounded by Python's. Both apply in paper and are only recorded in live until you have reviewed them.",
+      "Two written exceptions: Claude may lower, never raise, the contract count of a cash-secured put the system opens on its own; and in the value book, on a name that already passed every Python gate, Claude's verdict decides Ready, Watch, Wait or No, with its fair value worked out by Python from Claude's inputs and capped at one and a half times Python's own. Both apply in paper and are only recorded in live until you have reviewed them.",
       "You decide approvals, the autonomy setting, a halt, and which names are on the would-own list and the watchlist.",
     ],
     where: [{ href: "/more/claude", label: "What Claude knows" }, { href: "/research/universe", label: "Universe" }],
@@ -47,8 +47,8 @@ export const PARTS: Part[] = [
     id: "sizing",
     title: "Sizing and the market",
     body: [
-      "Python reads the market's regime from SPY and QQQ and uses it to size new cash-secured puts, and to hold some back when the market is weak.",
-      "The Market card on Home and News says what the regime does to new puts today. Every size is Python's.",
+      "Python reads the market's regime from SPY, QQQ and the VIX and uses it to size new cash-secured puts, and to hold some back when the market is weak.",
+      "The Market card on Home, Trades and News says what the regime does to new puts today. Python sets every size; Claude can only lower the count of a put the system opens on its own, as above.",
     ],
     where: [{ href: "/more/claude", label: "What Claude knows" }, { href: "/activity?view=system", label: "Activity, System" }],
   },
@@ -57,7 +57,7 @@ export const PARTS: Part[] = [
     title: "Rolls, assignment and freeing cash",
     body: [
       "When a short option comes under pressure, Python's roll policy decides whether to roll, take assignment, let the shares be called away, close or hold. The Rules Engine checks every roll against the roll limits in your settings.",
-      "When the value book wants to buy and the account is short of cash, the trading service may close the fewest wheel cash-secured puts at breakeven or better to free it. Paper only.",
+      "When the value book wants to buy and the account is short of cash, the trading service may close the fewest wheel cash-secured puts at breakeven or better to free it. Paper only. That buy can follow a Ready that Claude's verdict decided, and a release needs no tap of its own: it inherits the buy's approval. Python checks every step twice, and the close never pays more than the entry credit less the required profit.",
     ],
     where: [{ href: "/trades", label: "Trades" }, { href: "/portfolio", label: "Portfolio" }],
   },
@@ -66,7 +66,7 @@ export const PARTS: Part[] = [
     title: "What keeps it safe",
     body: [
       "Paper first: live trading needs a setting in the private environment file and the live port, and the console says which mode it is in.",
-      "A halt stops new orders until you lift it. Circuit breakers pause trading after losses. Every act on this console is a request that one of the system's services carries out after its own checks; the console never sends an order itself.",
+      "A halt from the console stops new wheel and value-book orders until you lift it; credit spreads have their own halt. Circuit breakers pause trading after losses. Every act on this console is a request that one of the system's services carries out after its own checks; the console never sends an order itself.",
     ],
     where: [{ href: "/more", label: "More" }, { href: "/activity?view=fills", label: "Activity, Fills and orders" }],
   },

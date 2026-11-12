@@ -1230,8 +1230,9 @@ sibling keys; re-run the check after edits.
   `HaltControl` and `AutonomyControl` keep their legacy bordered look inside sheets: the recorded exception to the
   round-button rule, so the safety controls are never restyled without their own review.
 - **A disabled quiet button: RESOLVED 2026-11-07.** A quiet button that cannot be pressed (History's and Spreads'
-  day arrows at the end of the range, Activity's month stepper at the first month and at this month) stays
-  transparent and only dims; a disabled primary or secondary still drops to muted ink on sunk
+  day arrows at the end of the range, Activity's month stepper at the first month and at this month, and the value
+  decide sheet's Reject, `components/value/ValueDecide.tsx`, which is `variant="quiet" disabled={inFlight}` beside
+  a sunk Approve) stays transparent and only dims; a disabled primary or secondary still drops to muted ink on sunk
   (`components/ui/Button.tsx`).
 - **The unknown grey: RESOLVED 2026-10-14.** The light `unknown` is now `#61685d` (4.72:1 on
   pressed sage, 5.20:1 on paper, 5.76:1 on white), so small "n/a" passes AA anywhere, including the
@@ -1242,7 +1243,8 @@ sibling keys; re-run the check after edits.
 - 2026-11-07: **The Open Decisions closed** (web overhaul Part 7, Task 9; the operator took all six defaults on
   2026-11-07). "IBKR Income" as a text wordmark, a text-mark favicon, lucide icons, the immediate sheet close, the
   protected decide controls' bordered look as the recorded exception, and a disabled quiet button that stays
-  transparent and only dims (the shared Button rule changed for the quiet variant only). No new token, colour,
+  transparent and only dims (the shared Button rule changed for the quiet variant only; its four users are History's
+  and Spreads' day arrows, Activity's month stepper and the value decide sheet's Reject). No new token, colour,
   font, radius or elevation.
 - 2026-11-07: **How it works rebuilt small** (web overhaul Part 7, Task 6; the operator's answer (a)). Seven short
   cards of plain English replace the eight-tab System Explanation, which said nothing of spreads, the value book,

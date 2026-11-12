@@ -36,6 +36,26 @@ describe("ExplainPage", () => {
     expect(text).toContain("the console never sends an order itself");
   });
 
+  it("says what a halt covers, who sizes, how a release is approved and how the value fair value is made", () => {
+    const { container } = render(<ExplainPage />);
+    const text = container.textContent ?? "";
+    expect(text).toContain(
+      "A halt from the console stops new wheel and value-book orders until you lift it; credit spreads have their own halt.",
+    );
+    expect(text).toContain(
+      "Python sets every size; Claude can only lower the count of a put the system opens on its own, as above.",
+    );
+    expect(text).toContain("from SPY, QQQ and the VIX");
+    expect(text).toContain("on Home, Trades and News");
+    expect(text).toContain(
+      "That buy can follow a Ready that Claude's verdict decided, and a release needs no tap of its own: it inherits the buy's approval. Python checks every step twice, and the close never pays more than the entry credit less the required profit.",
+    );
+    expect(text).toContain(
+      "with its fair value worked out by Python from Claude's inputs and capped at one and a half times Python's own",
+    );
+    expect(text).not.toContain("Every size is Python's.");
+  });
+
   it("uses no em dash and none of the banned words", () => {
     const { container } = render(<ExplainPage />);
     const text = container.textContent ?? "";
