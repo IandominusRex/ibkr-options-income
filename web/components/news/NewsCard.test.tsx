@@ -63,6 +63,17 @@ describe("NewsCard", () => {
     expect(screen.getByRole("link", { name: "BLS (opens in a new tab)" })).toHaveAttribute("target", "_blank");
   });
 
+  // Found by looking (Task 11): at 320 px a long title wrapped and left the emoji alone on the line above it.
+  it("keeps the emoji on the title's own first line: they share one row, the flag and time are outside it", () => {
+    render(<NewsCard post={POST} />);
+    const title = screen.getByRole("heading", { name: "CPI hotter than expected" });
+    const row = title.parentElement as HTMLElement;
+    expect(row).toHaveTextContent("🔴CPI hotter than expected");
+    expect(row).toHaveClass("flex");
+    expect(row).not.toHaveClass("flex-wrap");
+    expect(row).not.toContainElement(screen.getByText("Critical"));
+  });
+
   it("says once that a digest's readings are the news model's", () => {
     const sections = [{ title: "Movers", items: [{ text: "NVDA -4%", read: "Profit taking.", verdict: "priced_in" as const, links: [] }] }];
     render(<NewsCard post={{ ...POST, payload: { ...POST.payload, explanation: null, sections } }} />);

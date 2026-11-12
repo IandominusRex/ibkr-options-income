@@ -16,8 +16,11 @@ export function NewsCard({ post, chartUri }: { post: NewsPost; chartUri?: string
   return (
     <Card as="article" className="space-y-3" data-testid={`news-card-${post.id}`}>
       <header className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span aria-hidden="true">{p.emoji}</span>
-        <h3 className="min-w-0 text-[1.0625rem] font-bold">{p.title}</h3>
+        {/* The emoji and the title are one item: a long title wraps beside the emoji, never under it. */}
+        <div className="flex min-w-0 items-baseline gap-2">
+          <span aria-hidden="true" className="shrink-0">{p.emoji}</span>
+          <h3 className="min-w-0 text-[1.0625rem] font-bold">{p.title}</h3>
+        </div>
         {post.critical && <StatusWord tone="flag">Critical</StatusWord>}
         <span className="tabular basis-full text-[0.8125rem] text-muted">{whenLabel(p.when)}</span>
       </header>

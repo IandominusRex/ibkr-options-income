@@ -21,8 +21,8 @@ type Props = {
 export function SectorCard({ sector, count, changePct, best, worst, avgIvRank, ivRankCount }: Props) {
   return (
     <li className="border-t border-border py-3 first:border-t-0">
-      <div className="flex items-baseline justify-between gap-3">
-        <h3 className="min-w-0 truncate text-[0.9375rem] font-bold">{sector}</h3>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+        <h3 className="min-w-0 text-[0.9375rem] font-bold">{sector}</h3>
         <span className="shrink-0 text-sm">
           IV rank{" "}
           {avgIvRank == null ? (

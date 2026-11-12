@@ -123,3 +123,25 @@ describe("SectorCard, restyled (web overhaul Part 6)", () => {
     expect(container.textContent).not.toMatch(/-\s*n\/a/);
   });
 });
+
+describe("SectorCard, narrow screens (web overhaul Part 7, Task 11)", () => {
+  // Found by looking: at 320 px "(7 with history)" took the room and "Semiconductors" read "Semicond...".
+  it("never cuts the sector's name: the IV rank drops to its own line when the two do not fit", () => {
+    render(
+      <ul>
+        <SectorCard
+          sector="Communication Services"
+          count={3}
+          changePct={1.5}
+          best={{ symbol: "MSFT", change_pct: 2.0 }}
+          worst={{ symbol: "AAPL", change_pct: -1.0 }}
+          avgIvRank={42.0}
+          ivRankCount={3}
+        />
+      </ul>,
+    );
+    const name = screen.getByRole("heading", { name: "Communication Services" });
+    expect(name.className).not.toContain("truncate");
+    expect(name.parentElement).toHaveClass("flex-wrap");
+  });
+});
