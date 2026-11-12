@@ -12,6 +12,9 @@ import { openSearch } from "@/lib/search";
 const LINKS = [
   { href: "/research", label: "Research", sub: "Search, watchlist, sectors, universe" },
   { href: "/research/universe", label: "Universe", sub: "The names the scan covers; edit would-own and watchlist" },
+  // The value book has no page of its own (HANDOFF ruling 4): its candidates lead Research, a held name's plan
+  // is on Home's Value card, and each name's file is on its stock page.
+  { href: "/research", label: "Value book", sub: "Its candidates lead Research; each name's file is on its stock page" },
   { href: "/news", label: "News", sub: "Feed, calendar and ticker briefs" },
   { href: "/activity?view=ledger", label: "Ledger", sub: "Broker trades and per-ticker roll-ups" },
   { href: "/explain", label: "How it works", sub: "The system in plain English, and where to see it" },
@@ -50,7 +53,7 @@ export default function MorePage() {
             </button>
           </li>
           {LINKS.map((l) => (
-            <li key={l.href} className="border-t border-border">
+            <li key={l.label} className="border-t border-border">
               <Link href={l.href} className="flex items-center justify-between gap-3 py-3">
                 <span>
                   <span className="block font-bold">{l.label}</span>

@@ -460,7 +460,7 @@ the magnifier means search alone); the phone tab bar (64px, white, hairline abov
 holds Home, Trades, Portfolio, Activity and More, and marks More current on Research, Universe,
 stock and News pages, which a phone reaches through More.
 
-**More**: the bot card, the theme toggle (Light, Dark, Follow OS, on the strategy-switch track), the income target card, a Search row first in the links card (a phone has no rail and no shortcut), links to Research, Universe, News, Ledger, How it works, What Claude knows and statement import, system status, and Credits (the chart library's licence link).
+**More**: the bot card, the theme toggle (Light, Dark, Follow OS, on the strategy-switch track), the income target card, a Search row first in the links card (a phone has no rail and no shortcut), links to Research, Universe, the Value book (to Research, since the book has no page of its own), News, Ledger, How it works, What Claude knows and statement import, system status, and Credits (the chart library's licence link).
 
 **Regime and limits card** (What Claude knows): "Regime and limits", with when it was recorded at the right of the title. Per index (SPY, QQQ) a heading, the regime as a status word (flag amber above normal, neutral at normal), one plain line (the daily base, what raised it today, a bottoming-signal ease, or "Matches the daily base") and the CSP limits as figure lines under a perforation: Budget and Per trade as a percent of the normal limit, New puts a day ("No limit" or the count), Guaranteed lots a day. Up to three flag lines come first when they apply, each a flag word with one sentence beside it, in this order: "Off in config", "Suspended today" (`/regime off`, the limits shown are not applied) and "Cuts paused today" (today's circuit breaker has tripped: "The circuit breaker tripped, so Claude's size cuts are recorded but not applied until tomorrow"). Below the indices, the leveraged-ETF ceilings grouped by multiple ("3x (TQQQ, SOXL): 60% of the regime's size when calm, 30% when the name or its market is under stress") and Claude's size cuts as a sentence ("applied (paper)", "recorded only (live)"). When today's circuit breaker has tripped (Claude zeroed most of the day's auto puts) the cut sentence says so itself ("applied (paper), paused today.") so it is true when read alone, and the flag line above carries the state. The breaker is a flag word, not a plain sentence: it is the one state on the card besides `/regime off` that changes what happens today, so it joins that stack, in the first screen at phone width, instead of sitting below both indices. What the limits mean sits in a closed plain Disclosure. No regime yet: "No regime recorded yet" with a hatched n/a.
 
@@ -1157,7 +1157,7 @@ overhaul Part 5) on the Position page's frame.
   limits. It replaced the eight-tab System Explanation pages (2026-11-07).
 
 ### More
-Read and Operate. How it works (the System Explanation pages), What Claude knows (a link to its own surface), Bot controls, Theme, the monthly income target, Ledger import, Credits.
+Read and Operate. The bot card, Theme, the monthly income target, then one card of rows: Search, Research, Universe, the Value book (to Research: its candidates lead there, and each name's file is on its stock page; no page of its own), News, Ledger, How it works (the seven plain-English cards), What Claude knows, statement import; then system status and Credits.
 
 ### What Claude knows
 Read. Dials as the project default; the only thing that moves is a disclosure. Added 2026-10-22 for

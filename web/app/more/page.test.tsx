@@ -35,10 +35,17 @@ describe("More page", () => {
   it("links to the pages that have no tab on a phone", () => {
     renderWithQuery(<MorePage />, served);
     expect(screen.getByRole("link", { name: /How it works/ })).toHaveAttribute("href", "/explain");
-    expect(screen.getByRole("link", { name: /Research/ })).toHaveAttribute("href", "/research");
+    expect(screen.getByRole("link", { name: /^Research/ })).toHaveAttribute("href", "/research");
     expect(screen.getByRole("link", { name: /News/ })).toHaveAttribute("href", "/news");
     expect(screen.getByRole("link", { name: /Import a statement/ })).toHaveAttribute("href", "/ledger/import");
     expect(screen.getByRole("link", { name: /How it works/ })).toHaveTextContent("The system in plain English, and where to see it");
+  });
+
+  it("names the value book, which has no page of its own, and says where it shows", () => {
+    renderWithQuery(<MorePage />, served);
+    const row = screen.getByRole("link", { name: /Value book/ });
+    expect(row).toHaveAttribute("href", "/research");
+    expect(row).toHaveTextContent("Its candidates lead Research; each name's file is on its stock page");
   });
   it("offers Search first, for a phone, which has no rail and no shortcut", () => {
     renderWithQuery(<MorePage />, served);

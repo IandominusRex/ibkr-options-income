@@ -122,8 +122,8 @@ adds one commit.
 | **Task 6: How it works** | done | this commit (see git log) | T6 applied (hash 78270c17 matched, check clean); red check: features/explain stashed, vitest reports "No test files found" (module missing); features/explain + app/titles 2 files 30 passed (ExplainPage 5 passed); full vitest 1649 in 161 files; tsc and lint clean; G3 exit 0; G5 over web/features/explain web/app/explain: no line for a non-test file (one em dash line in ExplainPage.test.tsx:41, which is the test's own assertion string, a test file) | 2026-11-12 | da-vinci read T6 against Section C's spec: no change (seven Cards in one column at max 820px, 1.0625rem bold titles, 65ch 14px body, 0.8125rem muted "See it on" then underlined semibold links at min-h-11 md:min-h-0; no lime, icon, chip or tab). Copy checked against root CLAUDE.md (core invariant, both written exceptions, books, capital release, paper-only) and the code (regime reads SPY and QQQ per `src/analytics/regime.py`; MarketCard on Home and News): every sentence true, none reworded. No rulings; none deviated. |
 | **Task 7: the old explainer deleted** | done | this commit (see git log) | T7 applied (hash d6363fb0 matched, check clean; 26 D lines and the four M files as listed); red check 2 failed / 12 passed (by the `git stash push --` form, then pop, `ls web/components/explain` fails); features/explain+features/search+app/more+app/titles 4 files 47 passed; full vitest 1620 in 153 files; tsc and lint clean; G1 empty; G2 both greps exact; G3 exit 0; G5 over the full Section C list no line for a non-test file; G6 55 passed; G7 the one layout line; `grep -rl components/explain` over web/app, features, components, lib and DESIGN.md finds only the test that asserts the folder is gone | 2026-11-12 | No rulings; none deviated. |
 | **Section C exit** | pass | rides in Task 7's commit | two task commits after Section B; vitest 1620 in 153 files; tsc, lint clean; G1 empty, G2 exact, G3 exit 0, G5 (shell, home, stock, stock-value, components/news, features/news, app/news, features/explain, app/explain, app/more, features/search) no line for a non-test file, G6 55 passed, G7 one line; git status clean after commit | 2026-11-12 | none |
-| **Section D entry** | | | | | |
-| **Task 8: More** | | | | | |
+| **Section D entry** | pass | (rides in Task 8) | D1 seven task commits, vitest 1620 in 153 files, tsc and lint clean, G1 empty, G2 exact, G7 one line; D2 T8 and T9 apply; D3 no icon.svg, `disabled:bg-sunk` count 1, RESOLVED count 2 | 2026-11-12 | none |
+| **Task 8: More** | done | this commit (see git log) | T8 applied (hash 3c629e8e matched, check clean; three ` M` files as listed); red check 1 failed / 8 passed (`web/app/more/page.tsx` stashed, then popped); `vitest run app/more` 9 passed; full vitest 1621 in 153 files; tsc and lint clean; G3 exit 0 | 2026-11-12 | da-vinci read T8 against Section D's spec: no change (one row after Universe, bold label, muted sub line, the same chevron; nothing else on More moves; no new token). No rulings; none deviated. |
 | **Task 9: the Open Decisions** | | | | | |
 | **Section D exit** | | | | | |
 | **Section E entry** | | | | | |
@@ -3983,13 +3983,13 @@ More surface); this plan (Progress log).
 **What it does (ruling 22):** a "Value book" row on More, and the More surface rewritten to say what the page holds
 now (it named "the System Explanation pages").
 
-- [ ] **Step 1: Check and apply `T8`.** `git status --short` shows three ` M` files: `web/DESIGN.md`,
+- [x] **Step 1: Check and apply `T8`.** `git status --short` shows three ` M` files: `web/DESIGN.md`,
   `web/app/more/page.test.tsx`, `web/app/more/page.tsx`.
-- [ ] **Step 2: Red check.** `git stash push -- web/app/more/page.tsx`, then `cd web && npx vitest run app/more`
+- [x] **Step 2: Red check.** `git stash push -- web/app/more/page.tsx`, then `cd web && npx vitest run app/more`
   ends `1 failed | 8 passed (9)`, then `git stash pop`.
-- [ ] **Step 3: Gate.** `npx vitest run app/more`: 9 passed. Full vitest **1621 in 153 files**; tsc, lint clean; G3
+- [x] **Step 3: Gate.** `npx vitest run app/more`: 9 passed. Full vitest **1621 in 153 files**; tsc, lint clean; G3
   exit 0.
-- [ ] **Step 4: Commit** `feat(web): More names the value book and says where it shows` with the Progress log row
+- [x] **Step 4: Commit** `feat(web): More names the value book and says where it shows` with the Progress log row
   (and the Section D entry row).
 
 <!-- block T8 -->
