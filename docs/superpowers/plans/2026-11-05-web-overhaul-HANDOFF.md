@@ -23,12 +23,15 @@ to the Archive heading.
 - **Pages on the payslip system: 14 of 17 routes** (Home, Trades x2, Portfolio, Activity, Position, More, What Claude
   knows, three ledger sub-routes, Stock, and now Research and Universe). **Not recomposed: News x2, How it works**
   (and More's theme, target-mode and credits controls inside an otherwise-done page).
-- **Part 7 (News, More and How it works) is next, and its plan is written** (2026-11-11, not committed; its A0 step
-  commits it with this file and fills Part 6's Restart row):
-  `docs/superpowers/plans/2026-11-07-web-overhaul-7-news-more-how-it-works.md`. The operator answered the writer's five
-  questions on 2026-11-07, all as recommended (5.4, now the plan's rulings 2-6). `main` was still `02236ec` on
-  2026-11-11.
-- **The order is unchanged**: Part 7 News/More/How it works, Part 8 value record (gated), order control on its own
+- **Part 7 (News, More and How it works) is DONE, merged and pushed 2026-11-12** (`main` a491d59, 14 commits
+  from `7eb2ae8`; plan `docs/superpowers/plans/2026-11-07-web-overhaul-7-news-more-how-it-works.md`; vitest 1625 in 153
+  files). News and a name's news page are on the payslip, How it works is seven static cards (`features/explain/`,
+  `components/explain/` deleted), More names the value book, the six Open Decisions are RESOLVED in `DESIGN.md`, the
+  rail's Search is an outlined field. The Opus review's three Important findings were false or incomplete sentences
+  on How it works (a console halt does not stop spreads; Claude's size cut; the capital-release chain), fixed in
+  `c55379d`; the operator then ruled the "Four books" card to "Three books in one account" (`a491d59`). **Part 8
+  (the value record) is next, gated on a month of paper record.** Open: none for Part 7.
+- **The order is unchanged**: Part 8 value record (gated), order control on its own
   track. The six operator questions keep their defaults (5.3); Part 6 changed none of them.
 
 ## 1. Where things stand
@@ -187,7 +190,7 @@ whole-branch review). "Part N" means **web overhaul Part N**.
 
 | Part | Scope | Items | Depends on | Size |
 |---|---|---|---|---|
-| **7 - News, More and How it works (NEXT)** | News feed and ticker on the payslip; How it works rebuilt small (Q1); More's value row and legacy controls; DESIGN.md Open Decisions closed (Q6); the Part 6 proposals the operator takes (5.4 Q4) | L4, L5, L6, S4, S5, Part 6 (a)/(b) | Part 6 (done), the 5.4 answers | 5 sections (A carried, B News, C How it works, D More and Open Decisions, E finish), ~12 tasks (outline in 5.4) |
+| **7 - News, More and How it works (DONE 2026-11-12)** | News feed and ticker on the payslip; How it works rebuilt small (Q1); More's value row and legacy controls; DESIGN.md Open Decisions closed (Q6); the Part 6 proposals the operator takes (5.4 Q4) | L4, L5, L6, S4, S5, Part 6 (a)/(b) | Part 6 (done), the 5.4 answers | 5 sections (A carried, B News, C How it works, D More and Open Decisions, E finish), ~12 tasks (outline in 5.4) |
 | **8 - The value record (gated)** | `GET /value/record` over `value_db.py`, an Activity view: baseline vs Claude, horizon returns, clamp frequency, breaker state, drawdown vs SPY; the `MonthPay` realised-complete flag | F5, V9 | a month of paper record with the book on (Q4) | 2 sections + finish, ~6 tasks |
 | **Order control (own track)** | Spec, then plan: `cancel_order` kind, drain handler, Cancel behind `ConfirmAction` + LIVE second confirmation, receipt, History copy | F1 | spec | spec, then ~7 tasks |
 
