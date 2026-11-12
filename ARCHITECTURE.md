@@ -1607,8 +1607,10 @@ reskinned without an edit. The structure it added:
   **Part 5 (2026-11-06, `docs/superpowers/plans/2026-11-06-web-overhaul-5-stock-page.md`) recomposed the stock
   page** (`features/stock/`, below). **Part 6 (2026-11-06,
   `docs/superpowers/plans/2026-11-06-web-overhaul-6-research-universe-search.md`) recomposed Research and Universe
-  and put search in the shell** (`features/research/`, `features/universe/`, `features/search/`, below). Parts 7-8
-  (News, More and How it works; the value record) and order control have no plan yet.
+  and put search in the shell** (`features/research/`, `features/universe/`, `features/search/`, below). **Part 7
+  (2026-11-07, `docs/superpowers/plans/2026-11-07-web-overhaul-7-news-more-how-it-works.md`) recomposed News and How
+  it works, added More's Value book row and closed `web/DESIGN.md`'s Open Decisions** (`features/news/`,
+  `features/explain/`, below). Part 8 (the value record) and order control have no plan yet.
 - **`app/` boundaries and titles** — web overhaul Part 4: the root `layout.tsx` sets `metadata.title` to
   `{ default: "IBKR Income", template: "%s · IBKR Income" }`; each server page exports its own `metadata`, and a
   client page gets a sibling server `layout.tsx` that exports `metadata` (or `generateMetadata` for a dynamic
@@ -1711,21 +1713,19 @@ picker submitting `ledger_import`, feed status incl. the Google Sheet mirror lin
 actions with a mark-reviewed button submitting `ledger_ca_reviewed`, import history).
 `BackToLedger` is the way back (the old `LedgerNav` tab strip was deleted in Part 4); `format.ts`/`types.ts` hold display helpers and response types.
 
-`app/news/` + `components/news/` is the News console (reads `GET /news/*`): `page.tsx` is the feed
-(`NewsFeed` with group chips and a symbol filter, each post a `NewsCard` rendered from the stored
-`CardPayload` — 📘/📈 grid as a table, `VerdictPill` with text and icon, book line, links,
-image — beside `CalendarColumn`), and `[symbol]/page.tsx` (`NewsTicker`: latest brief and chart,
-the ticker's recent stories, next earnings, and `BriefRequest`, which submits `news_brief` through
-the command queue). The rail's `News` entry comes from `lib/nav.ts` (on a phone, News is reached
-through More).
+`app/news/` + `features/news/` + `components/news/` is the News console (reads `GET /news/*`; web overhaul Part 7
+put it on the payslip). `page.tsx` only mounts `features/news/NewsPage`: the title, the Market card, then "Latest"
+(`NewsFeed`: group chips, a labelled symbol field, each post a `NewsCard` rendered from the stored `CardPayload`, the
+explanation labelled as the news model's reading, `VerdictPill` an ink pill with text and icon) beside "This week"
+(`CalendarColumn`, one card). `[symbol]/page.tsx` mounts `features/news/NewsTickerPage`: a back link, the ticker, a
+Stock page link and Refresh, `BriefRequest` (submits `news_brief` through the command queue), then the `NewsTicker`
+body (next earnings, the latest brief and chart, the name's notes, recent stories). The rail's `News` entry comes from
+`lib/nav.ts` (on a phone, News is reached through More).
 
-`app/explain/page.tsx` + `components/explain/` is the System Explanation console — a static,
-plain-English walkthrough of how the whole pipeline works (adapted from "The pipeline, stage by
-stage" above), not a data surface: eight subtabs (Overview/Data/Ideas/Gate/Claude/Execution/
-Watching/This-Dashboard) each mount the shared `<PipelineMap/>` with that subtab's stage
-highlighted — every box is a live nav control, so the map doubles as cross-tab navigation — plus a
-`<TiesInto/>` chip list at the foot of each panel linking to related subtabs with the reason why,
-and a `<SourceRefs/>` list pointing back at the real modules.
+`app/explain/page.tsx` + `features/explain/ExplainPage.tsx` is How it works (web overhaul Part 7 rebuilt it small and
+deleted the eight-tab `components/explain/`): seven static cards of plain English (a day from scan to order, who
+decides what, the four books, sizing and the market, rolls and freeing cash, what keeps it safe, where to look), each
+ending in links to the pages that show it. No request; the copy changes by hand when the system changes.
 
 ---
 

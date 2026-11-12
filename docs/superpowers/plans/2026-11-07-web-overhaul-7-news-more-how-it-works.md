@@ -126,8 +126,8 @@ adds one commit.
 | **Task 8: More** | done | this commit (see git log) | T8 applied (hash 3c629e8e matched, check clean; three ` M` files as listed); red check 1 failed / 8 passed (`web/app/more/page.tsx` stashed, then popped); `vitest run app/more` 9 passed; full vitest 1621 in 153 files; tsc and lint clean; G3 exit 0 | 2026-11-12 | da-vinci read T8 against Section D's spec: no change (one row after Universe, bold label, muted sub line, the same chevron; nothing else on More moves; no new token). No rulings; none deviated. |
 | **Task 9: the Open Decisions** | done | this commit (see git log) | T9 applied (hash 7da611db matched, check clean; three ` M` files and `?? web/app/icon.svg` as listed); red check 1 failed / 11 passed (`web/components/ui/Button.tsx` stashed, then popped); `vitest run components/ui features/trades features/activity` 28 files, 310 passed; full vitest 1622 in 153 files; tsc and lint clean; `grep -c RESOLVED web/DESIGN.md` 8; G3 exit 0 | 2026-11-12 | da-vinci read T9 against Section D's spec: no change (quiet stays transparent and dims, primary and secondary keep disabled:bg-sunk and muted ink, the favicon is the ink I on the paper-value rounded square; no new token, colour, font, radius or elevation). No rulings; none deviated. Order 8 then 9 as the plan gave (D2 hunks disjoint). |
 | **Section D exit** | pass | rides in Task 9's commit | two task commits after Section C; vitest 1622 in 153 files; tsc, lint clean; G1 empty, G2 both greps exact, G3 exit 0, G4 scratch build green first try (20 rows: `○ /icon.svg`, `○ /news`, `ƒ /news/[symbol]`, `○ /explain`, `○ /more`; removed), G5 (Section C list plus components/ui) no line for a non-test file, G6 55 passed, G7 one line; git status clean after commit | 2026-11-12 | none |
-| **Section E entry** | | | | | |
-| **Task 10: docs** | | | | | |
+| **Section E entry** | pass | (rides in Task 10) | E1 nine task commits (through a6f5d60), vitest 1622 in 153 files, tsc and lint clean, G1 empty, G2 exact, G7 one line; E2 T10 applies; E3 playwright-core found in ~/.npm/_npx/e41f203b7505f1fb and 9833c18b2d85bc59 | 2026-11-12 | none |
+| **Task 10: docs** | done | this commit (see git log) | T10 applied (check clean; ` M` ARCHITECTURE.md, STATUS.md, web/CLAUDE.md); stale-phrase check: `components/explain` web/CLAUDE.md 0, ARCHITECTURE.md 1; `Parts 1-7 built` STATUS.md 1; `features/news` ARCHITECTURE.md 4, web/CLAUDE.md 2; docs only, no test run | 2026-11-12 | Commit range filled by hand as `c9eb71e` to `a6f5d60` (nine task commits) plus the docs commit itself. No rulings; none deviated. |
 | **Task 11: the da-vinci finish by a fresh reviewer** | | | | | |
 | **Whole-branch review (opus)** | | | | | |
 | **Review fix pass (sonnet)** | | | | | |
@@ -4227,16 +4227,16 @@ index b72e6c4..26c0256 100644
 
 **What it does (ruling 24):** the doc-update table's rows for a feature built and new `features/` folders.
 
-- [ ] **Step 1: Check and apply `T10`.** `git status --short` shows ` M ARCHITECTURE.md`, ` M STATUS.md`,
+- [x] **Step 1: Check and apply `T10`.** `git status --short` shows ` M ARCHITECTURE.md`, ` M STATUS.md`,
   ` M web/CLAUDE.md`.
-- [ ] **Step 2: Stale-phrase check.** `grep -c "components/explain" web/CLAUDE.md` prints `0`;
+- [x] **Step 2: Stale-phrase check.** `grep -c "components/explain" web/CLAUDE.md` prints `0`;
   `grep -c "components/explain" ARCHITECTURE.md` prints `1` (the sentence saying it was deleted);
   `grep -c "Parts 1-7 built" STATUS.md` prints `1`; `grep -c "features/news" ARCHITECTURE.md web/CLAUDE.md` prints a
   non-zero count for each file.
-- [ ] **Step 3: Fill the commit range** in the new STATUS Built section's first paragraph (after "the plan's Progress
+- [x] **Step 3: Fill the commit range** in the new STATUS Built section's first paragraph (after "the plan's Progress
   log holds each task's commit, gate and rulings"), from `git log --oneline main..HEAD`, by hand with the Edit tool.
   Docs only: no test run.
-- [ ] **Step 4: Commit** `docs: web overhaul Part 7` with the Progress log row (and the Section E entry row).
+- [x] **Step 4: Commit** `docs: web overhaul Part 7` with the Progress log row (and the Section E entry row).
 
 <!-- block T10 -->
 ````diff

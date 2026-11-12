@@ -210,31 +210,17 @@ app/                App Router pages and the root layout
                     `ledger/import` keep their routes, sit in <LedgerShell/> (components/ledger/),
                     lead back with <BackToLedger/> in place of the old sub-navigation, and open a trade
                     in the Sheet. The rail still marks Activity current on them.
-  news/             News thread (docs/superpowers/specs/2026-10-09-news-thread-design.md
-                    §7.6). `/news` mounts <NewsFeed/>: group chips (All / Macro /
-                    Market / Tickers / Earnings / Briefs, `aria-pressed`) and a symbol
-                    filter over GET /news/feed, each post a <NewsCard/>, with
-                    <CalendarColumn/> (GET /news/calendar?days=7: economic events and
-                    earnings, held names marked "held" in words) beside it.
-                    `news/[symbol]` mounts <NewsTicker/>: the latest brief (its chart
-                    inlined from GET /news/posts/{id}), the last 72 h of story clusters,
-                    the next earnings date, and <BriefRequest/>, which POSTs a
-                    `news_brief` command and shows a <CommandReceipt/> (polls the ticker
-                    every 3 s while the request is pending or running). A missing
-                    news.db (`available: false`) reads "The news service has not written
-                    anything yet", never an error. Read-only otherwise.
-  explain/          System Explanation console. Static content - no react-query, no
-                    fetch anywhere on the page - a plain-English walkthrough of how the
-                    pipeline works, adapted from ARCHITECTURE.md's "The pipeline, stage by
-                    stage" section, so
-                    a non-technical reader can visualise the system without reading the
-                    .md files directly. <ExplainShell/> owns one `useState<TabKey>` (same
-                    shape as the old Portfolio and P&L tab bars, since deleted) across eight subtabs -
-                    Overview, Data In, Finding Trades, The Risk Gate, Claude's Role,
-                    Approval & Execution, Watching & Adjusting, This Dashboard - mapped
-                    1:1 to `TabKey`/`TAB_META`/`TAB_ORDER` in `components/explain/types.ts`,
-                    the one place every other piece (tab bar, pipeline map, ties-into
-                    chips) reads labels from so they can't drift apart.
+  news/             News (web overhaul Part 7 put it on the payslip). `/news` mounts
+                    features/news/NewsPage (the frame, the Market card, then <NewsFeed/> "Latest" and
+                    <CalendarColumn/> "This week" in two single-track columns); `news/[symbol]` mounts
+                    features/news/NewsTickerPage (a back link, the ticker, a Stock page link, Refresh,
+                    <BriefRequest/>, then the <NewsTicker/> body: next earnings, the latest brief with its
+                    chart, the name's notes, Recent stories). <BriefRequest/> POSTs a `news_brief` command
+                    and shows a <CommandReceipt/> (the ticker polls every 3 s while it is pending or
+                    running). A missing news.db (`available: false`) reads "The news service has not
+                    written anything yet", never an error. Read-only otherwise.
+  explain/          How it works (web overhaul Part 7): `page.tsx` only mounts features/explain/ExplainPage,
+                    seven static cards of plain English. No request.
 components/          Where new code goes (web overhaul Part 4, HANDOFF D4): `features/`. `components/`
                     keeps `ui`, `shell`, the protected `options` controls, `value` and the survivors
                     below; the earlier idea of folding the domain folders into `features/` was cut.
@@ -698,73 +684,17 @@ components/          Where new code goes (web overhaul Part 4, HANDOFF D4): `fea
                     to Activity, Ledger). The old LedgerNav tab strip was deleted in Part 4. Every
                     view root is one `grid-cols-1` column: a page-level grid with no column template
                     is sized by its widest table and would clip the page on a phone.
-  news/             NewsCard (title, SGT+ET time, headline line with up to 3 inline
-                    source links opening in a new tab, the textbook-vs-actual grid,
-                    the 🧠 read with bull/bear, <VerdictPill/> - verdict as text plus an
-                    icon, never colour alone - book and setup impact, digest sections,
-                    update lines, optional chart), NewsFeed, CalendarColumn,
-                    NewsTicker, BriefRequest (mirrors RefreshControl), `types.ts`
-                    (mirrors src/api/models/news.py and the CardPayload schema) and
-                    `format.ts` (SGT/ET time labels, verdict labels). Plain <img> for
-                    the chart data URI and third-party thumbnails (`no-referrer`):
-                    next/image would need every news host in remotePatterns.
-  explain/          PipelineMap (the "you are here" diagram every subtab mounts at its
-                    top: the five straight-line pipeline stages - data/ideas/gate/claude/
-                    execution - as clickable boxes with the active one aria-current, plus
-                    the watching loop and this-dashboard side nodes below, each a real nav
-                    control via `onNavigate`, not decoration - this is what makes "every
-                    subtab shows how it ties into the others" literally true rather than a
-                    line of copy), PanelShell (the shared per-subtab layout: PipelineMap,
-                    title + dek, freeform children, then TiesInto and SourceRefs - kept in
-                    one place so no panel can forget a piece; runs the full width of the
-                    main pane, no `max-w` cap - a first pass capped it at 70ch for prose
-                    readability, matching the rest of this app's body-text convention, but
-                    that same cap was also squeezing every FactCard grid and RangeBar down
-                    to prose width, so it was dropped for all eight subtabs rather than
-                    left in for some and not others), TiesInto (a reasoned chip
-                    per related subtab - not just a label, a sentence on WHY they connect -
-                    clicking one calls the same `onNavigate` the tab bar and the map use),
-                    SourceRefs ("under the hood": the real file paths behind the plain-
-                    English version, for anyone who wants to go past it), Callout (a
-                    raised-by-lightness box for a hard invariant or notable guarantee -
-                    "no LLM can place an order" - elevation marks it as load-bearing, per
-                    this app's own rule; a `tone` prop - info/positive/caution, default
-                    info - layers a second, deliberate accent on top by REUSING the app's
-                    existing semantic tokens rather than inventing new ones: info=focus
-                    (general emphasis, the app's one existing accent), positive=gain
-                    (a safety guarantee - "paper by default"), caution=unknown (a
-                    limitation or a "not yet automatic" caveat) - each tone also changes
-                    the border treatment, not just the colour, so it still reads without
-                    colour, same rule StageBadge/CheckRibbon already follow elsewhere in
-                    this app), Tag (the small mono uppercase eyebrow a `<FactCard/>` or an
-                    Overview card carries, coloured by the same three-tone palette),
-                    FactCard (one bordered box per scannable fact - a tag, a title, a short
-                    body - what every panel's enumerated content renders as instead of a
-                    bullet list, since a list reads as one undifferentiated block and a
-                    card grid reads as several distinct facts at a glance; an optional
-                    `bodyClass` overrides the default caption-weight body text for a caller
-                    whose content is substantive rather than incidental - reused this way by
-                    `components/options/ReviewPanel.tsx`, the same cross-domain-reuse
-                    convention `pnl/` already follows for `portfolio/Money`), RangeBar (a
-                    labelled 0-100 range - "CSP delta target: 0.15-0.30" against "0.0 (deep
-                    OTM) .. 1.0 (deep ITM)" - GatePanel's strike-targeting visual: the bound
-                    labels sit ABOVE the track rather than inside the filled region, so a
-                    narrow band's own two numbers can never collide into each other, which
-                    a first pass with inline labels did), and one content panel per
-                    `TabKey` (OverviewPanel/DataPanel/IdeasPanel/GatePanel/ClaudePanel/
-                    ExecutionPanel/WatchingPanel/WebLayerPanel) - each panel's prose is
-                    sourced from ARCHITECTURE.md's matching "The pipeline, stage by stage"
-                    section (WebLayerPanel
-                    instead mirrors docs/web/architecture.md's two-engine-model description,
-                    since that mechanism isn't in README.md), built from FactCard grids and
-                    Callouts rather than plain paragraphs wherever the content is a set of
-                    parallel facts (ExecutionPanel additionally draws the four-rung
-                    autonomy ladder as an increasing-fill bar row; WatchingPanel and
-                    WebLayerPanel render their enumerated lists - the monitor's six
-                    triggers, what this dashboard can propose - as a wrapped row of
-                    `rounded-full border-focus/40 text-focus` chips). Every `SourceRefs`
-                    file path is a real path checked against the tree at write time, not a
-                    guess.
+  news/             Restyled in place in web overhaul Part 7: NewsCard (a Card: title, a flag "Critical",
+                    SGT+ET time, the headline line with up to 3 source links that say they open a new
+                    tab, the textbook-vs-actual grid, the explanation in a pressed-sage block labelled
+                    "The news model's reading" (the news model may fall back to a local one, so never
+                    "Claude's" alone), <VerdictPill/> as an outlined ink pill with its icon (a forecast
+                    is not money: never green or red), digest sections, updates, optional chart),
+                    NewsFeed ("Latest": SegmentedControl chips, a labelled FIELD), CalendarColumn (one
+                    card, "This week", that says empty, loading and failed in words), NewsTicker (the
+                    ticker page's body), BriefRequest (the `news_brief` command site, outside G2's
+                    features grep; the secondary Button), `types.ts` and `format.ts`. Plain <img> for
+                    the chart data URI and third-party thumbnails (`no-referrer`).
   value/            The value book (value book Part 6, Section F). ValueCard (react-query on
                     GET /value/book, key ["value","book"]: the ceiling as a sum and a Stub, the
                     breakers as words, the held names with their next exit, the open proposals;
@@ -810,6 +740,10 @@ features/
   search/           Web overhaul Part 6: pages.ts (PAGES, the console's own pages, and `matchPages`: every
                     typed word must match a page's name, hint or words; at most five). The palette is
                     components/search/CommandPalette; the open event is lib/search.ts.
+  news/             Web overhaul Part 7: NewsPage (`/news`) and NewsTickerPage (`/news/[symbol]`), the
+                    frame around components/news/ (see app/news above).
+  explain/          Web overhaul Part 7: ExplainPage and PARTS, How it works as seven static cards, each
+                    with "See it on" links that must be in features/search/pages.ts (a test holds it).
   universe/         Web overhaul Part 6: UniversePage (see app/research/universe above).
   stock-value/      The value book's view of one name on the stock page (value book Part 6, Section G).
                     ValueBlock (react-query on GET /value/{symbol}, key ["value","ticker",SYMBOL]:
