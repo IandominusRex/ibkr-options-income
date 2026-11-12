@@ -1146,6 +1146,16 @@ overhaul Part 5) on the Position page's frame.
   the market picture's notes on the name, and "Recent stories": one card of rows, the headline bold, the source
   count, and up to two sources as links (44px on a phone, "(opens in a new tab)"). One column at most 820px wide.
 
+### How it works
+- **JOB:** Read. The system in plain English for the operator: what runs, who decides, and where to see it.
+- **FORM:** the Stock and Research frame; the title and one muted line; then seven white cards in one column at
+  most 820px wide, in this order: A day, from scan to order; Who decides what; Four books in one account; Sizing
+  and the market; Rolls, assignment and freeing cash; What keeps it safe; Where to look. Each card is a 17px/700
+  title, two to four short paragraphs at most 65 characters wide, and a "See it on" line of underlined links (44px
+  rows on a phone) to the pages that show it. Static copy (`features/explain/ExplainPage.tsx`), no request; every
+  sentence traceable to root `CLAUDE.md` or the code. Claude's limits and its two written exceptions are stated as
+  limits. It replaced the eight-tab System Explanation pages (2026-11-07).
+
 ### More
 Read and Operate. How it works (the System Explanation pages), What Claude knows (a link to its own surface), Bot controls, Theme, the monthly income target, Ledger import, Credits.
 
@@ -1228,6 +1238,10 @@ sibling keys; re-run the check after edits.
 
 ## Decision Log
 
+- 2026-11-07: **How it works rebuilt small** (web overhaul Part 7, Task 6; the operator's answer (a)). Seven short
+  cards of plain English replace the eight-tab System Explanation, which said nothing of spreads, the value book,
+  regime sizing, capital release, the news thread or the roll redesign. No new token, colour, font, radius or
+  elevation.
 - 2026-11-07: **News on the payslip** (web overhaul Part 7, Tasks 3-5). The feed and the ticker page take the Stock
   and Research frame; the calendar is one card of rows that says when it is empty or failed instead of vanishing;
   the news verdict is an outlined ink pill (a forecast is not money); the explanation is labelled as the news

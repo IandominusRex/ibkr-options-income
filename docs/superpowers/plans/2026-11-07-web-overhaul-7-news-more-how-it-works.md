@@ -118,8 +118,8 @@ adds one commit.
 | **Task 4: the calendar and the news card** | done | this commit (see git log) | T4 applied (hash 4f5f4bcb matched, check clean); red check 9 failed / 2 passed; components/news+features/news 5 files 24 passed; full vitest 1639 in 159 files; tsc and lint clean; G5 no line for a non-test file | 2026-11-12 | da-vinci read T4: no change (verdict pill in ink, no green or red, no lime, no em dash in added lines). No rulings; none deviated. |
 | **Task 5: the ticker news page** | done | this commit (see git log) | T5 applied (hash 9580231e matched, check clean); red check 6 failed / 2 passed; components/news+features/news+app/titles 7 files 54 passed; full vitest 1644 in 160 files; tsc and lint clean; G1 empty; G2 both greps exact; G3 exit 0; G4 scratch build green first try (19 rows, `○ /news` and `ƒ /news/[symbol]`, `○ /explain`, `○ /more`; removed); G5 no line; G6 55 passed; G7 the one layout line | 2026-11-12 | da-vinci read T5: no change (the only `lime`/`text-loss` hits in added lines are a comment and a test asserting their absence). No rulings; none deviated. |
 | **Section B exit** | pass | rides in Task 5's commit | three task commits after Section A; vitest 1644 in 160 files; tsc, lint clean; G1 empty, G2 both greps exact, G3 exit 0, G4 green (19 rows), G5 (Section A folders + components/news, features/news, app/news, app/explain, app/more, components/ui) no line for a non-test file, G6 55 passed, G7 one line; git status clean after commit | 2026-11-12 | none |
-| **Section C entry** | | | | | |
-| **Task 6: How it works** | | | | | |
+| **Section C entry** | pass | (rides in Task 6) | C1 five task commits, vitest 1644 in 160 files, tsc and lint clean, G1 empty, G2 exact, G7 one line; C2 T6 applies; C3 26 files in components/explain, only app/explain/page.tsx imports it, no features/explain | 2026-11-12 | none |
+| **Task 6: How it works** | done | this commit (see git log) | T6 applied (hash 78270c17 matched, check clean); red check: features/explain stashed, vitest reports "No test files found" (module missing); features/explain + app/titles 2 files 30 passed (ExplainPage 5 passed); full vitest 1649 in 161 files; tsc and lint clean; G3 exit 0; G5 over web/features/explain web/app/explain: no line for a non-test file (one em dash line in ExplainPage.test.tsx:41, which is the test's own assertion string, a test file) | 2026-11-12 | da-vinci read T6 against Section C's spec: no change (seven Cards in one column at max 820px, 1.0625rem bold titles, 65ch 14px body, 0.8125rem muted "See it on" then underlined semibold links at min-h-11 md:min-h-0; no lime, icon, chip or tab). Copy checked against root CLAUDE.md (core invariant, both written exceptions, books, capital release, paper-only) and the code (regime reads SPY and QQQ per `src/analytics/regime.py`; MarketCard on Home and News): every sentence true, none reworded. No rulings; none deviated. |
 | **Task 7: the old explainer deleted** | | | | | |
 | **Section C exit** | | | | | |
 | **Section D entry** | | | | | |
@@ -1905,11 +1905,11 @@ than rewording (a copy change needs the operator). Record "no change" in the row
 
 **Entry checks:**
 
-- [ ] **C1. Section B landed.** In `<W>`: `git log --oneline main..HEAD` shows the five task commits of Sections A and
+- [x] **C1. Section B landed.** In `<W>`: `git log --oneline main..HEAD` shows the five task commits of Sections A and
   B; vitest **1644 in 160 files**; tsc and lint clean; G1 empty; G2 both greps as listed; G7 the one layout line.
-- [ ] **C2. Task 6's patch applies:** `git apply --check <S>/p7/T6.out` prints nothing. (T7 edits a file T6 creates,
+- [x] **C2. Task 6's patch applies:** `git apply --check <S>/p7/T6.out` prints nothing. (T7 edits a file T6 creates,
   so it is checked in Task 7's Step 1.)
-- [ ] **C3. Starting shape.** `ls web/components/explain | wc -l` prints `26`;
+- [x] **C3. Starting shape.** `ls web/components/explain | wc -l` prints `26`;
   `grep -rln "components/explain" web/app web/features web/components web/lib | grep -v "^web/components/explain/"`
   prints exactly `web/app/explain/page.tsx`; `ls web/features/explain` fails.
 
@@ -1927,15 +1927,15 @@ this plan (Progress log).
 **What it does (rulings 2, 20):** `/explain` becomes seven short cards of plain English, each ending in links to the
 pages that show it. The old eight-tab shell stays on disk until Task 7 but is no longer mounted.
 
-- [ ] **Step 1: Check and apply `T6`.** `git status --short` shows ` M web/DESIGN.md`, ` M web/app/explain/page.tsx`
+- [x] **Step 1: Check and apply `T6`.** `git status --short` shows ` M web/DESIGN.md`, ` M web/app/explain/page.tsx`
   and `?? web/features/explain/`.
-- [ ] **Step 2: Red check.** `ExplainPage` is a new module: its red is the module missing (`git stash push -u --
+- [x] **Step 2: Red check.** `ExplainPage` is a new module: its red is the module missing (`git stash push -u --
   web/features/explain`, then `cd web && npx vitest run features/explain` reports no test files or an import
   failure, then `git stash pop`). `app/titles.test.ts` passes before and after (the title is still "How it works").
-- [ ] **Step 3: Gate.** `npx vitest run features/explain app/titles.test.ts`: all pass (features/explain 5 passed).
+- [x] **Step 3: Gate.** `npx vitest run features/explain app/titles.test.ts`: all pass (features/explain 5 passed).
   Full vitest **1649 in 161 files**; tsc, lint clean; G3 exit 0; G5 over `web/features/explain web/app/explain`: no
   line for a non-test file.
-- [ ] **Step 4: Commit** `feat(web): How it works rebuilt small: seven cards of plain English, each linked to its
+- [x] **Step 4: Commit** `feat(web): How it works rebuilt small: seven cards of plain English, each linked to its
   page` with the Progress log row (and the Section C entry row).
 
 <!-- block T6 -->

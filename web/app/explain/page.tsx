@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { ExplainShell } from "@/components/explain/ExplainShell";
+import { ExplainPage } from "@/features/explain/ExplainPage";
 
 export const metadata: Metadata = { title: "How it works" };
 
-export default function ExplainPage() {
-  return <ExplainShell />;
+export default function Page() {
+  return <ExplainPage />;
 }
