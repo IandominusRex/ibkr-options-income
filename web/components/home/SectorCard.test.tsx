@@ -48,7 +48,7 @@ describe("SectorCard", () => {
         ivRankCount={1}
       />,
     );
-    expect(screen.getByText("(1 name)")).toBeDefined();
+    expect(screen.getByText("(1 with history)")).toBeDefined();
   });
 
   it("shows the count when more than one name contributed", () => {
@@ -63,7 +63,7 @@ describe("SectorCard", () => {
         ivRankCount={3}
       />,
     );
-    expect(screen.getByText("(3)")).toBeDefined();
+    expect(screen.getByText("(3 with history)")).toBeDefined();
   });
 });
 describe("SectorCard, restyled (web overhaul Part 6)", () => {

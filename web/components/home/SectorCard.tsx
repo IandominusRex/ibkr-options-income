@@ -14,7 +14,7 @@ type Props = {
 
 /**
  * One sector as a row of the Sectors card (web overhaul Part 6, restyled in place): the name and its
- * average IV rank with how many names it averages, then the day's move and the count, then the best and
+ * average IV rank with how many names have the history it averages ("(7 with history)"), then the day's move and the count, then the best and
  * worst movers. A move is signed but never green or red, because a sector's move is a price, not money
  * (web/DESIGN.md Colors). Unknown is a hatched n/a, never 0.
  */
@@ -30,7 +30,7 @@ export function SectorCard({ sector, count, changePct, best, worst, avgIvRank, i
           ) : (
             <>
               <span className="tabular font-semibold">{avgIvRank.toFixed(1)}</span>{" "}
-              <span className="tabular text-[0.8125rem] text-muted">{ivRankCount === 1 ? "(1 name)" : `(${ivRankCount})`}</span>
+              <span className="tabular text-[0.8125rem] text-muted">{`(${ivRankCount} with history)`}</span>
             </>
           )}
         </span>

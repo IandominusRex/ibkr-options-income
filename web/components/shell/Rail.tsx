@@ -29,12 +29,13 @@ export function Rail() {
   return (
     <nav aria-label="Sections" className="hidden w-[200px] shrink-0 flex-col bg-surface px-3 py-[18px] md:flex">
       <div className="px-2.5 pb-4 text-[0.9375rem] font-extrabold">IBKR Income</div>
-      {/* Opens the one palette the root layout mounts; ⌘K does the same from anywhere. */}
+      {/* Opens the one palette the root layout mounts; ⌘K does the same from anywhere. Outlined like a field, so it
+          never looks like the current row, which is the only pressed-sage row in the rail (web overhaul Part 7). */}
       <button
         type="button"
         onClick={openSearch}
         aria-keyshortcuts="Meta+K Control+K"
-        className="mb-3 flex items-center gap-2.5 rounded-[10px] bg-sunk px-2.5 py-2 text-sm text-muted hover:bg-sunk-deep hover:text-content"
+        className="mb-3 flex items-center gap-2.5 rounded-[10px] border border-control bg-surface px-2.5 py-2 text-sm text-muted hover:text-content"
       >
         <Search aria-hidden="true" size={17} strokeWidth={2} />
         <span className="flex-1 text-left">Search</span>

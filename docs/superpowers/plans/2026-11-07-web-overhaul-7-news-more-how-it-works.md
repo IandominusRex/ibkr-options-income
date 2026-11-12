@@ -108,9 +108,9 @@ adds one commit.
 | Section / task | Status | Commits | Gate | Date | Rulings |
 |---|---|---|---|---|---|
 | **Plan written** | done | (plan file only) | Written in four increments 2026-11-07 to 2026-11-11 (`main` was `02236ec` throughout). Prototyped on a code-only copy of `main` (`git archive`, `.venv` and `web/node_modules` symlinked, session scratchpad) as a per-task git history from which every patch was generated (one fix found by looking was folded back into T3 with `--fixup`). **Per-task web gates** (each re-run when the patches were applied in order to a fresh copy of `main`): vitest 1623 in 157 files at T1, 1624/157 at T2, 1631/158 at T3, 1639/159 at T4, 1644/160 at T5, 1649/161 at T6, 1620/153 at T7 (eight test files deleted), 1621/153 at T8, 1622/153 at T9 and T10; `tsc --noEmit` and `npm run lint` clean at every task. **Red checks run** (each task's source files at their pre-task version, its tests kept): T1 3 failed / 8 passed; T2 3 / 29; T3 4 / 3; T4 9 / 2; T5 6 / 2; T7 2 / 12 (by the `git stash` form in its Step 2, on the fresh copy); T8 1 / 8; T9 1 / 11; T6 is a new module (red = module missing); T10 is docs. **Full gate on the final tree** (all ten patches applied in order to a fresh copy of `main`, identical to the prototype): vitest **1622 in 153 files**; `tsc --noEmit` and `npm run lint` clean; pytest **5767 passed, 1 skipped** (G6 included), `ruff check .` clean, `mypy src` 361 files clean; G1 empty; G2 the four `features` files and `components/news/BriefRequest.tsx`; G3 exit 0 (`grep -c RESOLVED web/DESIGN.md` 8); G5 no line for a non-test file over every Part 7 folder; G7 the one layout line; no file under `src/`, `scripts/`, `tests/` or `config/` changed; D2 confirmed (T9 applies before T8); **scratch `npm run build` green** (20 rows: 18 routes, `/_not-found`, `○ /icon.svg`; Section B's exit build was green at 19 rows, after one transient font-fetch retry on a later build). **Rendered** with `next start -p 3102` from the prototype's build against `mock7` (port 8798) and `capture7` in headless Chromium: News, `/news/NVDA`, How it works, More and Research at 320, 390 and 1440 px, light and dark (30 page captures): `hscroll` on `main` 0 everywhere, no page error, the `h2` orders as Task 11 expects, the under-44px set exactly ruling 25's; captures opened and read: News at 1440 light, `/news/NVDA` at 390 dark, How it works at 390 light. **Not run:** a fresh-eyes da-vinci critique and audit (Task 11), the live API, the stock page rendered (Task 2's three changes are pinned by tests only), the Opus review. |
-| **A0 setup** | | | | | |
-| **Section A entry** | | | | | |
-| **Task 1: the rail's Search field and the sectors' count** | | | | | |
+| **A0 setup** | done | 7eb2ae8 (docs on main) | Worktree `.claude/worktrees/web-overhaul-7` (branch `feat/web-overhaul-7`), `.venv` and `web/node_modules` symlinked, init_db run; all 12 block hashes match; 14 GiB free | 2026-11-12 | Part 6's Restart row filled as the plan gave it (dated 2026-11-07). Orchestrator is a Sonnet session; plan gate counts held. Operator said "execute everything to completion": sections run without stopping between them; merge and push still wait for a yes. |
+| **Section A entry** | pass | (rides in Task 1) | A1 clean over 02236ec + A0; A2 T1 and T2 apply; A3 pytest 5767 passed, 1 skipped, ruff clean, mypy 361 files, vitest 1623 in 157 files, tsc and lint clean | 2026-11-12 | none |
+| **Task 1: the rail's Search field and the sectors' count** | done | this commit (see git log) | T1 applied (hash ab3bec3b matched, git apply --check clean); red check 3 failed / 8 passed; components/shell+home+features/research 13 files 106 passed; full vitest 1623 in 157 files; tsc and lint clean; G3 exit 0 | 2026-11-12 | da-vinci: no change (the patch matches Section A's spec). No rulings; none deviated. |
 | **Task 2: the stock page's three minors** | | | | | |
 | **Section A exit** | | | | | |
 | **Section B entry** | | | | | |
@@ -433,7 +433,7 @@ PY
 - [ ] From `<W>`, extract every block in the hash table and check every hash against it:
   `for b in T1 T2 T3 T4 T5 T6 T7 T8 T9 T10 mock7 capture7; do python3 <S>/p7/plan_block.py docs/superpowers/plans/2026-11-07-web-overhaul-7-news-more-how-it-works.md $b > <S>/p7/$b.out; done; shasum -a 256 <S>/p7/*.out`
   Every line matches the table. Any mismatch: stop.
-- [ ] Record A0 in the Progress log (commit hash, worktree path, hashes OK) in Task 1's commit.
+- [x] Record A0 in the Progress log (commit hash, worktree path, hashes OK) in Task 1's commit.
 
 **Entry checks:**
 
@@ -459,15 +459,15 @@ Section A folders: `web/components/shell web/components/home web/components/stoc
 count says what it counts. Two existing assertions change ("(1 name)" and "(3)"), and the Rail test gains three
 class assertions (jsdom has no layout, so a class is the only thing to pin).
 
-- [ ] **Step 1: Check and apply `T1`.** `git status --short` shows five `M` files: `web/DESIGN.md`,
+- [x] **Step 1: Check and apply `T1`.** `git status --short` shows five `M` files: `web/DESIGN.md`,
   `web/components/home/SectorCard.test.tsx`, `web/components/home/SectorCard.tsx`, `web/components/shell/Rail.test.tsx`,
   `web/components/shell/Rail.tsx`.
-- [ ] **Step 2: Red check.** `git stash push -- web/components/shell/Rail.tsx web/components/home/SectorCard.tsx`,
+- [x] **Step 2: Red check.** `git stash push -- web/components/shell/Rail.tsx web/components/home/SectorCard.tsx`,
   then `cd web && npx vitest run components/shell/Rail.test.tsx components/home/SectorCard.test.tsx` ends
   `3 failed | 8 passed (11)`, then `git stash pop` (the two sources come back).
-- [ ] **Step 3: Gate.** `npx vitest run components/shell components/home features/research`: 13 files, 106 passed.
+- [x] **Step 3: Gate.** `npx vitest run components/shell components/home features/research`: 13 files, 106 passed.
   Full vitest **1623 in 157 files**; tsc, lint clean; G3 exit 0.
-- [ ] **Step 4: Commit** `feat(web): the rail's Search is an outlined field; a sector's count says "with history"`
+- [x] **Step 4: Commit** `feat(web): the rail's Search is an outlined field; a sector's count says "with history"`
   with the Progress log row (and the A0 and Section A entry rows).
 
 <!-- block T1 -->

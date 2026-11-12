@@ -51,6 +51,9 @@ describe("Rail", () => {
     window.addEventListener(OPEN_SEARCH_EVENT, seen);
     const button = screen.getByRole("button", { name: "Search" });
     expect(button).toHaveAttribute("aria-keyshortcuts", "Meta+K Control+K");
+    // Outlined like a field, never the pressed-sage fill of the current row (web overhaul Part 7).
+    expect(button).toHaveClass("border", "border-control", "bg-surface");
+    expect(button).not.toHaveClass("bg-sunk");
     fireEvent.click(button);
     window.removeEventListener(OPEN_SEARCH_EVENT, seen);
     expect(seen).toHaveBeenCalledTimes(1);

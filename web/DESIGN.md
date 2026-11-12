@@ -453,7 +453,7 @@ the not-draining warning sits above the controls. The same exception as the revi
 state also shows a full-width flag banner on every page, worded for the wheel ("Wheel trading is
 halted"), since credit spreads have their own halt.
 
-**Rail and tab bar**: the 200px white rail opens with the wordmark, then a pressed-sage **Search** row
+**Rail and tab bar**: the 200px white rail opens with the wordmark, then an outlined **Search** field
 (the magnifier, "Search" and a muted "⌘K") that opens the search palette, then the seven destinations
 with an ink-on-sage current row and the lime pending count on Trades (Research's icon is a telescope, so
 the magnifier means search alone); the phone tab bar (64px, white, hairline above)
@@ -1002,7 +1002,7 @@ overhaul Part 6) on the Stock page's frame.
   sits at the right of the name, the facts take the full width under both (each fact whole, so a line breaks
   only between two) and Remove has its own 44px row; from 768px the row is one line, as above.
 - **Sectors by IV rank:** one white card, a row per sector in the API's order: the name bold with "IV rank 42.0
-  (3)" at the right, then "3 names · +1.50% today", then "Best MSFT +2.00% · worst AAPL -1.00%", all in muted ink
+  (3 with history)" at the right, then "3 names · +1.50% today", then "Best MSFT +2.00% · worst AAPL -1.00%", all in muted ink
   apart from the names; no green or red. Loading holds its place; empty and failed are sentences.
 
 - **Top opportunities (2026-11-05):** a strip above the watchlist, headed "Top opportunities", with two tabs on
@@ -1204,6 +1204,10 @@ sibling keys; re-run the check after edits.
 
 ## Decision Log
 
+- 2026-11-07: **Two Part 6 proposals taken** (web overhaul Part 7, Task 1; the operator's answer). The rail's
+  Search row is an outlined field (a control-edge border on white) instead of a pressed-sage row, so the current
+  destination is the only pressed-sage row in the rail; a sector's IV-rank count reads "(7 with history)" instead
+  of a bare "(7)". No new token, colour, font, radius or elevation.
 - 2026-11-07: **da-vinci finish of Research, Universe and search** (web overhaul Part 6, Task 15). Reviewed
   rendered at 320, 390 and 1440 px in both themes. Your watchlist's row was recomposed on a phone (the quote beside
   the name, the facts on the full width, Remove on its own 44px row; at 320px the facts had been squeezed to a
