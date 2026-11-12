@@ -115,7 +115,7 @@ adds one commit.
 | **Section A exit** | pass | rides in Task 2's commit | two task commits after A0; vitest 1624 in 157 files; tsc, lint clean; G1 empty, G2 exact, G3 exit 0, G5 (shell, home, stock, stock-value) no line, G7 the one layout line; git status clean after commit | 2026-11-12 | none |
 | **Section B entry** | pass | (rides in Task 3) | B1 two Section A commits (c9eb71e, 971b9d7), vitest 1624 in 157 files, tsc and lint clean, G1 empty, G2 exact, G7 one line; B2 T3, T4, T5 apply; B3 no features/news, BriefRequest the only submitCommand, 3/3/3 `it(` | 2026-11-12 | none |
 | **Task 3: the News page** | done | this commit (see git log) | T3 applied (hash 8b286fe0 matched, check clean); red check 4 failed / 3 passed; components/news+features/news+app/titles 5 files 41 passed; full vitest 1631 in 158 files; tsc and lint clean; G5 over components/news, features/news, app/news no line for a non-test file | 2026-11-12 | da-vinci read T3 against Section B's spec: no change (no lime, green, red or em dash in the added lines). No rulings; none deviated. |
-| **Task 4: the calendar and the news card** | | | | | |
+| **Task 4: the calendar and the news card** | done | this commit (see git log) | T4 applied (hash 4f5f4bcb matched, check clean); red check 9 failed / 2 passed; components/news+features/news 5 files 24 passed; full vitest 1639 in 159 files; tsc and lint clean; G5 no line for a non-test file | 2026-11-12 | da-vinci read T4: no change (verdict pill in ink, no green or red, no lime, no em dash in added lines). No rulings; none deviated. |
 | **Task 5: the ticker news page** | | | | | |
 | **Section B exit** | | | | | |
 | **Section C entry** | | | | | |
@@ -1038,15 +1038,15 @@ they open a new tab; the explanation sits in a pressed-sage block labelled "The 
 once that its readings are the news model's; the verdict pill is ink with its icon (never green or red) and says
 "medium confidence". One existing assertion changes (the BLS link's name gains "(opens in a new tab)").
 
-- [ ] **Step 1: Check and apply `T4`.** `git status --short` shows four `M` files (`CalendarColumn.tsx`,
+- [x] **Step 1: Check and apply `T4`.** `git status --short` shows four `M` files (`CalendarColumn.tsx`,
   `NewsCard.test.tsx`, `NewsCard.tsx`, `VerdictPill.tsx` under `web/components/news/`) and
   `?? web/components/news/CalendarColumn.test.tsx`.
-- [ ] **Step 2: Red check.** `git stash push -- web/components/news/CalendarColumn.tsx web/components/news/NewsCard.tsx web/components/news/VerdictPill.tsx`,
+- [x] **Step 2: Red check.** `git stash push -- web/components/news/CalendarColumn.tsx web/components/news/NewsCard.tsx web/components/news/VerdictPill.tsx`,
   then `cd web && npx vitest run components/news/CalendarColumn.test.tsx components/news/NewsCard.test.tsx` ends
   `9 failed | 2 passed (11)`, then `git stash pop`.
-- [ ] **Step 3: Gate.** `npx vitest run components/news features/news`: all pass. Full vitest **1639 in 159 files**;
+- [x] **Step 3: Gate.** `npx vitest run components/news features/news`: all pass. Full vitest **1639 in 159 files**;
   tsc, lint clean; G5 as in Task 3.
-- [ ] **Step 4: Commit** `feat(web): the week's calendar as one card that says when it is empty, and the news
+- [x] **Step 4: Commit** `feat(web): the week's calendar as one card that says when it is empty, and the news
   verdict in ink` with the Progress log row.
 
 <!-- block T4 -->
