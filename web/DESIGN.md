@@ -1118,9 +1118,33 @@ overhaul Part 5) on the Position page's frame.
 - No new token, colour, font, radius or elevation.
 
 ### News
-Read. Feed and calendar; ticker briefs. The feed opens with the Market card: regimes, up to six stories
-with each description labelled as Claude's, and one line on the last 7 days of triage (judged as noise,
-promoted, not reviewed). A ticker page carries that name's notes.
+- **JOB:** Read. What moved, what is scheduled this week, and what the news service made of it. The one
+  write is a ticker page's brief request (a `news_brief` command the news process drains). Nothing here trades.
+- **FORM:** the Stock and Research frame (1200px, `px-4` on a phone, `px-7` from 768px; the 24px/800 title and a
+  muted line, Refresh at the right). The Market card full width (regimes, up to six stories with each description
+  labelled as Claude's, one line on the last 7 days of triage), then two single-track columns from 1024px
+  (`minmax(0,1fr)` and 340px): **Latest** on the left, **This week** on the right. The DOM order is the phone order.
+- **Latest:** the title, "The news service's posts, newest first, 30 at most.", the group chips (All, Macro,
+  Market, Tickers, Earnings, Briefs: the chips appearance, ink when chosen, a 44px hit area on a phone) and a
+  labelled "Filter by symbol" field (the shared field: 16px, 44px tall). Then the posts as white cards. Loading
+  holds a block; a failed read, a service that has not written yet, and no match ("No posts match ZZZ in this
+  group.") are sentences.
+- **A post:** the emoji, the title (17px/700), a flag-amber "Critical" word, the time (Singapore, then New York) in
+  muted tabular figures; the service's headline line with its sources as underlined inline links that say they
+  open a new tab; the facts; the reaction grid; then the explanation in a pressed-sage block labelled "The news
+  model's reading" ("Claude, or the local model when Claude cannot be reached; it trades nothing"), never as
+  Claude's alone, because the news model falls back to a local one. The verdict is an outlined ink pill whose icon
+  and words carry the direction: a forecast is not money, so it is never green or red ("Unclear" is muted). A
+  digest says once that its readings and verdicts are the news model's.
+- **This week:** one white card, "The next 7 days, in Singapore time with New York time beside it.", the economic
+  releases ("0.4% vs 0.3% forecast", a missing forecast hatched) and the earnings (the ticker a link to its news
+  page, 44px on a phone, a neutral "Held" word, the day and BMO/AMC) as quiet rows. Empty, not yet written,
+  loading and failed are each said; the card never vanishes.
+- **A ticker page** (`/news/SYM`): a back link to News, the ticker as the title, the "Stock page" link (the
+  secondary pill) and Refresh, then "Request fresh brief" (the secondary button; its receipt beside it; a refused
+  request is a plain sentence, never red). Then the next earnings, the latest brief (a post card with its chart),
+  the market picture's notes on the name, and "Recent stories": one card of rows, the headline bold, the source
+  count, and up to two sources as links (44px on a phone, "(opens in a new tab)"). One column at most 820px wide.
 
 ### More
 Read and Operate. How it works (the System Explanation pages), What Claude knows (a link to its own surface), Bot controls, Theme, the monthly income target, Ledger import, Credits.
@@ -1204,6 +1228,11 @@ sibling keys; re-run the check after edits.
 
 ## Decision Log
 
+- 2026-11-07: **News on the payslip** (web overhaul Part 7, Tasks 3-5). The feed and the ticker page take the Stock
+  and Research frame; the calendar is one card of rows that says when it is empty or failed instead of vanishing;
+  the news verdict is an outlined ink pill (a forecast is not money); the explanation is labelled as the news
+  model's reading, since the news model falls back to a local model; the ticker page links to the stock page
+  (the operator's answer: keep the page). No new token, colour, font, radius or elevation.
 - 2026-11-07: **Two Part 6 proposals taken** (web overhaul Part 7, Task 1; the operator's answer). The rail's
   Search row is an outlined field (a control-edge border on white) instead of a pressed-sage row, so the current
   destination is the only pressed-sage row in the rail; a sector's IV-rank count reads "(7 with history)" instead

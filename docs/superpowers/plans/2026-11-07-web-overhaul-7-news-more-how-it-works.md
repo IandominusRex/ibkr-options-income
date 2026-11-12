@@ -116,8 +116,8 @@ adds one commit.
 | **Section B entry** | pass | (rides in Task 3) | B1 two Section A commits (c9eb71e, 971b9d7), vitest 1624 in 157 files, tsc and lint clean, G1 empty, G2 exact, G7 one line; B2 T3, T4, T5 apply; B3 no features/news, BriefRequest the only submitCommand, 3/3/3 `it(` | 2026-11-12 | none |
 | **Task 3: the News page** | done | this commit (see git log) | T3 applied (hash 8b286fe0 matched, check clean); red check 4 failed / 3 passed; components/news+features/news+app/titles 5 files 41 passed; full vitest 1631 in 158 files; tsc and lint clean; G5 over components/news, features/news, app/news no line for a non-test file | 2026-11-12 | da-vinci read T3 against Section B's spec: no change (no lime, green, red or em dash in the added lines). No rulings; none deviated. |
 | **Task 4: the calendar and the news card** | done | this commit (see git log) | T4 applied (hash 4f5f4bcb matched, check clean); red check 9 failed / 2 passed; components/news+features/news 5 files 24 passed; full vitest 1639 in 159 files; tsc and lint clean; G5 no line for a non-test file | 2026-11-12 | da-vinci read T4: no change (verdict pill in ink, no green or red, no lime, no em dash in added lines). No rulings; none deviated. |
-| **Task 5: the ticker news page** | | | | | |
-| **Section B exit** | | | | | |
+| **Task 5: the ticker news page** | done | this commit (see git log) | T5 applied (hash 9580231e matched, check clean); red check 6 failed / 2 passed; components/news+features/news+app/titles 7 files 54 passed; full vitest 1644 in 160 files; tsc and lint clean; G1 empty; G2 both greps exact; G3 exit 0; G4 scratch build green first try (19 rows, `○ /news` and `ƒ /news/[symbol]`, `○ /explain`, `○ /more`; removed); G5 no line; G6 55 passed; G7 the one layout line | 2026-11-12 | da-vinci read T5: no change (the only `lime`/`text-loss` hits in added lines are a comment and a test asserting their absence). No rulings; none deviated. |
+| **Section B exit** | pass | rides in Task 5's commit | three task commits after Section A; vitest 1644 in 160 files; tsc, lint clean; G1 empty, G2 both greps exact, G3 exit 0, G4 green (19 rows), G5 (Section A folders + components/news, features/news, app/news, app/explain, app/more, components/ui) no line for a non-test file, G6 55 passed, G7 one line; git status clean after commit | 2026-11-12 | none |
 | **Section C entry** | | | | | |
 | **Task 6: How it works** | | | | | |
 | **Task 7: the old explainer deleted** | | | | | |
@@ -1455,17 +1455,17 @@ request is a plain sentence, never red). The body keeps its reads and adds a loa
 tests that drove the request button move from `NewsTicker.test.tsx` to `NewsTickerPage.test.tsx` (the button now
 lives in the page header); the "Request fresh brief" and `news_brief` payload assertions are kept word for word.
 
-- [ ] **Step 1: Check and apply `T5`.** `git status --short` shows five `M` files (`web/DESIGN.md`,
+- [x] **Step 1: Check and apply `T5`.** `git status --short` shows five `M` files (`web/DESIGN.md`,
   `web/app/news/[symbol]/page.tsx`, `web/components/news/BriefRequest.tsx`, `web/components/news/NewsTicker.test.tsx`,
   `web/components/news/NewsTicker.tsx`) and `?? web/features/news/NewsTickerPage.test.tsx`,
   `?? web/features/news/NewsTickerPage.tsx`.
-- [ ] **Step 2: Red check.** `git stash push -- web/components/news/NewsTicker.tsx web/components/news/BriefRequest.tsx`,
+- [x] **Step 2: Red check.** `git stash push -- web/components/news/NewsTicker.tsx web/components/news/BriefRequest.tsx`,
   then `cd web && npx vitest run components/news/NewsTicker.test.tsx features/news/NewsTickerPage.test.tsx` ends
   `6 failed | 2 passed (8)`, then `git stash pop`.
-- [ ] **Step 3: Gate.** `npx vitest run components/news features/news app/titles.test.ts`: 7 files, 54 passed. Full
+- [x] **Step 3: Gate.** `npx vitest run components/news features/news app/titles.test.ts`: 7 files, 54 passed. Full
   vitest **1644 in 160 files**; tsc, lint clean; G1 empty; G2 both greps as listed; G3 exit 0; G4 green (19 rows, `○
   /news` and `ƒ /news/[symbol]` among them; scratch build removed); G5 as in Task 3; G6 passes; G7 the one layout line.
-- [ ] **Step 4: Commit** `feat(web): a name's news page in the frame, linked to its stock page, with the brief
+- [x] **Step 4: Commit** `feat(web): a name's news page in the frame, linked to its stock page, with the brief
   request as the secondary button` with the Progress log row and the Section B exit row.
 
 <!-- block T5 -->

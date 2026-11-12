@@ -1,14 +1,19 @@
 "use client";
 
-import { RefreshButton } from "@/components/shell/RefreshButton";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
-import { BriefRequest } from "./BriefRequest";
+import { Card } from "@/components/ui/Card";
 import { NewsCard } from "./NewsCard";
 import { NameNotes } from "@/features/market/NameNotes";
 import { dayLabel } from "./format";
 import type { NewsPostDetail, NewsTickerResponse } from "./types";
 
+/**
+ * The body of one name's news page (restyled in place, web overhaul Part 7; the frame, the title and the
+ * brief request are `features/news/NewsTickerPage`): the next earnings, the latest brief, the market
+ * picture's notes on the name and the grouped stories. Loading, failed, not yet written and no brief are
+ * each a sentence.
+ */
 export function NewsTicker({ symbol }: { symbol: string }) {
   const sym = symbol.toUpperCase();
   const t = useQuery({
@@ -21,36 +26,49 @@ export function NewsTicker({ symbol }: { symbol: string }) {
                             queryFn: () => apiFetch<NewsPostDetail>(`/news/posts/${briefId}`) });
 
   return (
-    <div className="space-y-4" data-testid="news-ticker">
-      <header className="flex items-center justify-between gap-4">
-        <h1 className="font-mono text-lg text-content">{sym}</h1>
-        <div className="flex items-center gap-2">
-          <BriefRequest symbol={sym} />
-          <RefreshButton label={`Refresh ${sym} news`} />
-        </div>
-      </header>
+    <>
+      {t.isPending && <div role="status" aria-busy="true" aria-label={`Loading ${sym} news`} className="h-28 rounded-[18px] bg-surface" />}
+      {t.isError && !t.data && <p className="text-sm">The news for {sym} could not be loaded. It is asked for again every minute.</p>}
       {t.data?.next_earnings && (
-        <p className="text-sm text-muted">Next earnings {dayLabel(t.data.next_earnings.report_date)} {t.data.next_earnings.timing.toUpperCase()}</p>
+        <p className="tabular text-sm">
+          Next earnings {dayLabel(t.data.next_earnings.report_date)}
+          {t.data.next_earnings.timing ? ` · ${t.data.next_earnings.timing.toUpperCase()}` : ""}
+        </p>
       )}
-      {t.data && !t.data.available && <p className="text-sm text-muted">The news service has not written anything yet.</p>}
-      {t.data?.available && !t.data.latest_brief && <p className="text-sm text-muted">No brief yet. Request one above.</p>}
+      {t.data && !t.data.available && <p className="text-sm">The news service has not written anything yet.</p>}
+      {t.data?.available && !t.data.latest_brief && <p className="text-sm">No brief yet. Request one above.</p>}
       {t.data?.latest_brief && <NewsCard post={t.data.latest_brief} chartUri={detail.data?.chart_data_uri ?? null} />}
       <NameNotes symbol={sym} />
       {t.data && t.data.clusters.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="text-sm font-medium text-content">Recent stories</h2>
-          <ul className="space-y-1 text-sm">
+        <Card aria-labelledby="stories-title">
+          <h2 id="stories-title" className="text-[1.0625rem] font-bold">
+            Recent stories
+          </h2>
+          <p className="mt-1 text-[0.8125rem] text-muted">Headlines the news service grouped as one story, with how many sources carried it.</p>
+          <ul className="mt-2">
             {t.data.clusters.map((c) => (
-              <li key={c.id}>
-                {c.headline} <span className="text-muted">· {c.source_count} sources</span>
-                {c.links.slice(0, 2).map((l) => (
-                  <a key={l.url} href={l.url} target="_blank" rel="noreferrer" className="ml-2 text-xs underline decoration-border">{l.name}</a>
-                ))}
+              <li key={c.id} className="border-t border-border py-2 text-sm first:border-t-0 md:py-2.5">
+                <p className="font-semibold">{c.headline}</p>
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-3 text-[0.8125rem] text-muted">
+                  <span className="tabular">{c.source_count === 1 ? "1 source" : `${c.source_count} sources`}</span>
+                  {c.links.slice(0, 2).map((l) => (
+                    <a
+                      key={l.url}
+                      href={l.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex min-h-11 items-center font-semibold text-content underline-offset-2 hover:underline md:inline md:min-h-0"
+                    >
+                      {l.name}
+                      <span className="sr-only"> (opens in a new tab)</span>
+                    </a>
+                  ))}
+                </div>
               </li>
             ))}
           </ul>
-        </section>
+        </Card>
       )}
-    </div>
+    </>
   );
 }

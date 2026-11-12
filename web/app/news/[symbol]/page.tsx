@@ -1,9 +1,10 @@
 "use client";
 
 import { use } from "react";
-import { NewsTicker } from "@/components/news/NewsTicker";
+import { NewsTickerPage } from "@/features/news/NewsTickerPage";
+import { decodeSegment } from "@/lib/segment";
 
-export default function NewsTickerPage({ params }: { params: Promise<{ symbol: string }> }) {
+export default function Page({ params }: { params: Promise<{ symbol: string }> }) {
   const { symbol } = use(params);
-  return <NewsTicker symbol={symbol} />;
+  return <NewsTickerPage symbol={decodeSegment(symbol)} />;
 }
