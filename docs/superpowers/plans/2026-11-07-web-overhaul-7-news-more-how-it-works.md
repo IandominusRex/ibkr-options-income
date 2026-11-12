@@ -124,8 +124,8 @@ adds one commit.
 | **Section C exit** | pass | rides in Task 7's commit | two task commits after Section B; vitest 1620 in 153 files; tsc, lint clean; G1 empty, G2 exact, G3 exit 0, G5 (shell, home, stock, stock-value, components/news, features/news, app/news, features/explain, app/explain, app/more, features/search) no line for a non-test file, G6 55 passed, G7 one line; git status clean after commit | 2026-11-12 | none |
 | **Section D entry** | pass | (rides in Task 8) | D1 seven task commits, vitest 1620 in 153 files, tsc and lint clean, G1 empty, G2 exact, G7 one line; D2 T8 and T9 apply; D3 no icon.svg, `disabled:bg-sunk` count 1, RESOLVED count 2 | 2026-11-12 | none |
 | **Task 8: More** | done | this commit (see git log) | T8 applied (hash 3c629e8e matched, check clean; three ` M` files as listed); red check 1 failed / 8 passed (`web/app/more/page.tsx` stashed, then popped); `vitest run app/more` 9 passed; full vitest 1621 in 153 files; tsc and lint clean; G3 exit 0 | 2026-11-12 | da-vinci read T8 against Section D's spec: no change (one row after Universe, bold label, muted sub line, the same chevron; nothing else on More moves; no new token). No rulings; none deviated. |
-| **Task 9: the Open Decisions** | | | | | |
-| **Section D exit** | | | | | |
+| **Task 9: the Open Decisions** | done | this commit (see git log) | T9 applied (hash 7da611db matched, check clean; three ` M` files and `?? web/app/icon.svg` as listed); red check 1 failed / 11 passed (`web/components/ui/Button.tsx` stashed, then popped); `vitest run components/ui features/trades features/activity` 28 files, 310 passed; full vitest 1622 in 153 files; tsc and lint clean; `grep -c RESOLVED web/DESIGN.md` 8; G3 exit 0 | 2026-11-12 | da-vinci read T9 against Section D's spec: no change (quiet stays transparent and dims, primary and secondary keep disabled:bg-sunk and muted ink, the favicon is the ink I on the paper-value rounded square; no new token, colour, font, radius or elevation). No rulings; none deviated. Order 8 then 9 as the plan gave (D2 hunks disjoint). |
+| **Section D exit** | pass | rides in Task 9's commit | two task commits after Section C; vitest 1622 in 153 files; tsc, lint clean; G1 empty, G2 both greps exact, G3 exit 0, G4 scratch build green first try (20 rows: `○ /icon.svg`, `○ /news`, `ƒ /news/[symbol]`, `○ /explain`, `○ /more`; removed), G5 (Section C list plus components/ui) no line for a non-test file, G6 55 passed, G7 one line; git status clean after commit | 2026-11-12 | none |
 | **Section E entry** | | | | | |
 | **Task 10: docs** | | | | | |
 | **Task 11: the da-vinci finish by a fresh reviewer** | | | | | |
@@ -3965,11 +3965,11 @@ change" in each row.
 
 **Entry checks:**
 
-- [ ] **D1. Section C landed.** In `<W>`: `git log --oneline main..HEAD` shows the seven task commits of Sections A-C;
+- [x] **D1. Section C landed.** In `<W>`: `git log --oneline main..HEAD` shows the seven task commits of Sections A-C;
   vitest **1620 in 153 files**; tsc and lint clean; G1 empty; G2 both greps; G7 the one layout line.
-- [ ] **D2. Both patches apply on the tree as it is** (their `DESIGN.md` hunks are disjoint): `git apply --check
+- [x] **D2. Both patches apply on the tree as it is** (their `DESIGN.md` hunks are disjoint): `git apply --check
   <S>/p7/T8.out` and `git apply --check <S>/p7/T9.out` each print nothing.
-- [ ] **D3. Starting shape.** `ls web/app/icon.svg` fails; `grep -c "disabled:bg-sunk" web/components/ui/Button.tsx`
+- [x] **D3. Starting shape.** `ls web/app/icon.svg` fails; `grep -c "disabled:bg-sunk" web/components/ui/Button.tsx`
   prints `1` (the base line); `grep -c "RESOLVED" web/DESIGN.md` prints `2`.
 
 **Section exit:** two task commits; vitest **1622 in 153 files**; tsc, lint clean; G1, G2, G3, G4 (20 rows), G5 (the
@@ -4073,15 +4073,15 @@ Open Decisions, a Decision Log entry); create `web/app/icon.svg`; this plan (Pro
 **What it does (rulings 3, 23):** closes the six Open Decisions on their defaults; the only behaviour change is the
 disabled quiet button, which stops drawing a filled circle.
 
-- [ ] **Step 1: Check and apply `T9`.** `git status --short` shows three ` M` files (`web/DESIGN.md`,
+- [x] **Step 1: Check and apply `T9`.** `git status --short` shows three ` M` files (`web/DESIGN.md`,
   `web/components/ui/Button.tsx`, `web/components/ui/primitives-a.test.tsx`) and `?? web/app/icon.svg`.
-- [ ] **Step 2: Red check.** `git stash push -- web/components/ui/Button.tsx`, then `cd web && npx vitest run
+- [x] **Step 2: Red check.** `git stash push -- web/components/ui/Button.tsx`, then `cd web && npx vitest run
   components/ui/primitives-a.test.tsx` ends `1 failed | 11 passed (12)`, then `git stash pop`.
-- [ ] **Step 3: Gate.** `npx vitest run components/ui features/trades features/activity`: 28 files, 310 passed (the
+- [x] **Step 3: Gate.** `npx vitest run components/ui features/trades features/activity`: 28 files, 310 passed (the
   three users of a disabled quiet button). Full vitest **1622 in 153 files**; tsc, lint clean; G1, G2, G3, G4 (20
   rows: `next build` lists `app/icon.svg` as `○ /icon.svg`), G5 (with `web/components/ui`), G6, G7; `grep -c
   "RESOLVED" web/DESIGN.md` prints `8`.
-- [ ] **Step 4: Commit** `feat(web): close the design system's open decisions; a disabled quiet button only dims`
+- [x] **Step 4: Commit** `feat(web): close the design system's open decisions; a disabled quiet button only dims`
   with the Progress log row and the Section D exit row.
 
 <!-- block T9 -->

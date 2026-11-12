@@ -479,7 +479,7 @@ the panel appears in place beneath it.
 **Buttons**: primary lime, secondary pressed sage, quiet (no fill, sage on hover, e.g. the sheet's
 44px Close), all fully round, 17px title type. Hover deepens one step;
 focus-visible draws a 2px ink ring at 3px offset; pressed scales to 0.98 when motion is allowed;
-disabled drops to muted ink on sunk with no lime; loading keeps the label and adds "…" (no spinner when the wait is a
+disabled drops to muted ink (a primary or secondary button on sunk, with no lime; a quiet button stays transparent and only dims); loading keeps the label and adds "…" (no spinner when the wait is a
 command poll, since the receipt already states progress).
 
 **Range chips** (1D 1W 1M 3M YTD All): selected is an ink fill, never lime or green, so selected
@@ -1219,25 +1219,31 @@ sibling keys; re-run the check after edits.
 ## Open Decisions
 
 - **Monthly income target: RESOLVED 2026-10-15.** The operator sets it on More (none, a fixed amount, a percent of the account, or a percent of an amount); `web.monthly_income_target_pct` remains the fallback. The meter reads "No target set" until one is set.
-- **Product name in the shell:** "IBKR Income" is inferred; confirm or rename.
-- **Logo and favicon:** none exist; a wordmark set in Hanken Grotesk 800 is the interim.
-- **Icons:** lucide-react, as built; confirm.
-- **Sheet exit:** a 180ms slide out. The sheet closes immediately today because the review sheet
-  unmounts with its approval; adding the exit means keeping the approval through it.
-- **The decide controls' look:** a lime, round primary Approve (and round Reject, Halt and dialog
-  buttons) needs a reviewed restyle of the protected `DecideControls`, `ConfirmAction`,
-  `HaltControl` and `AutonomyControl`.
-- **A disabled quiet button (proposed 2026-10-19):** the Buttons rule drops every disabled button to
-  muted ink on sunk, so a quiet button that cannot be pressed (History's and Spreads' day arrows at
-  the end of the range, and Activity's month stepper at the first month and at this month) shows a filled circle while the live one is bare, which reads backwards.
-  Proposed: a disabled quiet button stays transparent and only dims. It changes a shared
-  component's rule, so it waits for the operator.
+- **Product name in the shell: RESOLVED 2026-11-07.** "IBKR Income", as built (the operator took the default).
+- **Logo and favicon: RESOLVED 2026-11-07.** The wordmark is the text "IBKR Income" in Hanken Grotesk 800; the
+  favicon is a text mark, an ink "I" on a sage-paper rounded square (`web/app/icon.svg`, the paper and ink values,
+  no new colour). No drawn logo.
+- **Icons: RESOLVED 2026-11-07.** lucide-react, as built.
+- **Sheet exit: RESOLVED 2026-11-07.** The sheet closes immediately (the review sheet unmounts with its approval);
+  no 180ms exit. Motion's "Exits are faster than entrances" holds for every other exit.
+- **The decide controls' look: RESOLVED 2026-11-07.** The protected `DecideControls`, `ConfirmAction`,
+  `HaltControl` and `AutonomyControl` keep their legacy bordered look inside sheets: the recorded exception to the
+  round-button rule, so the safety controls are never restyled without their own review.
+- **A disabled quiet button: RESOLVED 2026-11-07.** A quiet button that cannot be pressed (History's and Spreads'
+  day arrows at the end of the range, Activity's month stepper at the first month and at this month) stays
+  transparent and only dims; a disabled primary or secondary still drops to muted ink on sunk
+  (`components/ui/Button.tsx`).
 - **The unknown grey: RESOLVED 2026-10-14.** The light `unknown` is now `#61685d` (4.72:1 on
   pressed sage, 5.20:1 on paper, 5.76:1 on white), so small "n/a" passes AA anywhere, including the
   legacy pages that Parts 2-4 have yet to restyle.
 
 ## Decision Log
 
+- 2026-11-07: **The Open Decisions closed** (web overhaul Part 7, Task 9; the operator took all six defaults on
+  2026-11-07). "IBKR Income" as a text wordmark, a text-mark favicon, lucide icons, the immediate sheet close, the
+  protected decide controls' bordered look as the recorded exception, and a disabled quiet button that stays
+  transparent and only dims (the shared Button rule changed for the quiet variant only). No new token, colour,
+  font, radius or elevation.
 - 2026-11-07: **How it works rebuilt small** (web overhaul Part 7, Task 6; the operator's answer (a)). Seven short
   cards of plain English replace the eight-tab System Explanation, which said nothing of spreads, the value book,
   regime sizing, capital release, the news thread or the roll redesign. No new token, colour, font, radius or

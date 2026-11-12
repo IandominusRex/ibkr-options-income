@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- The text-mark favicon (DESIGN.md Open Decisions, resolved 2026-11-07): ink on sage paper, the paper and ink
+       token values, no new colour. -->
+  <rect width="32" height="32" rx="8" fill="#f2f4ef"/>
+  <text x="16" y="23" text-anchor="middle" font-family="Hanken Grotesk, system-ui, sans-serif" font-size="20" font-weight="800" fill="#111410">I</text>
+</svg>

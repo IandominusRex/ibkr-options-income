@@ -7,6 +7,22 @@ import { SegmentedControl } from "./SegmentedControl";
 import { StatusWord } from "./StatusWord";
 
 describe("Button", () => {
+  it("dims a disabled quiet button without filling it, while a disabled primary or secondary drops to sunk", () => {
+    render(
+      <>
+        <Button variant="quiet" disabled>Quiet</Button>
+        <Button variant="primary" disabled>Primary</Button>
+        <Button variant="secondary" disabled>Secondary</Button>
+      </>,
+    );
+    const quiet = screen.getByRole("button", { name: "Quiet" });
+    expect(quiet).toHaveClass("bg-transparent", "disabled:text-muted");
+    expect(quiet.className).not.toContain("disabled:bg-sunk");
+    for (const name of ["Primary", "Secondary"]) {
+      expect(screen.getByRole("button", { name })).toHaveClass("disabled:bg-sunk", "disabled:text-muted");
+    }
+  });
+
   it("defaults to type=button so it never submits a form by accident", () => {
     render(<Button>Review</Button>);
     expect(screen.getByRole("button", { name: "Review" })).toHaveAttribute("type", "button");
