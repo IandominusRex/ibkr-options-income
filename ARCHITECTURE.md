@@ -1724,7 +1724,7 @@ body (next earnings, the latest brief and chart, the name's notes, recent storie
 
 `app/explain/page.tsx` + `features/explain/ExplainPage.tsx` is How it works (web overhaul Part 7 rebuilt it small and
 deleted the eight-tab `components/explain/`): seven static cards of plain English (a day from scan to order, who
-decides what, the four books, sizing and the market, rolls and freeing cash, what keeps it safe, where to look), each
+decides what, the three books and the news service, sizing and the market, rolls and freeing cash, what keeps it safe, where to look), each
 ending in links to the pages that show it. No request; the copy changes by hand when the system changes.
 
 ---

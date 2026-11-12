@@ -34,12 +34,12 @@ export const PARTS: Part[] = [
   },
   {
     id: "books",
-    title: "Four books in one account",
+    title: "Three books in one account",
     body: [
       "The wheel sells covered calls and cash-secured puts on the names in your universe.",
       "Credit spreads trade daily SPY spreads in their own process with their own gate. Claude may pick from a menu Python built and checked, never beyond it. Paper only for now.",
       "The value book buys and sells shares of companies scored from their filings, apart from the wheel's shares. Paper only for now.",
-      "The news service explains market and company news on its own thread. It never trades.",
+      "Beside them, the news service explains market and company news on its own thread. It holds no positions and never trades.",
     ],
     where: [{ href: "/portfolio", label: "Portfolio" }, { href: "/research", label: "Research" }, { href: "/news", label: "News" }],
   },

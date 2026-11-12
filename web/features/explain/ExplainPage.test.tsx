@@ -11,7 +11,7 @@ describe("ExplainPage", () => {
     expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual([
       "A day, from scan to order",
       "Who decides what",
-      "Four books in one account",
+      "Three books in one account",
       "Sizing and the market",
       "Rolls, assignment and freeing cash",
       "What keeps it safe",

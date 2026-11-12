@@ -1149,7 +1149,7 @@ overhaul Part 5) on the Position page's frame.
 ### How it works
 - **JOB:** Read. The system in plain English for the operator: what runs, who decides, and where to see it.
 - **FORM:** the Stock and Research frame; the title and one muted line; then seven white cards in one column at
-  most 820px wide, in this order: A day, from scan to order; Who decides what; Four books in one account; Sizing
+  most 820px wide, in this order: A day, from scan to order; Who decides what; Three books in one account; Sizing
   and the market; Rolls, assignment and freeing cash; What keeps it safe; Where to look. Each card is a 17px/700
   title, two to four short paragraphs at most 65 characters wide, and a "See it on" line of underlined links (44px
   rows on a phone) to the pages that show it. Static copy (`features/explain/ExplainPage.tsx`), no request; every
