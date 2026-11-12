@@ -38,6 +38,7 @@ describe("More page", () => {
     expect(screen.getByRole("link", { name: /Research/ })).toHaveAttribute("href", "/research");
     expect(screen.getByRole("link", { name: /News/ })).toHaveAttribute("href", "/news");
     expect(screen.getByRole("link", { name: /Import a statement/ })).toHaveAttribute("href", "/ledger/import");
+    expect(screen.getByRole("link", { name: /How it works/ })).toHaveTextContent("The system in plain English, and where to see it");
   });
   it("offers Search first, for a phone, which has no rail and no shortcut", () => {
     renderWithQuery(<MorePage />, served);

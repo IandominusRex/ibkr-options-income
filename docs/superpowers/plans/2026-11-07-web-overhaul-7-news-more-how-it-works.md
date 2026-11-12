@@ -120,8 +120,8 @@ adds one commit.
 | **Section B exit** | pass | rides in Task 5's commit | three task commits after Section A; vitest 1644 in 160 files; tsc, lint clean; G1 empty, G2 both greps exact, G3 exit 0, G4 green (19 rows), G5 (Section A folders + components/news, features/news, app/news, app/explain, app/more, components/ui) no line for a non-test file, G6 55 passed, G7 one line; git status clean after commit | 2026-11-12 | none |
 | **Section C entry** | pass | (rides in Task 6) | C1 five task commits, vitest 1644 in 160 files, tsc and lint clean, G1 empty, G2 exact, G7 one line; C2 T6 applies; C3 26 files in components/explain, only app/explain/page.tsx imports it, no features/explain | 2026-11-12 | none |
 | **Task 6: How it works** | done | this commit (see git log) | T6 applied (hash 78270c17 matched, check clean); red check: features/explain stashed, vitest reports "No test files found" (module missing); features/explain + app/titles 2 files 30 passed (ExplainPage 5 passed); full vitest 1649 in 161 files; tsc and lint clean; G3 exit 0; G5 over web/features/explain web/app/explain: no line for a non-test file (one em dash line in ExplainPage.test.tsx:41, which is the test's own assertion string, a test file) | 2026-11-12 | da-vinci read T6 against Section C's spec: no change (seven Cards in one column at max 820px, 1.0625rem bold titles, 65ch 14px body, 0.8125rem muted "See it on" then underlined semibold links at min-h-11 md:min-h-0; no lime, icon, chip or tab). Copy checked against root CLAUDE.md (core invariant, both written exceptions, books, capital release, paper-only) and the code (regime reads SPY and QQQ per `src/analytics/regime.py`; MarketCard on Home and News): every sentence true, none reworded. No rulings; none deviated. |
-| **Task 7: the old explainer deleted** | | | | | |
-| **Section C exit** | | | | | |
+| **Task 7: the old explainer deleted** | done | this commit (see git log) | T7 applied (hash d6363fb0 matched, check clean; 26 D lines and the four M files as listed); red check 2 failed / 12 passed (by the `git stash push --` form, then pop, `ls web/components/explain` fails); features/explain+features/search+app/more+app/titles 4 files 47 passed; full vitest 1620 in 153 files; tsc and lint clean; G1 empty; G2 both greps exact; G3 exit 0; G5 over the full Section C list no line for a non-test file; G6 55 passed; G7 the one layout line; `grep -rl components/explain` over web/app, features, components, lib and DESIGN.md finds only the test that asserts the folder is gone | 2026-11-12 | No rulings; none deviated. |
+| **Section C exit** | pass | rides in Task 7's commit | two task commits after Section B; vitest 1620 in 153 files; tsc, lint clean; G1 empty, G2 exact, G3 exit 0, G5 (shell, home, stock, stock-value, components/news, features/news, app/news, features/explain, app/explain, app/more, features/search) no line for a non-test file, G6 55 passed, G7 one line; git status clean after commit | 2026-11-12 | none |
 | **Section D entry** | | | | | |
 | **Task 8: More** | | | | | |
 | **Task 9: the Open Decisions** | | | | | |
@@ -2186,17 +2186,17 @@ index 0000000..f75d3cb
 **What it does (ruling 21):** removes the unmounted 1,532-line explainer and its 30 tests, and rewords the two places
 that described it ("The pipeline in plain English").
 
-- [ ] **Step 1: Check and apply `T7`.** `git apply --check <S>/p7/T7.out` prints nothing, then `git apply
+- [x] **Step 1: Check and apply `T7`.** `git apply --check <S>/p7/T7.out` prints nothing, then `git apply
   <S>/p7/T7.out`. `git status --short` shows 26 ` D web/components/explain/...` lines and four ` M` lines
   (`web/app/more/page.test.tsx`, `web/app/more/page.tsx`, `web/features/explain/ExplainPage.test.tsx`,
   `web/features/search/pages.ts`).
-- [ ] **Step 2: Red check.** `git stash push -- web/components/explain web/app/more/page.tsx web/features/search/pages.ts`
+- [x] **Step 2: Red check.** `git stash push -- web/components/explain web/app/more/page.tsx web/features/search/pages.ts`
   (the stash restores the folder and the old words), then `cd web && npx vitest run features/explain/ExplainPage.test.tsx app/more/page.test.tsx`
   ends `2 failed | 12 passed (14)`, then `git stash pop` (the folder is deleted again; `ls web/components/explain`
   fails).
-- [ ] **Step 3: Gate.** `npx vitest run features/explain features/search app/more app/titles.test.ts`: 4 files, all
+- [x] **Step 3: Gate.** `npx vitest run features/explain features/search app/more app/titles.test.ts`: 4 files, all
   pass. Full vitest **1620 in 153 files**; tsc, lint clean; G1, G2, G3, G5 (the full Section C list), G6, G7.
-- [ ] **Step 4: Commit** `refactor(web): delete the eight-tab explainer that How it works replaced` with the Progress
+- [x] **Step 4: Commit** `refactor(web): delete the eight-tab explainer that How it works replaced` with the Progress
   log row and the Section C exit row.
 
 <!-- block T7 -->

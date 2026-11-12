@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { PAGES } from "@/features/search/pages";
@@ -40,6 +41,12 @@ describe("ExplainPage", () => {
     const text = container.textContent ?? "";
     expect(text).not.toContain("—");
     expect(text).not.toMatch(/seamless|robust|unlock|elevate/i);
+  });
+
+  it("replaces the eight-tab explainer, which is gone, and the search list describes the new page", () => {
+    // vitest runs from web/, so this is web/components/explain.
+    expect(existsSync("components/explain")).toBe(false);
+    expect(PAGES.find((p) => p.href === "/explain")?.hint).toBe("The system in plain English");
   });
 
   it("makes each link a 44px row on a phone", () => {

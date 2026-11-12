@@ -22,7 +22,7 @@ export const PAGES: PageHit[] = [
   { label: "Universe", href: "/research/universe", hint: "The names the scan covers", words: ["would own", "watchlist", "scan"] },
   { label: "News", href: "/news", hint: "Feed and calendar", words: ["headlines", "earnings", "calendar"] },
   { label: "What Claude knows", href: "/more/claude", hint: "The market picture and what each call reads", words: ["regime", "picture", "limits"] },
-  { label: "How it works", href: "/explain", hint: "The pipeline in plain English", words: ["explain", "help"] },
+  { label: "How it works", href: "/explain", hint: "The system in plain English", words: ["explain", "help"] },
   { label: "Import a statement", href: "/ledger/import", hint: "Upload an IBKR activity CSV", words: ["csv", "upload"] },
   { label: "More", href: "/more", hint: "Bot, theme, income target, system status", words: ["settings", "halt", "target", "theme"] },
 ];
