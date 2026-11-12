@@ -1,4 +1,5 @@
-import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import { apiFetchMock, renderWithQuery } from "@/lib/test-query";
 import { NewsFeed } from "./NewsFeed";
@@ -42,5 +43,39 @@ describe("NewsFeed", () => {
       "/news/calendar?days=7": { as_of: ISO, available: false, econ: [], earnings: [] },
     });
     expect(await screen.findByText(/news service has not written anything yet/i)).toBeInTheDocument();
+  });
+
+  it("is a titled section whose chips are 'Show' and whose symbol field has a visible label", async () => {
+    renderWithQuery(<NewsFeed />, { "/news/feed?limit=30": { as_of: ISO, available: true, posts: [] } });
+    expect(screen.getByRole("heading", { level: 2, name: "Latest" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Show" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+    const box = screen.getByLabelText("Filter by symbol");
+    expect(box).not.toHaveAttribute("aria-label");
+    expect(box).toHaveClass("min-h-11", "text-base");
+  });
+
+  it("says it is loading instead of showing an empty feed", () => {
+    apiFetchMock.mockImplementation(() => new Promise(() => {}));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={qc}><NewsFeed /></QueryClientProvider>);
+    expect(screen.getByRole("status", { name: "Loading the news" })).toBeInTheDocument();
+    expect(screen.queryByText(/No posts/)).toBeNull();
+  });
+
+  it("says a failed read in words, not as an empty feed", async () => {
+    renderWithQuery(<NewsFeed />, {});
+    expect(await screen.findByText("The news feed could not be loaded. It is asked for again every minute.")).toBeInTheDocument();
+    expect(screen.queryByText(/No posts/)).toBeNull();
+  });
+
+  it("names the symbol when a filter matches nothing", async () => {
+    renderWithQuery(<NewsFeed />, {
+      "/news/feed?limit=30": { as_of: ISO, available: true, posts: [post(1, "macro_print", "CPI")] },
+      "/news/feed?symbol=ZZZ&limit=30": { as_of: ISO, available: true, posts: [] },
+    });
+    expect(await screen.findByText("CPI")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Filter by symbol"), { target: { value: "zzz" } });
+    expect(await screen.findByText("No posts match ZZZ in this group.")).toBeInTheDocument();
   });
 });

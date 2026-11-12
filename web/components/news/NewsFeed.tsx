@@ -1,22 +1,29 @@
 "use client";
 
-import { RefreshButton } from "@/components/shell/RefreshButton";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
-import { MarketCard } from "@/features/market/MarketCard";
-import { CalendarColumn } from "./CalendarColumn";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
+import { FIELD, FIELD_LABEL } from "@/components/ui/field";
 import { NewsCard } from "./NewsCard";
 import type { NewsFeedResponse } from "./types";
 
-const GROUPS: { key: string | null; label: string }[] = [
-  { key: null, label: "All" }, { key: "macro", label: "Macro" }, { key: "market", label: "Market" },
-  { key: "tickers", label: "Tickers" }, { key: "earnings", label: "Earnings" }, { key: "briefs", label: "Briefs" },
+type Group = "all" | "macro" | "market" | "tickers" | "earnings" | "briefs";
+
+const GROUPS: { value: Group; label: string }[] = [
+  { value: "all", label: "All" }, { value: "macro", label: "Macro" }, { value: "market", label: "Market" },
+  { value: "tickers", label: "Tickers" }, { value: "earnings", label: "Earnings" }, { value: "briefs", label: "Briefs" },
 ];
 
+/**
+ * The news feed (restyled in place, web overhaul Part 7): a titled section with the group chips and a
+ * labelled symbol field, then the posts newest first. Loading, failed, not yet written and no match
+ * are each a sentence, so an empty list never reads as "no news".
+ */
 export function NewsFeed() {
-  const [group, setGroup] = useState<string | null>(null);
+  const [group, setGroup] = useState<Group>("all");
   const [symbol, setSymbol] = useState("");
+  const fieldId = useId();
   // The query follows the box 300ms after the last keystroke, not on every one.
   const [filter, setFilter] = useState("");
   useEffect(() => {
@@ -24,7 +31,7 @@ export function NewsFeed() {
     return () => clearTimeout(id);
   }, [symbol]);
   const params = new URLSearchParams();
-  if (group) params.set("group", group);
+  if (group !== "all") params.set("group", group);
   if (filter) params.set("symbol", filter);
   params.set("limit", "30");
   const path = `/news/feed?${params.toString()}`;
@@ -32,26 +39,40 @@ export function NewsFeed() {
                        placeholderData: (prev) => prev, refetchInterval: 60_000 });
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_320px]" data-testid="news-feed">
-      <div className="space-y-4">
-        <MarketCard variant="news" />
-        <div className="flex flex-wrap items-center gap-2">
-          {GROUPS.map((g) => (
-            <button key={g.label} type="button" onClick={() => setGroup(g.key)} aria-pressed={group === g.key}
-              className={`rounded-sm px-3 py-1 text-sm ${group === g.key ? "bg-elevated text-content" : "text-muted hover:text-content"} focus-visible:ring-focus`}>
-              {g.label}
-            </button>
-          ))}
-          <input value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="Symbol"
-            className="ml-auto w-28 rounded-sm bg-background px-2 py-1 font-mono text-sm text-content" aria-label="Filter by symbol" />
-          <RefreshButton label="Refresh the news" className="-my-2" />
+    <section aria-labelledby="feed-title" data-testid="news-feed">
+      <h2 id="feed-title" className="text-[1.0625rem] font-bold">
+        Latest
+      </h2>
+      <p className="mt-1 text-[0.8125rem] text-muted">The news service&apos;s posts, newest first, 30 at most.</p>
+      <div className="mt-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
+        <SegmentedControl label="Show" appearance="chips" options={GROUPS} value={group} onChange={setGroup} />
+        <div className="flex flex-col gap-1">
+          <label htmlFor={fieldId} className={FIELD_LABEL}>
+            Filter by symbol
+          </label>
+          <input
+            id={fieldId}
+            value={symbol}
+            onChange={(e) => setSymbol(e.target.value)}
+            placeholder="Ticker"
+            autoCapitalize="characters"
+            autoComplete="off"
+            spellCheck={false}
+            className={`${FIELD} w-36 uppercase`}
+          />
         </div>
-        {q.isError && <p className="text-sm text-muted">Could not load the news feed.</p>}
-        {q.data && !q.data.available && <p className="text-sm text-muted">The news service has not written anything yet.</p>}
-        {q.data?.available && q.data.posts.length === 0 && <p className="text-sm text-muted">No posts match.</p>}
+      </div>
+      <div className="mt-4 grid grid-cols-1 gap-3">
+        {q.isPending && (
+          <div role="status" aria-busy="true" aria-label="Loading the news" className="h-28 rounded-[18px] bg-surface" />
+        )}
+        {q.isError && !q.data && <p className="text-sm">The news feed could not be loaded. It is asked for again every minute.</p>}
+        {q.data && !q.data.available && <p className="text-sm">The news service has not written anything yet.</p>}
+        {q.data?.available && q.data.posts.length === 0 && (
+          <p className="text-sm">{filter ? `No posts match ${filter} in this group.` : "No posts in this group yet."}</p>
+        )}
         {q.data?.posts.map((p) => <NewsCard key={p.id} post={p} />)}
       </div>
-      <CalendarColumn />
-    </div>
+    </section>
   );
 }

@@ -113,8 +113,8 @@ adds one commit.
 | **Task 1: the rail's Search field and the sectors' count** | done | this commit (see git log) | T1 applied (hash ab3bec3b matched, git apply --check clean); red check 3 failed / 8 passed; components/shell+home+features/research 13 files 106 passed; full vitest 1623 in 157 files; tsc and lint clean; G3 exit 0 | 2026-11-12 | da-vinci: no change (the patch matches Section A's spec). No rulings; none deviated. |
 | **Task 2: the stock page's three minors** | done | this commit (see git log) | T2 applied (hash 8c21582d matched, check clean); red check 3 failed / 29 passed; components/stock+features/stock-value 9 files 77 passed; full vitest 1624 in 157 files; tsc and lint clean; G1 empty; G2 as listed; G5 no line | 2026-11-12 | da-vinci: no change. No rulings; none deviated. |
 | **Section A exit** | pass | rides in Task 2's commit | two task commits after A0; vitest 1624 in 157 files; tsc, lint clean; G1 empty, G2 exact, G3 exit 0, G5 (shell, home, stock, stock-value) no line, G7 the one layout line; git status clean after commit | 2026-11-12 | none |
-| **Section B entry** | | | | | |
-| **Task 3: the News page** | | | | | |
+| **Section B entry** | pass | (rides in Task 3) | B1 two Section A commits (c9eb71e, 971b9d7), vitest 1624 in 157 files, tsc and lint clean, G1 empty, G2 exact, G7 one line; B2 T3, T4, T5 apply; B3 no features/news, BriefRequest the only submitCommand, 3/3/3 `it(` | 2026-11-12 | none |
+| **Task 3: the News page** | done | this commit (see git log) | T3 applied (hash 8b286fe0 matched, check clean); red check 4 failed / 3 passed; components/news+features/news+app/titles 5 files 41 passed; full vitest 1631 in 158 files; tsc and lint clean; G5 over components/news, features/news, app/news no line for a non-test file | 2026-11-12 | da-vinci read T3 against Section B's spec: no change (no lime, green, red or em dash in the added lines). No rulings; none deviated. |
 | **Task 4: the calendar and the news card** | | | | | |
 | **Task 5: the ticker news page** | | | | | |
 | **Section B exit** | | | | | |
@@ -723,11 +723,11 @@ request is secondary. No green or red: the verdict is ink. da-vinci reads the pa
 
 **Entry checks:**
 
-- [ ] **B1. Section A landed.** In `<W>`: `git log --oneline main..HEAD` shows the two Section A commits; vitest
+- [x] **B1. Section A landed.** In `<W>`: `git log --oneline main..HEAD` shows the two Section A commits; vitest
   **1624 in 157 files**; tsc and lint clean; G1 empty; G2 as listed; G7 the one layout line.
-- [ ] **B2. Every patch of the section applies on the tree as it is** (they touch disjoint files): `git apply --check
+- [x] **B2. Every patch of the section applies on the tree as it is** (they touch disjoint files): `git apply --check
   <S>/p7/T3.out`, `T4.out`, `T5.out`: each prints nothing.
-- [ ] **B3. Starting shape.** `ls web/features/news` fails (no such directory);
+- [x] **B3. Starting shape.** `ls web/features/news` fails (no such directory);
   `grep -rln "submitCommand" web/components/news` prints exactly `web/components/news/BriefRequest.tsx`;
   `grep -c "it(" web/components/news/NewsFeed.test.tsx web/components/news/NewsTicker.test.tsx web/components/news/NewsCard.test.tsx`
   prints `3`, `3` and `3`.
@@ -747,15 +747,15 @@ feed ("Latest") and the calendar sit in two single-track columns from 1024px. Th
 read and no match are sentences. `NewsFeed` no longer mounts the Market card, the calendar or Refresh (the page
 does). Its three existing tests pass unchanged; four are added.
 
-- [ ] **Step 1: Check and apply `T3`.** `git status --short` shows ` M web/app/news/page.tsx`,
+- [x] **Step 1: Check and apply `T3`.** `git status --short` shows ` M web/app/news/page.tsx`,
   ` M web/components/news/NewsFeed.test.tsx`, ` M web/components/news/NewsFeed.tsx` and `?? web/features/`.
-- [ ] **Step 2: Red check.** `git stash push -- web/components/news/NewsFeed.tsx`, then
+- [x] **Step 2: Red check.** `git stash push -- web/components/news/NewsFeed.tsx`, then
   `cd web && npx vitest run components/news/NewsFeed.test.tsx` ends `4 failed | 3 passed (7)`, then `git stash pop`.
   (`NewsPage` is a new module: its red is the module missing.)
-- [ ] **Step 3: Gate.** `npx vitest run components/news features/news app/titles.test.ts`: all pass. Full vitest **1631
+- [x] **Step 3: Gate.** `npx vitest run components/news features/news app/titles.test.ts`: all pass. Full vitest **1631
   in 158 files**; tsc, lint clean; G5 over `web/components/news web/features/news web/app/news`: no line for a
   non-test file.
-- [ ] **Step 4: Commit** `feat(web): News on the payslip: the frame, the Market card first, the feed with labelled
+- [x] **Step 4: Commit** `feat(web): News on the payslip: the frame, the Market card first, the feed with labelled
   controls` with the Progress log row (and the Section B entry row).
 
 <!-- block T3 -->

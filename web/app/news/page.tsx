@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { NewsFeed } from "@/components/news/NewsFeed";
+import { NewsPage } from "@/features/news/NewsPage";
 
 export const metadata: Metadata = { title: "News" };
 
-export default function NewsPage() {
-  return <NewsFeed />;
+export default function Page() {
+  return <NewsPage />;
 }
