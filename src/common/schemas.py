@@ -627,6 +627,7 @@ class RollOrigin(BaseModel):
     old_mid: float  # $/sh to buy back the old leg when proposed
     new_mid: float  # $/sh the new leg sold for when proposed
     allow_debit: bool = False  # a keep-shares covered-call roll may pay up to roll.cc.max_debit
+    itm_at_proposal: bool = False  # a put in the money when proposed: must roll down (2026-11-12)
 
 
 class ScaleInZone(BaseModel):

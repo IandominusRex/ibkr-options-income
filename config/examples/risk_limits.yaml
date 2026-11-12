@@ -201,6 +201,7 @@ regime:
     slow_ret_1m_pct: -5.0
     ease_contango_days: 3     # contango closes needed before easing one notch
     min_days_in_regime: 2
+    ease_max_notches: 3       # an easing step may go straight to the day's reading (at most this many notches)
     intraday:                 # one-way within the day; expires at the close
       SPY: {stressed: -2.0, crisis: -3.5}
       QQQ: {stressed: -2.5, crisis: -4.0}

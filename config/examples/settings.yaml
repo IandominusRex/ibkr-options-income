@@ -522,6 +522,7 @@ roll:
     buffer: 0.05                  # E (theory: assignment when extrinsic < dividend) / I (value)
   csp:
     when_assignable: roll_if_credit  # operator ruling 2026-10-11 (report default: assign)
+    itm_min_basis_drop_pct: 1.0   # ITM put: roll down for a credit, new strike - credit >= this % under the old strike (2026-11-12)
   cc:
     keep_shares: true             # operator ruling 2026-10-11 (report default: let called away)
     max_debit: 0.25               # I — $/sh a keep-shares call roll may pay
@@ -536,6 +537,7 @@ roll:
     max_extension_days: 28        # I — beyond the chain's original expiry
   exec:
     reprice_steps: 3              # I — combo walks mid → natural in bounded steps, never past the floor
+    max_attempts_per_day: 3       # unfilled roll orders per short per day before falling back to assign/close (2026-11-12)
 
 # Trade ledger — whole-account history, dashboard /ledger, Google Sheet mirror.
 # docs/superpowers/specs/2026-10-04-trade-ledger-design.md §8. Secrets live in .env.

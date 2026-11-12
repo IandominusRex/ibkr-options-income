@@ -347,3 +347,37 @@ async def test_the_bag_level_execution_never_holds_up_the_commission() -> None:
     r = await ex.open(cand(), 1, approve)
     assert r.filled_qty == 1 and r.commission == pytest.approx(2 * 0.869)
     assert time.monotonic() - started < 1.0
+
+
+# 2026-11-10 — a close whose cancel went unconfirmed kept filling after it was reported.
+async def test_an_unresolved_order_reports_its_late_fills_until_done() -> None:
+    ib = FakeIB(fill_at=None)
+    ib.ignore_cancel = True
+    ex = SpreadExecutor(ib, FakeBroker([]), PAPER, now=lambda: NOW, poll_seconds=0.01)
+    ex_wait = ex._wait_done
+
+    async def short_wait(trade, seconds):
+        return await ex_wait(trade, min(seconds, 0.05))
+
+    ex._wait_done = short_wait  # type: ignore[method-assign]
+    r = await ex.close(position(3), q(679, 0.38, 0.42, 111), q(674, 0.08, 0.12, 222), urgent=False)
+    assert r.reason == "cancel_unconfirmed" and r.filled_qty == 0
+    assert ex.late_fills() == []  # nothing new yet, still live
+    assert ib.trade is not None
+    ib.trade.orderStatus.filled, ib.trade.orderStatus.avgFillPrice = 2, 0.12
+    (f,) = ex.late_fills()
+    assert f.filled_qty == 2 and f.price == pytest.approx(0.12) and not f.done
+    assert f.order_ref == r.order_ref
+    ib.trade.orderStatus.filled, ib.trade.orderStatus.avgFillPrice = 3, 0.13
+    ib.trade.orderStatus.status = "Cancelled"
+    (g,) = ex.late_fills()
+    assert g.filled_qty == 1 and g.price == pytest.approx(0.15) and g.done
+    assert ex.late_fills() == []  # dropped once done
+
+
+async def test_a_resolved_order_is_not_watched() -> None:
+    ib = FakeIB(fill_at=-0.58)
+    fresh = [q(679, 0.80, 0.86, 111), q(674, 0.20, 0.24, 222)]
+    ex = SpreadExecutor(ib, FakeBroker(fresh), PAPER, now=lambda: NOW, poll_seconds=0.01)
+    await ex.open(cand(), 1, approve)
+    assert ex.late_fills() == []

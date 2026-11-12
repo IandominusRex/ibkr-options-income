@@ -205,6 +205,15 @@ def roll_failed_today(pos: PositionSnapshot) -> bool:
     The loss line tries a roll before buying back; a roll that was cancelled, rejected or timed
     out must not be retried every cycle while the loss grows — the next pass closes instead.
     """
+    return roll_failures_today(pos) > 0
+
+
+def roll_failures_today(pos: PositionSnapshot) -> int:
+    """How many roll orders for *pos* were cancelled or refused at send this ET day.
+
+    2026-11-10/11: the same three rolls were auto-approved, sent and left unfilled (or refused
+    for a collapsed credit) every 30 minutes, 35 approvals for 3 fills. After
+    ``roll.exec.max_attempts_per_day`` the policy stops proposing a roll for the day."""
     from datetime import time as dtime
     from zoneinfo import ZoneInfo
 
@@ -221,7 +230,7 @@ def roll_failed_today(pos: PositionSnapshot) -> bool:
             )
             .all()
         )
-        return any(_same_short(o.snapshot, pos) for o in rows)
+        return sum(1 for o in rows if _same_short(o.snapshot, pos))
 
 
 def _gate_fallback(
@@ -388,6 +397,20 @@ async def evaluate_roll(
     )
 
     cand = decision.candidate
+    if (
+        decision.action == "roll"
+        and cand is not None
+        and not manual
+        and roll_failures_today(pos) >= rc.exec.max_attempts_per_day
+    ):
+        decision = _gate_fallback(
+            decision,
+            pos,
+            cc_basis,
+            [f"roll_unfilled_x{rc.exec.max_attempts_per_day}_today"],
+            on_no_roll=on_no_roll,
+        )
+        cand = None
     if decision.action == "roll" and cand is not None:
         account = await get_account_snapshot_async(ib, cfg.secrets.ibkr_account)
         # Rolls are exempt from regime limits (spec section 5): sizing=None, on purpose.

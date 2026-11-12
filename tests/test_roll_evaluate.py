@@ -219,3 +219,12 @@ async def test_a_cancelled_roll_order_today_counts_as_failed(wired, db) -> None:
         s.add(OrderRow(candidate_id="x", approval_id=approval_id, state="cancelled", snapshot=snap))
         s.commit()
     assert roll_failed_today(_pos())
+
+
+@pytest.fixture(autouse=True)
+def _no_roll_down_rule(monkeypatch):
+    """These tests predate the ITM roll-down rule (2026-11-12) and use same-strike rolls of an
+    in-the-money put; the rule has its own tests (tests/test_roll_down_rule.py)."""
+    from src.common.config import get_config
+
+    monkeypatch.setattr(get_config().roll.csp, "itm_min_basis_drop_pct", None)

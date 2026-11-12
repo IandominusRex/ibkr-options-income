@@ -209,3 +209,12 @@ def test_a_partial_close_of_the_open_leg_keeps_its_entry_credit(db) -> None:
     _seed(db, "c-multi", 330.0, _NEW_EXP, [("SELL", 2, 1.50, 0.0), ("BUY", 1, 0.70, 0.0)])
     with db() as s:
         assert chain_entry_credit_per_share(s, _pos(qty=-1)) == pytest.approx(1.50)
+
+
+@pytest.fixture(autouse=True)
+def _no_roll_down_rule(monkeypatch):
+    """These tests predate the ITM roll-down rule (2026-11-12) and use same-strike rolls of an
+    in-the-money put; the rule has its own tests (tests/test_roll_down_rule.py)."""
+    from src.common.config import get_config
+
+    monkeypatch.setattr(get_config().roll.csp, "itm_min_basis_drop_pct", None)

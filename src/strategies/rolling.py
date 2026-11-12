@@ -29,6 +29,7 @@ from src.common.schemas import (
     TechnicalStats,
     TradeCandidate,
 )
+from src.engine.risk_engine import rolls_down_enough
 from src.storage.roll_chains import RollChainState
 from src.strategies._scoring import make_candidate_id, technical_score
 
@@ -133,6 +134,10 @@ def _reject_reason(
         return failures[0]
     if new_mid - old_mid < floor - _EPS:
         return "net_below_floor"
+    if is_put and ctx.spot is not None and ctx.spot < pos.strike:
+        # In the money: only a roll down that lowers the assignment cost is worth sending.
+        if not rolls_down_enough(pos.strike, quote.strike, new_mid - old_mid, cfg):
+            return "not_rolled_down"
     if quote.delta is None:
         return "delta_missing"
     if old_delta is not None and abs(quote.delta) > old_delta + _EPS:
@@ -227,5 +232,8 @@ def _roll_candidate(
             old_mid=old_mid,
             new_mid=new_mid,
             allow_debit=ctx.allow_debit,
+            itm_at_proposal=(
+                pos.right == OptionRight.PUT and ctx.spot is not None and ctx.spot < pos.strike
+            ),
         ),
     )

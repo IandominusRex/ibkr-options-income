@@ -603,6 +603,11 @@ class RollCspCfg(BaseModel):
     # "roll_if_credit": roll a breached would-own put for a net credit, else let it assign.
     # "assign": let it assign without trying a roll.
     when_assignable: Literal["roll_if_credit", "assign"] = "assign"
+    # An in-the-money put rolls only DOWN and for a credit: the new assignment cost (new strike
+    # minus the net credit) must sit at least this % under the old strike (operator ruling
+    # 2026-11-12: a same-strike roll three days out for $0.05 is noise, not a trade).
+    # None turns the rule off (the shipped config sets 1.0).
+    itm_min_basis_drop_pct: float | None = Field(default=None, ge=0)
 
 
 class RollCcCfg(BaseModel):
@@ -635,6 +640,9 @@ class RollExecCfg(BaseModel):
     reprice_steps: int = Field(
         default=3, ge=0
     )  # combo walks mid → natural in this many steps; 0 = off
+    # Roll orders for one short that may go unfilled (cancelled or refused at send) in an ET day
+    # before the policy stops proposing a roll and falls back to its no-roll answer.
+    max_attempts_per_day: int = Field(default=3, ge=1)
 
 
 class RollCfg(BaseModel):
@@ -2157,6 +2165,7 @@ class RegimeThresholdsCfg(_KeyedCfg):
         "slow_ret_1m_pct",
         "ease_contango_days",
         "min_days_in_regime",
+        "ease_max_notches",
         "intraday",
     )
 
@@ -2173,6 +2182,9 @@ class RegimeThresholdsCfg(_KeyedCfg):
     slow_ret_1m_pct: float = -5.0
     ease_contango_days: int = 3
     min_days_in_regime: int = 2
+    # How far one easing step may go toward the day's classification (2026-11-12: one notch at a
+    # time held a crisis base for a week after the VIX was back to 19 and the curve in contango).
+    ease_max_notches: int = 1
     intraday: RegimeIntradayCfg = Field(default_factory=RegimeIntradayCfg)
 
     @model_validator(mode="after")
@@ -2181,6 +2193,8 @@ class RegimeThresholdsCfg(_KeyedCfg):
             raise ValueError("regime.thresholds: need vol_cautious <= vol_stressed <= vol_crisis")
         if self.term_stressed > self.term_crisis:
             raise ValueError("regime.thresholds: need term_stressed <= term_crisis")
+        if self.ease_max_notches < 1:
+            raise ValueError("regime.thresholds: ease_max_notches must be >= 1")
         if self.ease_contango_days < 0 or self.min_days_in_regime < 0:
             raise ValueError("regime.thresholds: day counts must be >= 0")
         return self

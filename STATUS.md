@@ -347,6 +347,40 @@ Operator to-dos: re-copy `config/examples/value.yaml`'s `telegram:` and `prompt_
 
 ---
 
+## Bugs fixed (2026-11-12 — spreads late fill, regime flapping, roll noise)
+
+From the week's logs (Nov 5–12):
+
+- **Spreads: a late fill on an unresolved order is booked.** On Nov 10 a profit-take close whose
+  cancel went unconfirmed filled 2 more lots 27 s after the executor reported 3. spreads.db kept a
+  2-lot phantom, entries stayed blocked on the broker/DB mismatch through Nov 11 and 12, and the
+  expired-but-open and "close before the bell" alerts repeated. `SpreadExecutor.late_fills()` now
+  keeps watching an `UNRESOLVED` order and the service books what it fills (`_late_fills`); the
+  phantom was settled by hand with `scripts.spreads_resolve`. The disconnected "URGENT" alert and
+  the time-stop alert now count only spreads expiring today, and the URGENT one only fires
+  between the time stop and 16:00 ET (it was paging at 9 PM ET about a past expiry).
+- **Regime: the bottoming signal holds for the session.** A VIX sitting on the off-peak line
+  (Nov 6) and a VIX/VIX3M of 0.99 against 1.00 (Nov 10) flipped crisis <-> stressed every scan.
+  Once fired it now holds until the close unless a fresh breach cancels it or the index breaks the
+  selloff low.
+- **Regime notices are netted.** The Nov 10 circuit-breaker halt paused the scan (the only sender)
+  and twelve queued flips went out together a day late. `coalesce_changes` sends one message, the
+  net change per index; flips that cancel out send nothing.
+- **Regime easing may go straight to the day's reading** (`regime.thresholds.ease_max_notches`,
+  ships 3). The base stayed CRISIS from Nov 6 with the VIX back at 19 and the curve in contango
+  (SPY read NORMAL, QQQ CAUTIOUS) because easing went one notch at a time. The contango-streak and
+  days-in-regime gates still apply; easing never goes past the day's classification.
+- **Roll noise.** One decision card per short per action per ET day (the approval id and reason
+  are no longer in the key); an assign / hold / let-called-away answer stands for the day; a
+  short under a decision gets no breach / delta / loss / assignment info alert; after
+  `roll.exec.max_attempts_per_day` (3) unfilled roll orders the policy gives its no-roll answer.
+- **ITM put rolls must roll down (operator ruling 2026-11-12).** `roll.csp.itm_min_basis_drop_pct`
+  (ships 1.0): an in-the-money put rolls only to a lower strike, for a credit, with the new
+  assignment cost (strike minus net credit) at least 1% under the old strike. Enforced by the roll
+  constructor (`not_rolled_down`) and the Rules Engine (`roll_not_rolled_down`, via
+  `RollOrigin.itm_at_proposal`); same-strike rolls three days out for $0.05 (NVDA 205P/210P) are
+  gone. Rolls of out-of-the-money breaches keep the old rule.
+
 ## Built (2026-11-07 — web overhaul Part 7: News, More and How it works)
 
 Plan: `docs/superpowers/plans/2026-11-07-web-overhaul-7-news-more-how-it-works.md` (branch `feat/web-overhaul-7`;

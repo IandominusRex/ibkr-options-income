@@ -57,6 +57,28 @@ class FillResult:
 UNRESOLVED = ("connection_lost", "cancel_unconfirmed")
 
 
+@dataclass(frozen=True)
+class LateFill:
+    """Contracts an unresolved order filled after ``_work`` returned (2026-11-10: a close whose
+    cancel went unconfirmed filled 2 more lots 27 s later and spreads.db never saw them)."""
+
+    order_ref: str
+    filled_qty: int  # newly filled since the last report
+    price: float | None  # per-share magnitude of those new fills
+    commission: float
+    perm_id: int | None
+    ib_order_id: int | None
+    done: bool  # the order is finished at IBKR: nothing more will fill
+
+
+@dataclass
+class _Watch:
+    trade: Any
+    reported: int
+    reported_avg: float | None  # magnitude, per share
+    since: datetime
+
+
 def open_ref(cfg: SpreadsCfg, spread_id: str) -> str:
     return f"{cfg.order_ref_prefix}{spread_id}"
 
@@ -109,6 +131,42 @@ class SpreadExecutor:
         self.now = now
         self.poll = poll_seconds
         self.commission_wait = commission_wait_seconds
+        self._watch: dict[str, _Watch] = {}  # order_ref -> an order that may still fill
+
+    def late_fills(self) -> list[LateFill]:
+        """Fills an unresolved order took after it was reported, and whether it is now done.
+
+        ib_async keeps updating the ``Trade`` it returned from ``placeOrder`` after the executor
+        stops polling, so the late fills are read off that object. A watch is dropped once its
+        order is done, or after a day (a reconnect can leave the object frozen)."""
+        out: list[LateFill] = []
+        now = self.now()
+        for ref, w in list(self._watch.items()):
+            st = w.trade.orderStatus
+            filled = int(getattr(st, "filled", 0) or 0)
+            done = bool(w.trade.isDone())
+            extra = filled - w.reported
+            price: float | None = None
+            if extra > 0:
+                avg = abs(float(getattr(st, "avgFillPrice", 0.0) or 0.0))
+                prior = (w.reported_avg or 0.0) * w.reported
+                price = round(max(0.0, (avg * filled - prior) / extra), 4)
+                w.reported, w.reported_avg = filled, avg
+            if extra > 0 or done:
+                out.append(
+                    LateFill(
+                        order_ref=ref,
+                        filled_qty=max(0, extra),
+                        price=price,
+                        commission=2 * max(0, extra) * self.cfg.execution.commission_per_contract,
+                        perm_id=int(getattr(w.trade.order, "permId", 0) or 0) or None,
+                        ib_order_id=int(getattr(w.trade.order, "orderId", 0) or 0) or None,
+                        done=done,
+                    )
+                )
+            if done or (now - w.since).total_seconds() > 86_400:
+                self._watch.pop(ref, None)
+        return out
 
     async def open(
         self,
@@ -275,5 +333,9 @@ class SpreadExecutor:
         perm = int(getattr(trade.order, "permId", 0) or 0) or None
         oid = int(getattr(trade.order, "orderId", 0) or 0) or None
         commission = await self._commission(trade, filled)
+        if unresolved is not None:
+            self._watch[ref] = _Watch(
+                trade, filled, abs(avg) if avg is not None else None, self.now()
+            )
         log.info("spreads order %s: filled %d @ %s (%s)", ref, filled, avg, unresolved or "done")
         return filled, avg, commission, perm, oid, unresolved

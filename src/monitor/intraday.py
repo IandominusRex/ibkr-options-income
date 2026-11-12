@@ -233,6 +233,27 @@ def _select_fresh(alerts: list[RollAlert], *, opened_at: datetime | None) -> lis
     return fresh
 
 
+# Info triggers a roll decision card already speaks for (2026-11-05..11: 26-39 of these a day
+# for the same eight breached shorts, beside their decision cards).
+_DECISION_COVERS = frozenset({"strike_breach", "delta_drift", "loss_multiple", "assignment_risk"})
+
+
+def _decision_owns(
+    pos: PositionSnapshot, quote: OptionQuote, fund: FundamentalStats | None, cfg: Config
+) -> bool:
+    from src.strategies.roll_policy import roll_trigger
+
+    guard = bool(cfg.risk.get("events", {}).get("ex_dividend_assignment_guard", True))
+    try:
+        return (
+            roll_trigger(pos, quote, fund, cfg.roll, ex_div_guard=guard, today=today_et())
+            is not None
+        )
+    except Exception:
+        log.exception("roll trigger check failed for %s", pos.symbol)
+        return False
+
+
 def _persist_alert(alert: RollAlert, review: RollReview | None) -> None:
     """Write a RollAlertRow to the DB."""
     with session_scope() as session:
@@ -265,8 +286,12 @@ async def fire_alerts(
     executor: ThreadPoolExecutor,
     ib: IB | None = None,
     opened_at: datetime | None = None,
+    fund: FundamentalStats | None = None,
 ) -> None:
     """De-dup, call Claude, send Telegram, persist. No-op if the alert policy holds all back.
+
+    A short the roll policy acts on (``roll_trigger`` fires) gets its decision card instead of
+    the breach / delta / loss / assignment info lines, which only repeated it every day.
 
     This function is the testable heart of the monitor — the IB event subscription
     code in IntradayMonitor calls into here. Since the 2026-10-11 roll redesign every alert it
@@ -277,6 +302,8 @@ async def fire_alerts(
     """
     if not _alert_window_open(cfg):
         return
+    if _decision_owns(pos, quote, fund, cfg):
+        alerts = [a for a in alerts if a.trigger not in _DECISION_COVERS]
     fresh = _select_fresh(
         [a for a in alerts if (a.position_symbol, a.trigger) not in _IN_FLIGHT],
         opened_at=opened_at,
@@ -374,24 +401,29 @@ class RollEvalState:
     tasks: set[asyncio.Task[Any]] = field(default_factory=set)
 
 
-def _decision_key(decision: RollDecision, approval_id: int | None) -> str:
-    key = f"{decision.action}:{decision.reason}"
-    return f"{key}:{approval_id}" if approval_id is not None else key
+# One card per position per action per ET day (2026-11-10: 58 decision cards for 8 shorts — the
+# key carried the approval id, so every 30-minute re-queue of the same roll sent a new card, and
+# the reason, so an assign <-> roll flip sent two). A re-queued roll retries silently.
+_STANDING = frozenset({"assign", "hold", "let_called_away"})
+
+
+def _decision_key(decision: RollDecision, approval_id: int | None = None) -> str:
+    return decision.action
+
+
+def _decisions_sent_today(position_symbol: str) -> set[str]:
+    with session_scope() as session:
+        rows = session.query(RollAlertRow.detail).filter(
+            RollAlertRow.position_symbol == position_symbol,
+            RollAlertRow.trigger == _DECISION_TRIGGER,
+            RollAlertRow.created_at >= _et_day_start_utc().replace(tzinfo=None),
+        )
+        # Rows written before 2026-11-12 carry "action:reason[:approval]"; the action leads.
+        return {str(d).split(":", 1)[0] for (d,) in rows if d}
 
 
 def _decision_sent_today(position_symbol: str, key: str) -> bool:
-    with session_scope() as session:
-        return (
-            session.query(RollAlertRow.id)
-            .filter(
-                RollAlertRow.position_symbol == position_symbol,
-                RollAlertRow.trigger == _DECISION_TRIGGER,
-                RollAlertRow.detail == key,
-                RollAlertRow.created_at >= _et_day_start_utc().replace(tzinfo=None),
-            )
-            .first()
-            is not None
-        )
+    return key in _decisions_sent_today(position_symbol)
 
 
 def _persist_decision(
@@ -488,6 +520,10 @@ async def handle_roll_trigger(
     ):
         return None
     state.last_eval[key] = t
+    # An assign / hold / let-called-away answer stands for the rest of the day: re-reading it
+    # every 30 minutes only flipped it on quote noise (NVDA 205P, 2026-11-05..12).
+    if _decisions_sent_today(pos.symbol) & _STANDING:
+        return None
     state.inflight.add(key)
     try:
         # get_positions carries no greeks; the policy compares the live delta.
@@ -812,6 +848,7 @@ class IntradayMonitor:
                     self._executor,
                     ib=self._ib,
                     opened_at=opened_at,
+                    fund=fund_stats,
                 )
             # Roll decisions run as their own task: a targeted fetch takes seconds and must
             # not stall the tick stream. handle_roll_trigger gates on the window, the trigger,

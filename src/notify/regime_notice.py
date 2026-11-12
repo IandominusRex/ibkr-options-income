@@ -87,16 +87,48 @@ def working_csp_opens() -> int:
         return 0
 
 
-async def send_regime_changes() -> int:
-    """Announce every unsent regime change on Telegram; returns how many went out.
+def coalesce_changes(pending: list[RegimeChange]) -> list[RegimeChange]:
+    """The net change per index across *pending*: flips that cancel out say nothing.
 
-    Best-effort: with no bot token, or when Telegram fails, the changes stay unsent and are
-    retried on the next call. Only the changes actually sent are flagged, so one appended while
-    this ran is not lost.
+    2026-11-12: a circuit-breaker halt paused the scan, and twelve queued crisis <-> stressed
+    flips went out together a day late. Several changes for one index become one, from the first
+    ``before`` to the last ``after``, with the last reasons and how many changes it stands for.
+    """
+    out: list[RegimeChange] = []
+    for index in dict.fromkeys(c.index for c in pending):
+        mine = [c for c in pending if c.index == index]
+        first, last = mine[0], mine[-1]
+        if first.before == last.after:
+            continue
+        if len(mine) == 1:
+            out.append(last)
+            continue
+        since = first.at.astimezone(_ET).strftime("%a %H:%M ET")
+        out.append(
+            last.model_copy(
+                update={
+                    "before": first.before,
+                    "why": [*last.why, f"{len(mine)} changes since {since}"],
+                }
+            )
+        )
+    return out
+
+
+async def send_regime_changes() -> int:
+    """Announce the unsent regime changes on Telegram, netted per index, in one message.
+
+    Returns how many changes were marked sent. Best-effort: with no bot token, or when Telegram
+    fails, the changes stay unsent and are retried on the next call. Only the changes read here
+    are flagged, so one appended while this ran is not lost.
     """
     pending = unsent_changes()
     if not pending:
         return 0
+    net = coalesce_changes(pending)
+    if not net:  # every flip cancelled out: nothing to tell the operator
+        mark_changes_sent(pending)
+        return len(pending)
     cfg = get_config()
     token = cfg.secrets.telegram_bot_token
     chat_id = str(cfg.secrets.telegram_chat_id)
@@ -105,22 +137,15 @@ async def send_regime_changes() -> int:
     regime_cfg = get_regime_cfg()
     working = working_csp_opens()
     thread = thread_id(cfg.secrets.telegram_thread_account)
-
-    sent: list[RegimeChange] = []
+    text = "\n\n".join(format_regime_change(c, regime_cfg, working_opens=working) for c in net)
     try:
         async with Bot(token=token) as bot:
-            for change in pending:
-                await bot.send_message(
-                    chat_id=chat_id,
-                    message_thread_id=thread,
-                    text=format_regime_change(change, regime_cfg, working_opens=working),
-                )
-                sent.append(change)
+            await bot.send_message(chat_id=chat_id, message_thread_id=thread, text=text)
     except Exception:
         log.warning("regime notice: sending failed — will retry on the next scan", exc_info=True)
-    if sent:
-        mark_changes_sent(sent)
-    return len(sent)
+        return 0
+    mark_changes_sent(pending)
+    return len(pending)
 
 
 def format_regime_status(

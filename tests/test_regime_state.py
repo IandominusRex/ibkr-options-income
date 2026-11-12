@@ -326,13 +326,35 @@ def test_next_day_base_eases_only_after_contango_streak_and_min_days():
     state = refresh(DAY2 + timedelta(hours=1), feed)  # same ET day: daily base is not recomputed
     assert state.spy.base == X
 
-    # day 3: streak 5 and 2 days since the base last changed: eases (one notch)
+    # day 3: streak 5 and 2 days since the base last changed: eases straight to the day's
+    # reading (ease_max_notches 3 ships; 2026-11-12)
     state = refresh(DAY3, feed)
-    assert state.spy.base == S
+    assert state.spy.base == N
     assert state.spy.base_since == date(2026, 10, 23)
 
 
-def test_easing_is_one_notch_at_a_time():
+def _notches(monkeypatch, n: int) -> None:
+    import src.regime.refresh as mod
+    from src.common.config import get_regime_cfg
+
+    cfg = get_regime_cfg()
+    th = cfg.thresholds.model_copy(update={"ease_max_notches": n})
+    monkeypatch.setattr(mod, "get_regime_cfg", lambda: cfg.model_copy(update={"thresholds": th}))
+
+
+def test_easing_goes_to_the_reading_but_never_past_it(monkeypatch):
+    _notches(monkeypatch, 3)
+    feed = Feed(daily={"SPY": hot(40.0), "QQQ": hot(40.0)})
+    refresh(DAY1, feed)
+    cautious = hot(25.0).model_copy(update={"contango_streak": 6})  # reads cautious
+    feed.daily = {"SPY": cautious, "QQQ": cautious}
+    refresh(DAY2, feed)
+    state = refresh(DAY3, feed)
+    assert state.spy.base == C  # CRISIS -> CAUTIOUS in one step, not on to NORMAL
+
+
+def test_easing_is_one_notch_at_a_time(monkeypatch):
+    _notches(monkeypatch, 1)
     feed = Feed(daily={"SPY": hot(40.0), "QQQ": hot(40.0)})
     refresh(DAY1, feed)
     feed.daily = {"SPY": calm(streak=6), "QQQ": calm(streak=6)}

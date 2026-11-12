@@ -422,6 +422,22 @@ def open_position(
         return _to_schema(row)
 
 
+def add_contracts(spread_id: str, *, contracts: int, credit: float, commission: float) -> bool:
+    """Book an opening fill that arrived after the open was recorded (a late fill on an order
+    whose cancel went unconfirmed): the entry credit becomes the contract-weighted average.
+    False when the spread has no open row to add to."""
+    with spreads_session() as s:
+        row = s.query(SpreadPositionRow).filter_by(spread_id=spread_id).one_or_none()
+        if row is None or row.status != "open" or contracts < 1:
+            return False
+        total = row.contracts_opened + contracts
+        row.entry_credit = (row.entry_credit * row.contracts_opened + credit * contracts) / total
+        row.entry_commission = (row.entry_commission or 0.0) + commission
+        row.contracts_opened = total
+        row.contracts += contracts
+        return True
+
+
 def _positions(mode: str, status: str) -> list[SpreadPosition]:
     with spreads_session() as s:
         rows = (

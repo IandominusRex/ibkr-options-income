@@ -15,7 +15,7 @@ the cumulative budgets are consumed greedily in that order.
 from __future__ import annotations
 
 from src.common.books import ValueExposure, is_spreads_underlying, value_exposure
-from src.common.config import get_config
+from src.common.config import RollCfg, get_config
 from src.common.market_hours import today_et
 from src.common.schemas import (
     AccountSnapshot,
@@ -61,6 +61,16 @@ from src.engine.regime_limits import (
 )
 
 _INCOME_STRATEGIES = (Strategy.COVERED_CALL, Strategy.CASH_SECURED_PUT)
+
+
+def rolls_down_enough(old_strike: float, new_strike: float, net: float, cfg: RollCfg) -> bool:
+    """An ITM put roll: a lower strike, and a new assignment cost (strike minus the net credit)
+    at least ``csp.itm_min_basis_drop_pct`` under the old strike. The roll constructor
+    uses the same rule, so the generator and the gate cannot disagree."""
+    if cfg.csp.itm_min_basis_drop_pct is None:
+        return True
+    cap = old_strike * (1.0 - cfg.csp.itm_min_basis_drop_pct / 100.0)
+    return new_strike < old_strike - 1e-9 and new_strike - net <= cap + 1e-9
 
 
 def _strategy_limits(strategy: Strategy) -> dict:
@@ -435,6 +445,12 @@ def validate_candidates(
                     reasons.append("roll_net_below_floor")
                 if (cand.strike < origin.strike) if is_call else (cand.strike > origin.strike):
                     reasons.append("roll_strike_worse")
+                if (
+                    origin.itm_at_proposal
+                    and not is_call
+                    and not rolls_down_enough(origin.strike, cand.strike, cand.premium, roll_cfg)
+                ):
+                    reasons.append("roll_not_rolled_down")
                 if cand.contracts != origin.contracts:
                     reasons.append("roll_contracts_mismatch")
 

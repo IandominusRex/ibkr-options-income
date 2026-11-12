@@ -107,6 +107,12 @@ def market_bottoming(
     return True, reasons
 
 
+def broke_selloff_low(reasons: list[str]) -> bool:
+    """True when ``market_bottoming`` failed because the index is at or under the selloff low:
+    the one failure that ends a signal already holding for the session."""
+    return any("not above the selloff low" in r for r in reasons)
+
+
 def name_bottoming(
     *,
     bars: pd.DataFrame,

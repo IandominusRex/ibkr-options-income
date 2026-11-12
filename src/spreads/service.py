@@ -218,6 +218,8 @@ class SpreadsService:
         self._brief_task: asyncio.Task[SpreadBriefResult] | None = None
         self._brief_day: date | None = None
         self._card: DayCard | None = None  # the day's edited-in-place card (notify.py)
+        # An opening order that may still fill (cancel unconfirmed): what is needed to book it.
+        self._late_open: dict[str, tuple[SpreadCandidate, str, Any, int | None, str | None]] = {}
 
     @property
     def books(self) -> list[tuple[str, Executor]]:
@@ -260,14 +262,16 @@ class SpreadsService:
             "exits are paused until it reconnects",
         )
         force_close = day_schedule(self.cfg.schedule, et.date()).force_close
+        due = [p for p in held if p.expiry == et.date()]  # only today's expiry can be assigned
         if (
-            is_trading_day(et.date())
-            and et.strftime("%H:%M") >= force_close
+            due
+            and is_trading_day(et.date())
+            and force_close <= et.strftime("%H:%M") < "16:00"
             and not self.cfg.exits.let_expire
         ):
             await self.alert_once(
                 "disconnected_after_time_stop",
-                f"[SPREADS] URGENT: {len(held)} {self.cfg.underlying} spread(s) still open past "
+                f"[SPREADS] URGENT: {len(due)} {self.cfg.underlying} spread(s) still open past "
                 f"the {force_close} ET time stop and the Gateway is down — close them by hand "
                 "in TWS before the bell or risk assignment",
             )
@@ -294,6 +298,79 @@ class SpreadsService:
         if self.entries_blocked is not None:
             log.info("spreads: broker and spreads.db agree again — entries unblocked")
             self.entries_blocked = None
+
+    async def _late_fills(self, now: datetime) -> None:
+        """Book what an unresolved order filled after the executor reported it, so spreads.db
+        follows the broker instead of blocking entries on a mismatch nobody can clear."""
+        prefix = self.cfg.order_ref_prefix
+        for mode, executor in self.books:
+            read = getattr(executor, "late_fills", None)
+            if read is None:
+                continue
+            for f in read():
+                body = f.order_ref[len(prefix) :] if f.order_ref.startswith(prefix) else f.order_ref
+                closing = body.endswith(":X")
+                spread_id = body[:-2] if closing else body
+                if f.filled_qty < 1 or f.price is None:
+                    if f.done:
+                        self._late_open.pop(f.order_ref, None)
+                        log.info("spreads: unresolved order %s is done", f.order_ref)
+                    continue
+                store.record_order(
+                    spread_id=spread_id,
+                    kind="close" if closing else "open",
+                    order_ref=f.order_ref,
+                    ib_order_id=f.ib_order_id,
+                    perm_id=f.perm_id,
+                    filled_qty=f.filled_qty,
+                    price=f.price,
+                    commission=f.commission,
+                    reason="late_fill",
+                    now=now,
+                )
+                if closing:
+                    realized = store.close_position(
+                        spread_id,
+                        contracts=f.filled_qty,
+                        debit=f.price,
+                        commission=f.commission,
+                        reason="late_fill",
+                        now=now,
+                    )
+                    await self.notifier.send(
+                        fmt_exit(spread_id, "late fill", f.price, realized, mode)
+                    )
+                elif not store.add_contracts(
+                    spread_id, contracts=f.filled_qty, credit=f.price, commission=f.commission
+                ):
+                    stash = self._late_open.get(f.order_ref)
+                    if stash is None:
+                        await self.alert_once(
+                            f"late_open:{f.order_ref}",
+                            f"[SPREADS] {spread_id} opened {f.filled_qty} more contract(s) after "
+                            "its order was reported, and spreads.db has nothing to add them to — "
+                            "check TWS",
+                        )
+                        continue
+                    cand, book, tags, pick_id, episode_key = stash
+                    pos = store.open_position(
+                        cand,
+                        mode=book,
+                        contracts=f.filled_qty,
+                        credit=f.price,
+                        commission=f.commission,
+                        now=now,
+                        perm_id=f.perm_id,
+                        context=tags,
+                        pick_id=pick_id,
+                        episode_key=episode_key,
+                    )
+                    await self.notifier.send(fmt_entry(pos, book, tags))
+                log.info(
+                    "spreads: late fill %s +%d @ %s booked", f.order_ref, f.filled_qty, f.price
+                )
+                if f.done:
+                    self._late_open.pop(f.order_ref, None)
 
     async def _alert_mismatch(self, problems: list[str]) -> None:
         """Once per day per distinct set of problems: a second, different mismatch the same day
@@ -415,6 +492,7 @@ class SpreadsService:
             return
         hhmm = et.strftime("%H:%M")
         s = day_schedule(self.cfg.schedule, today)
+        await self._guard("late_fills", self._late_fills(now))
         await self._guard("broker", self._check_broker())
         if self._map_due(now, hhmm):
             await self._guard("map", self._build_map(now))
@@ -718,6 +796,14 @@ class SpreadsService:
             now=now,
         )
         await self._after_order(cand.spread_id, "open", result)
+        if result.reason in UNRESOLVED:
+            self._late_open[result.order_ref] = (
+                cand,
+                mode,
+                self._entry_context(cand.side, levels, now),
+                pick_id,
+                episode_key,
+            )
         if result.filled_qty < 1 or result.price is None:
             log.info("spreads entry %s not filled: %s", cand.spread_id, result.reason)
             return None, result.reason or "not_filled"
@@ -1247,7 +1333,8 @@ class SpreadsService:
             and now.astimezone(ET).strftime("%H:%M") >= force_close
             and not self.cfg.exits.let_expire
         ):
-            still = store.open_positions(mode)
+            today = now.astimezone(ET).date()
+            still = [p for p in store.open_positions(mode) if p.expiry == today]
             if still:  # a time-stop close did not fill: SPY settles in shares
                 await self.alert_once(
                     "open_after_time_stop",

@@ -35,7 +35,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from src.analytics.bottoming import market_bottoming
+from src.analytics.bottoming import broke_selloff_low, market_bottoming
 from src.analytics.regime import (
     ORDER,
     classify_base,
@@ -115,7 +115,12 @@ def _next_base(
     if _rank(cls) < _rank(prev.base):
         long_enough = (today - prev.base_since).days >= th.min_days_in_regime
         if inp.contango_streak >= th.ease_contango_days and long_enough:
-            return ease_one(prev.base), today, True  # one notch only
+            eased = prev.base
+            for _ in range(th.ease_max_notches):  # toward today's reading, never past it
+                if _rank(eased) <= _rank(cls):
+                    break
+                eased = ease_one(eased)
+            return eased, today, True
     return prev.base, prev.base_since, False
 
 
@@ -198,6 +203,17 @@ def _next_index(
     cancelled_on = prev.bottoming_cancelled_on if prev is not None else None
     if breach_now:
         cancelled_on = today
+    # Once it has fired, the signal holds for the session (2026-11-06/10: a VIX hovering on the
+    # off-peak line, then a VIX/VIX3M of 0.99 against 1.00, flipped crisis <-> stressed every
+    # scan). Only a fresh breach (above) or the index breaking the selloff low ends it today.
+    if (
+        not new_day
+        and prev is not None
+        and prev.eased_by_bottoming
+        and (bottom is None or not bottom[0])
+        and not (bottom is not None and broke_selloff_low(bottom[1]))
+    ):
+        bottom = (True, ["holding since earlier today"])
     eased_by_bottoming = False
     bottom_why: list[str] = []
     if (

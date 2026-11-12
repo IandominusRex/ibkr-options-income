@@ -392,3 +392,42 @@ async def test_a_regime_failure_never_aborts_the_scan(monkeypatch):
     result = scanmod.ScanResult()
     await scanmod._refresh_and_announce_regime(result)  # must not raise
     assert result.regime is None
+
+
+def test_coalesce_nets_flips_per_index():
+    from datetime import timedelta
+
+    from src.notify.regime_notice import coalesce_changes
+
+    t0 = datetime(2026, 11, 10, 17, 0, tzinfo=UTC)
+    flips = [
+        _change("SPY", X, S, why=["bottoming"]).model_copy(update={"at": t0}),
+        _change("QQQ", X, S, why=["bottoming"]).model_copy(update={"at": t0}),
+        _change("SPY", S, X, why=["bottoming signal ended"]).model_copy(
+            update={"at": t0 + timedelta(minutes=15)}
+        ),
+        _change("QQQ", S, X, why=["bottoming signal ended"]).model_copy(
+            update={"at": t0 + timedelta(minutes=15)}
+        ),
+        _change("QQQ", X, S, why=["bottoming: VIX 20.6"]).model_copy(
+            update={"at": t0 + timedelta(minutes=30)}
+        ),
+    ]
+    (net,) = coalesce_changes(flips)  # SPY went back where it started: nothing to say
+    assert (net.index, net.before, net.after) == ("QQQ", X, S)
+    assert net.why[0] == "bottoming: VIX 20.6" and "3 changes since" in net.why[-1]
+
+
+async def test_cancelled_flips_are_marked_sent_without_a_message(monkeypatch):
+    from src.notify import regime_notice
+    from src.storage.regime_state import unsent_changes
+
+    _seed(changes=[_change("SPY", X, S), _change("SPY", S, X)])
+
+    class NoBot:
+        def __init__(self, token: str) -> None:
+            raise AssertionError("nothing should be sent")
+
+    monkeypatch.setattr(regime_notice, "Bot", NoBot)
+    assert await regime_notice.send_regime_changes() == 2
+    assert unsent_changes() == []

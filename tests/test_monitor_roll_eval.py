@@ -140,11 +140,12 @@ async def test_a_breached_short_is_evaluated_on_a_thirty_minute_cadence(db) -> N
     from src.monitor.intraday import RollEvalState
 
     state = RollEvalState()
-    ev, _ = await _handle(_pos(), _quote(95.0), state, now=0.0)
+    roll = RollDecision(action="roll", reason="credit_roll", detail="Roll it.")
+    ev, _ = await _handle(_pos(), _quote(95.0), state, now=0.0, decision=roll)
     assert ev.await_count == 1
-    ev, _ = await _handle(_pos(), _quote(95.0), state, now=10 * 60.0)
+    ev, _ = await _handle(_pos(), _quote(95.0), state, now=10 * 60.0, decision=roll)
     assert ev.await_count == 0
-    ev, _ = await _handle(_pos(), _quote(95.0), state, now=31 * 60.0)
+    ev, _ = await _handle(_pos(), _quote(95.0), state, now=31 * 60.0, decision=roll)
     assert ev.await_count == 1
 
 
@@ -152,8 +153,12 @@ async def test_the_same_decision_is_sent_once_per_day(db) -> None:
     from src.monitor.intraday import RollEvalState
 
     state = RollEvalState()
-    _, bot1 = await _handle(_pos(), _quote(95.0), state, now=0.0)
-    _, bot2 = await _handle(_pos(), _quote(95.0), state, now=31 * 60.0)
+    roll = RollDecision(action="roll", reason="credit_roll", detail="Roll it.")
+    _, bot1 = await _handle(_pos(), _quote(95.0), state, now=0.0, decision=roll, approval_id=1)
+    # 2026-11-10: the same roll re-queued under a new approval every 30 minutes sent a new card
+    _, bot2 = await _handle(
+        _pos(), _quote(95.0), state, now=31 * 60.0, decision=roll, approval_id=2
+    )
     changed = RollDecision(action="close", reason="not_would_own", detail="Close it.")
     _, bot3 = await _handle(_pos(), _quote(95.0), state, now=62 * 60.0, decision=changed)
     assert (
@@ -161,6 +166,18 @@ async def test_the_same_decision_is_sent_once_per_day(db) -> None:
         bot2.send_message.await_count,
         bot3.send_message.await_count,
     ) == (1, 0, 1)
+
+
+async def test_a_standing_answer_is_not_re_evaluated_the_same_day(db) -> None:
+    """NVDA 205P flipped assign <-> roll on quote noise every 30 minutes (2026-11-05..12)."""
+    from src.monitor.intraday import RollEvalState
+
+    state = RollEvalState()
+    ev1, bot1 = await _handle(_pos(), _quote(95.0), state, now=0.0)  # assign
+    roll = RollDecision(action="roll", reason="credit_roll", detail="Roll it.")
+    ev2, bot2 = await _handle(_pos(), _quote(95.0), state, now=31 * 60.0, decision=roll)
+    assert (ev1.await_count, ev2.await_count) == (1, 0)
+    assert (bot1.send_message.await_count, bot2.send_message.await_count) == (1, 0)
 
 
 async def test_a_queued_roll_card_carries_approve_buttons_and_a_close_card_a_close_button(
@@ -224,3 +241,12 @@ async def test_an_unbreached_short_is_not_evaluated(db) -> None:
     ev, bot = await _handle(_pos(), _quote(104.0, delta=-0.25), RollEvalState(), now=0.0)
     ev.assert_not_awaited()
     bot.send_message.assert_not_awaited()
+
+
+@pytest.fixture(autouse=True)
+def _no_roll_down_rule(monkeypatch):
+    """These tests predate the ITM roll-down rule (2026-11-12) and use same-strike rolls of an
+    in-the-money put; the rule has its own tests (tests/test_roll_down_rule.py)."""
+    from src.common.config import get_config
+
+    monkeypatch.setattr(get_config().roll.csp, "itm_min_basis_drop_pct", None)

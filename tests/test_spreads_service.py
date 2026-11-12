@@ -914,3 +914,57 @@ async def test_an_armed_check_with_nothing_to_sell_says_why_once_a_day(
     await svc.tick()  # still nothing: logged, the card's status refreshed, no new post
     assert len(notifier.sent) == posts
     assert "armed checks" in notifier.messages[1]
+
+
+class LateFillExecutor(RecordingExecutor):
+    def __init__(self, late) -> None:
+        super().__init__()
+        self.late = list(late)
+
+    def late_fills(self):
+        out, self.late = self.late, []
+        return out
+
+
+# 2026-11-10 — a late close fill is booked, so spreads.db follows the broker and entries reopen.
+async def test_a_late_close_fill_is_booked(tmp_path, spreads_db) -> None:
+    from src.spreads.executor import LateFill
+
+    _paper_spread(spreads_db, contracts=2)
+    clock = [T1100]
+    late = LateFill("CS:p1:X", 2, 0.08, 2.6, 9, 7, done=True)
+    svc, broker, notifier = _paper(tmp_path, clock, LateFillExecutor([late]))
+    broker.legs = {}  # the broker is flat: the late fill closed it
+    await svc.tick()
+    assert spreads_db.open_positions("paper") == []
+    assert svc.entries_blocked is None
+    assert any("late fill" in m for m in notifier.sent)
+
+
+async def test_a_late_open_fill_adds_to_the_position(tmp_path, spreads_db) -> None:
+    from src.spreads.executor import LateFill
+
+    _paper_spread(spreads_db, contracts=2)
+    clock = [T1100]
+    late = LateFill("CS:p1", 1, 0.66, 1.3, 9, 7, done=True)
+    ex = LateFillExecutor([late])
+    svc, broker, _ = _paper(tmp_path, clock, ex)
+    broker.legs = {6790: -3.0, 6740: 3.0}
+    await svc.tick()
+    assert ex.closes == [3]  # the profit-take closes all three: the late lot was booked
+    assert svc.entries_blocked is None
+
+
+# An expired phantom must not page "close before the bell" at 9 PM ET.
+async def test_no_urgent_alert_after_the_bell_or_for_a_past_expiry(tmp_path, spreads_db) -> None:
+    from datetime import timedelta
+
+    _paper_spread(spreads_db, contracts=1, expiry=TODAY - timedelta(days=1))
+    clock = [datetime(2026, 10, 7, 19, 46, tzinfo=UTC)]  # 15:46 ET
+    svc, _, notifier = _paper(tmp_path, clock, RecordingExecutor())
+    await svc.while_disconnected()
+    assert not any("URGENT" in m for m in notifier.sent)
+    _paper_spread(spreads_db, spread_id="p2", contracts=1)
+    clock[0] = datetime(2026, 10, 8, 1, 0, tzinfo=UTC)  # 21:00 ET, after the bell
+    await svc.while_disconnected()
+    assert not any("URGENT" in m for m in notifier.sent)

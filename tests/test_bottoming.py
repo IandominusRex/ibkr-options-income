@@ -328,15 +328,30 @@ def test_the_signal_does_nothing_in_a_calm_regime():
     assert state.qqq.effective == N and state.qqq.eased_by_bottoming is False
 
 
-def test_signal_ending_restores_the_base_regime_and_says_so():
+def test_signal_holds_for_the_session_then_ends_the_next_day():
+    """2026-11-10: a VIX/VIX3M of 0.99 against 1.00 flipped crisis <-> stressed every scan."""
+    feed = stressed_feed()
+    run(DAY1, feed)
+    feed.signal = True
+    eased = run(DAY1 + timedelta(hours=1), feed)
+    assert eased.qqq.effective == C
+    feed.signal = False  # the signal flickers off: the easing holds for the rest of the session
+    held = run(DAY1 + timedelta(hours=2), feed)
+    assert held.qqq.effective == C and held.qqq.eased_by_bottoming is True
+    assert len(held.changes) == len(eased.changes)  # no flip announced
+    state = run(DAY2, feed)  # a new session re-reads it from scratch
+    assert state.qqq.effective == S and state.qqq.eased_by_bottoming is False
+    assert state.changes[-1].why[0] == "bottoming signal ended"
+
+
+def test_breaking_the_selloff_low_ends_the_signal_the_same_day():
     feed = stressed_feed()
     run(DAY1, feed)
     feed.signal = True
     assert run(DAY1 + timedelta(hours=1), feed).qqq.effective == C
-    feed.signal = False
+    feed.live["QQQ"] = {**SIGNAL_LIVE, "index_live": 1.0}  # through the selloff low
     state = run(DAY1 + timedelta(hours=2), feed)
     assert state.qqq.effective == S and state.qqq.eased_by_bottoming is False
-    assert state.changes[-1].why[0] == "bottoming signal ended"
 
 
 def test_escalation_cancels_the_easing_for_the_day():
