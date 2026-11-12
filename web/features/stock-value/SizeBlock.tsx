@@ -36,7 +36,7 @@ export function SizeBlock({ file, plan }: { file: ValueFile; plan: ValuePlan | n
       )}
       {plan &&
         (tranches ? (
-          <p className="mt-1 text-sm">{tranches}</p>
+          <p className="tabular mt-1 text-sm">{tranches}</p>
         ) : (
           <p className="mt-1 text-sm">
             Tranches bought <Hatched />

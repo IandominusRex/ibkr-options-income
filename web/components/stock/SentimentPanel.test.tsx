@@ -55,6 +55,12 @@ describe("SentimentPanel", () => {
     expect(screen.queryByText("0 samples")).not.toBeInTheDocument();
   });
 
+  it("says n/a once for a source with neither a score nor a count, and sets counts in tabular figures", () => {
+    render(<SentimentPanel data={{ ...full, reddit: null }} />);
+    expect(screen.queryByText("n/a samples")).toBeNull();
+    expect(screen.getByText("42 samples")).toHaveClass("tabular");
+  });
+
   it("signs the day's change but never colours it: tone is not money (web overhaul Part 5)", () => {
     render(<SentimentPanel data={{ ...full, delta_1d: -2.0 }} />);
     const delta = screen.getByText("-2.0 1d");

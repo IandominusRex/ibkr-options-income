@@ -166,7 +166,8 @@ describe("ValueBlock", () => {
     show();
     const size = await screen.findByRole("region", { name: "How much, and when?" });
     expect(within(size).getByText("At this margin of safety a buy aims at 3% of the book's ceiling, in 3 tranches.")).toBeInTheDocument();
-    expect(within(size).getByText(/^1 of 3 tranches bought \(the last on Oct 20, 2026\)\. Tranche 2 waits for a higher low/)).toBeInTheDocument();
+    const tranche = within(size).getByText(/^1 of 3 tranches bought \(the last on Oct 20, 2026\)\. Tranche 2 waits for a higher low/);
+    expect(tranche).toHaveClass("tabular");
     expect(within(size).queryByText(/Size if bought/)).toBeNull(); // the No list carries no size line
   });
 

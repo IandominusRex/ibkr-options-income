@@ -82,7 +82,7 @@ export function StatementsTable({ financials }: { financials: Financials }) {
   return (
     <div className="space-y-5">
       {(financials.annual.length > 0 || financials.quarterly.length > 0) && (
-        <p className="text-xs text-muted md:hidden">Scroll sideways to see every column.</p>
+        <p className="text-xs text-muted lg:hidden">Scroll sideways to see every column.</p>
       )}
       {financials.annual.length > 0 && (
         <section>

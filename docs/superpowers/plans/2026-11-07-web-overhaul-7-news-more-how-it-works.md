@@ -111,8 +111,8 @@ adds one commit.
 | **A0 setup** | done | 7eb2ae8 (docs on main) | Worktree `.claude/worktrees/web-overhaul-7` (branch `feat/web-overhaul-7`), `.venv` and `web/node_modules` symlinked, init_db run; all 12 block hashes match; 14 GiB free | 2026-11-12 | Part 6's Restart row filled as the plan gave it (dated 2026-11-07). Orchestrator is a Sonnet session; plan gate counts held. Operator said "execute everything to completion": sections run without stopping between them; merge and push still wait for a yes. |
 | **Section A entry** | pass | (rides in Task 1) | A1 clean over 02236ec + A0; A2 T1 and T2 apply; A3 pytest 5767 passed, 1 skipped, ruff clean, mypy 361 files, vitest 1623 in 157 files, tsc and lint clean | 2026-11-12 | none |
 | **Task 1: the rail's Search field and the sectors' count** | done | this commit (see git log) | T1 applied (hash ab3bec3b matched, git apply --check clean); red check 3 failed / 8 passed; components/shell+home+features/research 13 files 106 passed; full vitest 1623 in 157 files; tsc and lint clean; G3 exit 0 | 2026-11-12 | da-vinci: no change (the patch matches Section A's spec). No rulings; none deviated. |
-| **Task 2: the stock page's three minors** | | | | | |
-| **Section A exit** | | | | | |
+| **Task 2: the stock page's three minors** | done | this commit (see git log) | T2 applied (hash 8c21582d matched, check clean); red check 3 failed / 29 passed; components/stock+features/stock-value 9 files 77 passed; full vitest 1624 in 157 files; tsc and lint clean; G1 empty; G2 as listed; G5 no line | 2026-11-12 | da-vinci: no change. No rulings; none deviated. |
+| **Section A exit** | pass | rides in Task 2's commit | two task commits after A0; vitest 1624 in 157 files; tsc, lint clean; G1 empty, G2 exact, G3 exit 0, G5 (shell, home, stock, stock-value) no line, G7 the one layout line; git status clean after commit | 2026-11-12 | none |
 | **Section B entry** | | | | | |
 | **Task 3: the News page** | | | | | |
 | **Task 4: the calendar and the news card** | | | | | |
@@ -596,16 +596,16 @@ tranche sentence set in tabular figures; the statements' scroll hint stays up to
 (`SentimentPanel`), and two existing assertions tightened (`StatementsTable`'s hint class, `ValueBlock`'s tranche
 sentence).
 
-- [ ] **Step 1: Check and apply `T2`.** `git status --short` shows six `M` files:
+- [x] **Step 1: Check and apply `T2`.** `git status --short` shows six `M` files:
   `web/components/stock/SentimentPanel.test.tsx`, `web/components/stock/SentimentPanel.tsx`,
   `web/components/stock/StatementsTable.test.tsx`, `web/components/stock/StatementsTable.tsx`,
   `web/features/stock-value/SizeBlock.tsx`, `web/features/stock-value/ValueBlock.test.tsx`.
-- [ ] **Step 2: Red check.** `git stash push -- web/components/stock/SentimentPanel.tsx web/components/stock/StatementsTable.tsx web/features/stock-value/SizeBlock.tsx`,
+- [x] **Step 2: Red check.** `git stash push -- web/components/stock/SentimentPanel.tsx web/components/stock/StatementsTable.tsx web/features/stock-value/SizeBlock.tsx`,
   then `cd web && npx vitest run components/stock/SentimentPanel.test.tsx components/stock/StatementsTable.test.tsx features/stock-value/ValueBlock.test.tsx`
   ends `3 failed | 29 passed (32)`, then `git stash pop`.
-- [ ] **Step 3: Gate.** `npx vitest run components/stock features/stock-value`: 9 files, 77 passed. Full vitest **1624
+- [x] **Step 3: Gate.** `npx vitest run components/stock features/stock-value`: 9 files, 77 passed. Full vitest **1624
   in 157 files**; tsc, lint clean; G1 empty; G2 as listed; G5 over the Section A folders: no line for a non-test file.
-- [ ] **Step 4: Commit** `fix(web): the stock page says n/a once, sets its counts in tabular figures and keeps the
+- [x] **Step 4: Commit** `fix(web): the stock page says n/a once, sets its counts in tabular figures and keeps the
   scroll hint up to 1024px` with the Progress log row and the Section A exit row.
 
 <!-- block T2 -->

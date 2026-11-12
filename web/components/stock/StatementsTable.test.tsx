@@ -45,7 +45,9 @@ describe("StatementsTable", () => {
     // Found by looking (Task 11): at 390 px the third year sat off the card's edge with no hint.
     const { unmount } = render(<StatementsTable financials={financials} />);
     const hint = screen.getByText("Scroll sideways to see every column.");
-    expect(hint).toHaveClass("md:hidden");
+    // Below 1024px the column is too narrow for a long quarterly table, so the hint stays up to lg (web overhaul Part 7).
+    expect(hint).toHaveClass("lg:hidden");
+    expect(hint).not.toHaveClass("md:hidden");
     unmount();
     render(<StatementsTable financials={{ annual: [], quarterly: [] }} />);
     expect(screen.queryByText("Scroll sideways to see every column.")).toBeNull();

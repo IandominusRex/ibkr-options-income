@@ -31,9 +31,12 @@ function Score({
         <span className={score === null ? "tabular hatch px-1 text-unknown" : "tabular font-semibold"}>
           {score === null ? UNKNOWN : score.toFixed(1)}
         </span>
-        <span className={`ml-2 text-[0.8125rem] ${count === null ? "text-unknown" : "text-muted"}`}>
-          {count === null ? `${UNKNOWN} samples` : `${count} samples`}
-        </span>
+        {/* A source with neither a score nor a count says n/a once, not "n/a" then "n/a samples". */}
+        {(score !== null || count !== null) && (
+          <span className={`tabular ml-2 text-[0.8125rem] ${count === null ? "text-unknown" : "text-muted"}`}>
+            {count === null ? `${UNKNOWN} samples` : `${count} samples`}
+          </span>
+        )}
       </dd>
     </div>
   );
