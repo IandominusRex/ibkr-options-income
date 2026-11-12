@@ -1,6 +1,11 @@
 # The Mastermind — Claude as the best-informed mind on the book — design
 
-Date: 2026-11-12 · Status: **revision 2, for operator review**. Revision 1 (commit 6f5317f, same
+Date: 2026-11-12 · Status: **revision 3 (2026-11-13), for operator review**. Revision 3 moves envelope
+repair, book repair and every spreads decision into a prerequisite spec,
+`2026-11-13-risk-envelope-design.md` (the **envelope spec**), and adjusts this spec to match (§0.3).
+Everything below the §0.3 note is revision 2's text except where §0.3 lists a change.
+
+Revision 1 (commit 6f5317f, same
 day) was reviewed by two independent reviewers (Opus and Sonnet), who critiqued it and rebutted
 each other. The operator then made four binding rulings (§0.2). This revision adjudicates where the
 reviewers still disagreed. It re-verifies every contested fact against the code, git, the logs and
@@ -16,8 +21,9 @@ operator asked for: full autonomy, with Claude choosing from menus Python builds
 states the lines that never move. It replaces "reduce-only" with a classification by risk metric,
 and it puts every grant of authority behind pre-registered evidence and a worst-choice replay. It
 also finds, and puts first, a problem that exists before Claude has any authority at all: today's
-deterministic envelope let stock plus put collateral run at 1.2–1.4× net liquidation, and its gross
-cap never fired. Early phases stay record-only, because there is no evidence yet.
+deterministic envelope let stock plus put collateral run at 1.1–1.5× net liquidation (1.3–1.9×
+counting leveraged ETFs at their leverage; corrected in revision 3), and its gross cap never fired.
+Early phases stay record-only, because there is no evidence yet.
 
 ## 0. Changes from revision 1
 
@@ -58,6 +64,25 @@ revision; §2 gives the evidence).
    Sonnet is not an outage plan.
 4. **Edit this spec in place as revision 2**, with this section.
 
+### 0.3 Revision 3 (2026-11-13)
+
+The operator asked to explore a 0DTE layer, an unleveraged-first CSP policy for the 3× ETFs and a
+cash reserve, and ruled that those changes come **before** the Mastermind. Two reviewers researched
+it, rebutted each other, and the operator made eight rulings. The result is the envelope spec
+(`2026-11-13-risk-envelope-design.md`), now a **prerequisite** of this one. Revision 3 moves out of
+this spec what the envelope spec owns, and references it back.
+
+| # | Change | Where |
+|---|---|---|
+| 15 | **Envelope repair moved out.** The gross cap, the tech-linked group cap and stacking rule, the slow breaker and the survivability harness are specified in the envelope spec §3.4. They are now a beta **shock-loss budget (S10) by full revaluation, with a glide path**, an unconditional **exposure-weighted** gross backstop, a leverage-weighted group cap, and a slow breaker that **spans books** (it reads account NLV, which includes spreads P&L, and a trip stops spreads entries) | §6 here is now a pointer |
+| 16 | **Book repair moved out.** The `min_strike_vs_basis` ruling (with a leveraged class floor), the tap-only repair proposals and the discretionary-buy display are in the envelope spec §3.7. Claude's part, which proposals to surface and endorse, stays here | §7 |
+| 17 | **§4 risk measures changed.** Collateral and gross are exposure-weighted (leveraged ETFs at their leverage). The index −10% measure is S10 by full revaluation. A **nonlinear-gap measure** (G10 one-day gap, P20 two-week path, leveraged daily reset) is added, so choosing a leveraged lot over its unleveraged equivalent classifies as risk-changing | §4 |
+| 18 | **§5.1:** envelope levels are never a rung. The allocation choice inside the envelope (leveraged vs unleveraged) is R3. The **spreads picker** (its menu has an inside strike) is an **R4-type grant, grandfathered in paper, record-only in any live plan**; its record pilots this spec's measurement machinery and is never evidence for a wheel rung | §5.1, §11.9 |
+| 19 | **Spreads: no longer "unchanged".** It gets the envelope spec's fixes (static macro calendar into `risk.events`, the account-halt link, NLV-based caps, a cost standard, the skipped backtest) and, on an operator ruling, a move to SPXW that frees SPY for the wheel | §13, D5 |
+| 20 | **§2.3 corrected.** Gross ran 1.08–1.53× nominal (peak 1.53 on Nov 5, not 1.44) and 1.30–1.88× leverage-weighted | §2.3, §4 |
+| 21 | **Phasing.** The envelope spec's phases E0–E2 precede this spec's Phase 2; its Phase 1 is replaced by a reference; risk-changing rungs need E2 complete | §15 |
+| 22 | **Decisions.** D13 and D14 move to the envelope spec (E4–E5, E12, E14–E15). D5, D12 and D19 are amended | §16 |
+
 ## 1. Intent and destination
 
 The operator's vision, verbatim: *"I ultimately envision the system to be fully autonomous, with
@@ -76,7 +101,7 @@ chooses among them, and Python re-validates the choice before anything is sent.*
 "Claude makes the final decision", inside a menu. The repo already runs this pattern twice:
 
 - The spreads picker (`src/spreads_ai/`). Its menu includes a strike *inside* the baseline, which
-  carries more risk.
+  carries more risk. Revision 3 classifies it as an R4-type grant, grandfathered in paper (§5.1).
 - The value verdict. It can make the value book auto-buy, and through capital release it can close
   wheel puts.
 
@@ -102,7 +127,7 @@ breadth, recall, consistency and calibration, not prediction magic.
 
 **What the evidence says so far** (§2). Claude's one demonstrated contribution, the nine "already
 holds the same bet" cuts, is a correlated-exposure rule the engine lacks. That rule should be
-codified (§6.2), and Claude measured on what is left over. Nothing yet shows Claude's entry
+codified (envelope spec §3.4.4), and Claude measured on what is left over. Nothing yet shows Claude's entry
 judgment, because the test has never been run: the verdict rubric defaulted to "sell" and nothing
 read the result.
 
@@ -148,19 +173,20 @@ first"), so every record below is paper-fill evidence. Log times are local (+080
 | The book is 93% long stock | Nov 11: stock market value $603.1k on NLV $645.8k (93.4%), up from 67% on Oct 13. AMD $166.6k (25.8%), GOOGL $147.0k (22.8%), NVDA $104.8k (16.2%): 64.8% of NLV in three names. The value book holds nothing (`value_orders` is empty). No call is held. |
 | $436.5k of the stock is underwater | BAC, GOOGL, HIMS, MARA, NVDA, PLTR and SOXL: market value $436.5k, basis $567.6k, unrealised −$131.0k. SOXL's basis is $153.35 against $66.11. |
 | Underwater stock earns nothing, by policy | `min_strike_vs_basis: 1.00` (N18): "an underwater holding generates NO covered calls". `strike_below_basis` was the top covered-call reject: 21,362 contract rejections since Nov 1 (25,678 all time). |
-| Stock plus put collateral ran above NLV for a month | Last snapshot of each session, (stock + short-put strike × 100) / NLV: between **1.18 and 1.44** on every session from Oct 13 to Nov 11 except Oct 26 (1.08). It peaked at 1.44 on Nov 5. If every put open on Nov 11 were assigned, gross long would be $810.8k (1.26×). |
+| Stock plus put collateral ran above NLV for a month | Last snapshot of each session, (stock + short-put strike × 100) / NLV: **1.08–1.53, mean 1.31**, Oct 13–Nov 12; it ran 1.46–1.53 all session on Nov 5. Counting TQQQ and SOXL at 3×: **1.30–1.88, mean 1.53**. (Revision 2 said "1.18–1.44, peak 1.44"; corrected in revision 3, envelope spec §2.1.) If every put open on Nov 11 were assigned, gross long would be $810.8k (1.26×). A −10% SPY move would cost about 22% of NLV by full revaluation (envelope spec §2.1). |
 | The gross cap never fired | `max_gross_notional_pct: 100.0`, but the check runs only inside `if vx.active and is_csp` (`risk_engine.py:527`). `vx.active` requires `value.book.enabled` (`books.py:115`). No `risk_verdicts` row has ever carried `gross_notional_cap`. The private `config/value.yaml` now says `enabled: true`, yet a HOOD 75P passed on Nov 9 at ~1.39×. Whether the running daemon had the book enabled at the time is **unverified**. Either way, the wheel had no working gross cap. |
 | The breakers tripped, then the slow one was removed | `approval.log` shows 15 trip lines on 11 local dates from Oct 12 to Nov 11: the daily 3% loss leg and, until Nov 5, a drawdown leg **from the all-time high-water mark** (Oct 12, 23, Nov 3, 4). Commit `544e32e` (Nov 5) replaced it with a rolling 3-session 6% window because a standing drawdown re-halted every morning. NLV went from $784.6k (Oct 13) to $645.8k (Nov 11), −17.7%, with a $577.5k session-end low on Nov 5. A slide of under 2% a session never trips 6% in 3 sessions. The ledger records no deposit or withdrawal in the window (one $824 interest credit). A trip halts new openings; it does not stop assignments, which is how stock grew while NLV fell. |
 
 **Conclusion.** Rev 1 said "the bottleneck is knowledge and placement, not the model." That holds
 for the reviewer's inputs. But the larger findings are not about Claude:
 
-- the deterministic envelope let gross exposure run at 1.2–1.4× NLV;
+- the deterministic envelope let gross exposure run at 1.1–1.5× NLV;
 - the one slow breaker was removed on Nov 5;
-- the book's loss sits in assigned stock that policy forbids from earning premium.
+- the book's loss sits in assigned and manually bought stock that policy forbids from earning
+  premium.
 
-Envelope repair (§6) and book repair (§7) are where the money is. Claude's knowledge layer (§8) is
-where its future authority is earned.
+Envelope repair and book repair (now the envelope spec, §6–§7 here) are where the money is. Claude's
+knowledge layer (§8) is where its future authority is earned.
 
 ## 3. Permanent hard lines
 
@@ -183,10 +209,12 @@ ruling.
 4. **Survivability before every grant.** Before any rung is granted, Python replays the history with
    a decider that **always picks the most aggressive allowed option**. It also computes the
    analytic worst case: every slot filled by its worst allowed item, under an index −10% shock and a
-   single-name −40% shock. The book must stay inside operator-set drawdown and margin bounds in both.
-   The test runs on the deterministic envelope first (§6.4). On today's numbers it would fail.
+   single-name −40% shock (revision 3: and the G10 / P20 gap scenarios, §4). The book must stay
+   inside operator-set drawdown and margin bounds in both. The test runs on the deterministic
+   envelope first (envelope spec §3.4.6). On today's numbers it would fail.
 5. **Breakers are deterministic and human-held**: the daily loss leg, the drawdown leg, the slow
-   breaker (§6.3), the kill switch and `LIVE_TRADING`.
+   breaker (envelope spec §3.4.5, spanning the wheel and spreads books), the kill switch and
+   `LIVE_TRADING`.
 6. **Humans only:**
    - `apply_live`, every rung change, the envelope, config, the universe, risk limits and the
      primary metric;
@@ -215,27 +243,35 @@ reason, and it is a good one. But "reduce-only" is a poor *safety* argument, for
 4. **It is not free of attack.** A poisoned headline that pushes `no_adds` across the universe idles
    the income engine. That is an availability attack, so every cut-type lever keeps a breaker on the
    share of flow it zeroes (as `claude_cut` does).
-5. **It credits the safety to the wrong thing.** The book went to 1.44× NLV with no Claude authority
+5. **It credits the safety to the wrong thing.** The book went to 1.53× NLV with no Claude authority
    at all. Safety comes from the envelope, not from the direction of the lever.
 
 **The replacement.** For every lever application, Python computes the book after the action on a
-fixed set of risk measures:
+fixed set of risk measures (revision 3: the definitions are the envelope spec's §3.4):
 
 - net dollar delta;
-- loss under an index −10% move (beta-scaled per name);
-- committed collateral;
-- gross notional / NLV;
-- risk units per name, per sector and for the tech-linked group.
+- **S10**: the loss under a SPY −10% move, beta-scaled per name, by **full revaluation**, with
+  leveraged ETFs at leverage × the governing index's beta. A delta-linear measure credits a covered
+  call with about three times the crash protection it gives;
+- **the nonlinear-gap measure**: **G10**, a one-day index −10% gap with leveraged ETFs at their
+  leveraged move (capped at −100%), and **P20**, a −20% index path over 10 sessions with daily reset
+  on leveraged ETFs;
+- committed collateral, **exposure-weighted** (leveraged ETFs at their leverage);
+- gross notional / NLV, **exposure-weighted** (U_ew);
+- risk units per name, per sector and for the tech-linked group (leverage-weighted).
 
 An application is **risk-reducing** only if it is no worse on every measure. Otherwise it is
 **risk-changing**, whatever the contract count. The class decides the evidence bar (§11.5) and
-whether the rung needs envelope repair first (§15).
+whether the rung needs envelope repair first (§15). Without G10 and P20, a TQQQ lot replacing equal
+beta-dollars of QQQ reads as reducing: the same delta and linear loss, less collateral. With them it
+is risk-changing, as its gap and decay tail say it should be.
 
 | Action | Class |
 |---|---|
 | Cut an opening CSP's size | reducing |
 | Close a short put early | reducing |
-| A covered call written on held shares | reducing on delta and the −10% loss; it caps recovery (judged against the D11 metric) |
+| A covered call written on held shares | reducing on delta and the −10% loss; it caps recovery (judged against the D11 metric). By full revaluation its crash protection is about its premium |
+| Choose a leveraged lot over the unleveraged equivalent at equal beta-dollars | **changing** (worse on G10 / P20) |
 | Withhold a covered call | **changing** (raises delta) |
 | Veto a roll | **changing** (forces assignment) |
 | Nominate a name for the scan | **changing** (adds trades) |
@@ -255,13 +291,28 @@ read. Every rung has a breaker and a paired counterfactual on every decision epi
 | **R0 shadow** | Answers on every decision episode: candidates, ladder-blocked and regime-trimmed lots, roll decisions. Nothing is applied. | Python's menu for the episode, every item shadow-valued | none | Phase 0 done: rubric honest, versions stamped | None beyond this spec |
 | **R1 cut** (exists) | Lowers an auto-opened CSP's contracts. From Phase 4 the plan's cap becomes a second input: `min(deterministic, review_cut, plan_cap)` | integer `0..B` | reducing | Exists for the review cut. Plan input: ≥ 60 sessions record-only, it binds where the review did not (or the plan-blind holdout shows the reviewer ignoring the plan), it beats the matched random cut, and the claim audit passes | D1 |
 | **R2 select** | Chooses one item from a Python-built menu whose items are all ≤ the baseline on every §4 measure: the baseline, one more conservative strike or size, skip. Later, a cross-scan best-of-day allocation (only if the regret test in §10.2 finds it material) | menu ≤ baseline risk | reducing | ≥ 100 decision episodes over ≥ 1 down leg and ≥ 1 up/calm leg of ≥ 10 sessions; beats the random, dumb-rule and always-skip controls at the lower bound of a day × name clustered interval on rules-based shadow P&L per risk-unit-day; same sign under expiry valuation | Third written exception, naming the menu |
-| **R3 size within a cap** | Sizes above the deterministic size, up to a fixed cap in risk units. Never above the unscaled hard caps or the **regime-scaled ceiling**: easing the regime is D9, never granted here | integer above `B`, up to the fixed cap | **changing** | Envelope repair landed (§6); the always-most-aggressive replay and the analytic worst case pass; R2 clean; the R0 "reclaim" record (what Claude would have added) positive under both valuations; a full shadow decider book over ≥ one leg of each kind | Written exception plus the cap in risk units. Note: today the deterministic size already sits at the cap or the regime ceiling, so R3 has little room |
-| **R4 strike from a menu** | Chooses strike and expiry from the gate-passed chain menu, including one notch riskier than baseline, inside the fixed envelope | Python-built chain menu | **changing** | As R3, plus a clean R3 record | Written exception |
+| **R3 size within a cap** | Sizes above the deterministic size, up to a fixed cap in risk units. Never above the unscaled hard caps or the **regime-scaled ceiling**: easing the regime is D9, never granted here. Revision 3: also **the allocation lever inside the envelope**, choosing a leveraged lot over the unleveraged equivalent from a Python-built equal-exposure menu, inside the human-set leveraged sleeve cap (envelope spec §3.9) | integer above `B`, up to the fixed cap; or an equal-exposure menu | **changing** | Envelope repair landed (envelope spec phase E2; for the allocation lever, the leveraged sleeve live too); the always-most-aggressive replay and the analytic worst case pass; R2 clean; the R0 "reclaim" record (what Claude would have added) positive under both valuations; a full shadow decider book over ≥ one leg of each kind | Written exception plus the cap in risk units. Note: today the deterministic size already sits at the cap or the regime ceiling, so R3 has little room |
+| **R4 strike from a menu** | Chooses strike and expiry from the gate-passed chain menu, including one notch riskier than baseline, inside the fixed envelope. The spreads picker is already an R4-type grant (below) | Python-built chain menu | **changing** | As R3, plus a clean R3 record | Written exception |
 | **R5 propose trades** | Proposes trades of Python-defined classes: book repair (§7), hedges, opportunistic entries. Python builds, prices and gates them | Python-defined trade classes; a fixed "autonomy envelope" in dollars | depends on the trade | Tap-only from the start (outside the ladder). Auto only after R4 is clean, plus its own replay | Written exception per trade class |
 | **X1 exits, tap** | Proposes close / assign instead of the policy's answer, on the existing decision card | Python-feasible exits | n/a (a human decides) | None (a tap adds no authority) | D4 |
 | **X2 exits, auto** | Chooses among Python-feasible exits that are **risk-reducing** by §4 (for example, close instead of roll) | feasible exits ≤ the policy's risk | reducing | ≥ 100 roll-stream episodes clustered by short; beats the policy and the random control | Written exception. Never a veto that forces a leveraged-ETF assignment unless the 2026-10-14 ruling is reopened |
 
 The destination is the top of each row with `AutonomyLevel.FULL`.
+
+**Revision 3 additions.**
+
+- **Envelope levels are never a rung.** The shock budget, the gross backstop, the glide, the
+  leveraged sleeve cap, the tail-class multipliers, betas and exposure weights are human-held (§3
+  line 6). A raised level needs the envelope spec's stabilisation rule, the harness and a ruling.
+- **R2 versus R3 on leverage.** A menu that can only move toward less leverage (the index lot or skip
+  when the baseline is a sleeve lot) is R2, provided every item is no riskier on every §4 measure,
+  G10 and P20 included. A menu that can pick the leveraged item is R3.
+- **The spreads picker is an R4-type grant.** Its menu holds a strike inside the baseline. It is
+  grandfathered in paper and record-only in any live plan. In 12 picks it chose the baseline 4 times
+  and skip 8, and never the inside item (offered twice). Its record measures the spreads book and
+  pilots this spec's §11 machinery (pre-registration, placebo, valuation rule). **It is never
+  evidence for a wheel rung**: skill at a 0DTE SPY menu says nothing about cutting or selecting
+  wheel entries.
 
 ### 5.2 Mapping onto `AutonomyLevel` and `promotion_blockers`
 
@@ -280,100 +331,54 @@ The destination is the top of each row with `AutonomyLevel.FULL`.
     autonomy evidence gate in paper today; a Claude rung earned without evidence defeats the point.
 - **A live process re-validates its stored rungs at startup**, as `enforce_live_autonomy_evidence`
   does. It demotes to record-only any rung that lacks its evidence record or its `apply_live` flag.
-- **Demotion is automatic** on a breaker trip, on the slow breaker (§6.3), and on the posterior rule
-  in §11.7.
+- **Demotion is automatic** on a breaker trip, on the slow breaker (envelope spec §3.4.5), and on
+  the posterior rule in §11.7.
 
-## 6. Envelope repair (prerequisite phase)
+## 6. Envelope repair (moved to the envelope spec in revision 3)
 
-Envelope repair must land before any risk-changing rung (R3, R4, auto R5). It is deterministic,
-backtestable and ruled by the operator (D13). It is worth doing even if Claude never gets another
-lever.
+Envelope repair must land before any risk-changing rung (R3, R4, auto R5, X2). It is deterministic,
+backtestable and ruled by the operator. It is worth doing even if Claude never gets another lever.
+**Revision 3 moved its specification to `2026-11-13-risk-envelope-design.md` (the envelope spec)**,
+which is now a prerequisite of this spec. What moved, and what changed on the way:
 
-### 6.1 A gross-exposure cap that always runs
+| Rev 2 section | Now | What changed |
+|---|---|---|
+| 6.1 A gross cap that always runs | Envelope spec §3.4.1–3.4.2 | **The primary limit is now a beta shock-loss budget, S10**: the loss at SPY −10%, by full revaluation, leveraged ETFs at leverage × index beta. Target about 15% of NLV; it starts at today's level (≈ 22%) and **glides** down over a set period; meanwhile an opening that adds to S10 passes only under the glide limit. No rule forces a sale. **The backstop is exposure-weighted gross (U_ew), unconditional**: the `vx.active` condition at `risk_engine.py:527` goes. ITM puts count at strike |
+| — | Envelope spec §3.4.3 | **New: the nonlinear-gap measure** (G10, P20), used by §4 here |
+| 6.2 Tech-linked cap and stacking rule | Envelope spec §3.4.4 | Unchanged in substance; the group cap is **leverage-weighted** |
+| 6.3 Slow breaker | Envelope spec §3.4.5 | **Spans books.** It reads account NLV, which already includes spreads P&L; a trip also **stops spreads entries**; the daily mark leg adds the spreads book's P&L through a neutral read-only `src/common/spreads_view.py`. Its effect on Claude's rungs (demote every risk-changing rung, block risk-changing levers) is unchanged |
+| 6.4 Survivability harness | Envelope spec §3.4.6 | Covers S10, U_ew, G10, P20 and the spreads book at its caps. §3 line 4 here still runs it before every rung |
 
-Make the existing check unconditional for opening CSPs: wheel stock plus CSP collateral (plus the
-value book's claim and earmarks when it is active) ≤ `max_gross_notional_pct` of NLV.
+What stays here: the dependency. Every risk-changing rung needs the envelope spec's phase E2 complete
+and the harness passing (§15).
 
-- **First, find out why it never fired** with `value.book.enabled: true` in the private config.
-- At 100%, today's book (1.26× on Nov 11) would block every new CSP. The operator rules on:
-  - the level;
-  - whether excess blocks new adds only (proposed) or also triggers repair proposals (§7);
-  - whether assigned-at-risk collateral (puts in the money) counts at strike or at a delta-weighted
-    value.
+## 7. Book repair: Claude's part
 
-### 6.2 A correlated-exposure cap and a stacking rule
+The book's loss is inventory, not new flow. Every lever in rev 1 acted on new CSPs. **Revision 3
+moved the deterministic part to the envelope spec §3.7**:
 
-- **A tech-linked group cap** in risk units, over the `regime.tech_linked` list (23 names).
-- **A deterministic stacking rule**, for example: halve, or block, a new CSP when the name already
-  has an open short at an overlapping expiry, an in-the-money short, or ≥ k same-day fills.
-- **Backtest both against the 10 `claude_cut` rows and the ledger.** If they reproduce most of the
-  cuts, build them, and measure Claude on the residual. The record already shows the TQQQ cuts
-  reacted to same-day fills, so the rule must read the live book at decision time.
-- **A standing rule-harvest report** (human-read, never auto-applied). When ≥ k of Claude's
-  applications share a codifiable rationale, the report names a candidate deterministic rule.
+- the `min_strike_vs_basis` ruling by replay (its E12, was D14), with a leveraged-ETF class floor
+  (none, delta ≤ 0.25, tap-only first);
+- the tap-only repair proposals Python builds: covered-call overlays, "stop adding", trims, a
+  de-lever proposal for leveraged shares, protective puts later;
+- the new order paths they need (stock sell and buy, buy-to-open);
+- the S10 / U_ew before-and-after shown on every proposal and on every manual stock buy.
 
-### 6.3 A slow drawdown breaker
+Book repair is how the envelope spec's glide shrinks S10 without a forced sale. Note its arithmetic:
+covered calls on every holding lower S10 by only about 1.8 points (22.0% → 20.2%), because in a crash a
+call protects by about its premium; the rest needs call-aways or tapped trims.
 
-- **A rolling 20–30-session drawdown leg** beside the 3-session one.
-- **What it does on a trip.** It does not halt all trading; the all-time high-water-mark leg was
-  removed on Nov 5 because it re-halted every morning in a standing drawdown. Instead it:
-  - demotes every risk-changing Claude rung to record-only;
-  - blocks risk-changing levers;
-  - scales the CSP budget by an operator-set fraction.
-  - It is reset by a human.
-- **What it cannot do: stop assignment.** Gross exposure has to be controlled by §6.1, not by a
-  breaker.
+**What stays here is Claude's role:**
 
-### 6.4 The survivability harness
-
-- **The analytic worst case and the always-most-aggressive replay** (§3 line 4), on the 17-month
-  `price_history` / `iv_history` panel with the `sizing_counterfactual.py` machinery.
-- **State its limits.** The panel has one bull leg and this sell-off. It has no 2020 or 2022.
-- **Run it on the deterministic envelope first.** It must pass before any rung that adds risk is
-  proposed.
-
-## 7. Book repair
-
-The book's loss is inventory, not new flow. Every lever in rev 1 acted on new CSPs.
-
-**The facts** (§2.3):
-
-- 93.4% of NLV is long stock;
-- $436.5k is underwater (−$131.0k);
-- 64.8% of NLV is in AMD, GOOGL and NVDA;
-- no calls are held, because `min_strike_vs_basis: 1.00` rejects every covered call below basis
-  (21,362 contract rejections since Nov 1).
-
-1. **The first move is an operator ruling on `min_strike_vs_basis` (D14), made by replay.**
-   - The options: keep 1.00; 0.95; 0.90 with a delta cap; or per name.
-   - The replay is deterministic, on the 17-month panel. For each setting it shows the premium
-     harvested, the assignments below basis it would have caused (SOXL at a $153 basis against $66
-     is the hard case), and the drawdown.
-   - A rough size, **unverified**: 1–1.5% a month on $437k is ~$4–6k of forgone premium a month,
-     before the earnings blackout and the IV/RV gates thin it.
-2. **Then tap-only repair proposals that Python builds.** Each trading day Python builds a menu per
-   underwater name, priced, gated and shadow-valued:
-   - covered-call overlays at the ruled floor (or, as a named exception to N18 per proposal, below
-     it);
-   - "stop adding" (no new CSPs on the name);
-   - later, trims and protective puts.
-
-   Claude's role:
-   - It chooses which proposals to surface and endorse, with reasons tied to fact ids. That is a
-     selection from a Python menu.
-   - The operator taps.
-   - **Every proposal is shadow-valued whether tapped or not**, so operator selection does not
-     contaminate the record.
-   - Python sends nothing without a tap.
-3. **Build order follows what exists.**
-   - Covered-call overlays use the existing CC generator and order builder.
-   - **Protective puts need a buy-to-open path, and trims need a stock-sell path.**
-     `order_builder.py` builds option limit orders and BAG combos only. Each new order class must
-     pass the Rules Engine twice, qualify its contract and use fresh quotes, and each is its own plan
-     task.
-4. **Decision 30 stands.** Claude never holds, delays or moves a covered call's strike. Proposing an
-   overlay for a human to tap is not a hold.
-5. **The plan's "reduce" stance lands here.** It becomes a repair proposal, never an automatic sale.
+- It chooses which of Python's proposals to surface and endorse, with reasons tied to fact ids. That
+  is a selection from a Python menu (an R5 trade class, tap-only).
+- The operator taps.
+- **Every proposal is shadow-valued whether tapped or not**, so operator selection does not
+  contaminate the record.
+- Python sends nothing without a tap.
+- **Decision 30 stands.** Claude never holds, delays or moves a covered call's strike. Proposing an
+  overlay for a human to tap is not a hold.
+- **The plan's "reduce" stance lands here.** It becomes a repair proposal, never an automatic sale.
 
 ## 8. Knowledge: the read-only fact layer
 
@@ -397,12 +402,14 @@ assigned.
 
 **Account:**
 
-- NLV, cash, margin cushion;
+- NLV, cash, margin cushion, and cash after every ITM put is assigned;
 - committed collateral vs deployable;
-- gross / NLV;
+- gross / NLV, nominal and exposure-weighted (U_ew);
+- S10, S20, G10 and P20, the glide limit L(t) and the headroom under it, and the leveraged sleeve's
+  use (the envelope spec computes them daily from its phase E0);
 - drawdown on the 3-session and slow windows, and the breaker state;
 - concentration by name, sector and tech-linked group;
-- scenario P&L for index −5%, −10% and +5% (beta-scaled).
+- scenario P&L for index −5%, −10% and +5% (beta-scaled, full revaluation).
 
 **Sources.** The news process already reads `portfolio_snapshots` and the regime record, and that
 covers most of this. The **roll policy's current answer** cannot come from `evaluate_roll`, which
@@ -425,7 +432,9 @@ and costed in the plan or dropped. Rev 1 listed them as one line.
 
 ### 8.3 The event horizon (45 days)
 
-- **Macro dates:** a **static FOMC / CPI / PPI / NFP / PCE / retail-sales schedule in config**
+- **Macro dates:** a **static FOMC / CPI / PPI / NFP / PCE / retail-sales schedule in config**,
+  built in the envelope spec's phase E0 and shared with the spreads book's `risk.events` (which was
+  empty, so the book held a short call spread across the Oct 28 FOMC decision)
   (deterministic, published a year ahead). Consensus comes only inside ForexFactory's one-week
   window.
 - **Earnings:** dates from the provider the earnings blackout uses, with the implied move set
@@ -663,7 +672,8 @@ At each episode Python builds the menu and values **every** item. On identical d
 - Claude's pick;
 - the baseline;
 - a **matched random pick** (the placebo: it isolates selection skill from "traded less");
-- a **dumb rule** (the §6.2 stacking rule): it tests whether the value can be codified;
+- a **dumb rule** (the stacking rule, envelope spec §3.4.4): it tests whether the value can be
+  codified;
 - **always-skip**.
 
 The record covers every episode, applied or not, which removes the selection-on-treatment bias of
@@ -774,6 +784,21 @@ The 22 non-failed spreads day plans: Python scores their risk flags and skip con
 what SPY did. This costs nothing, and it says whether a daily Opus plan has resolution or collapses
 to the middle, before the wheel brief is built (D20).
 
+### 11.10 The spreads book: a pilot of this machinery, not wheel evidence (revision 3)
+
+The spreads book is the densest stream of independent, defined-risk decisions in the estate, at
+about one traded episode every two sessions, with every menu item valued. Use it to debug this
+section's machinery before the wheel's record starts: pre-registration, the matched random pick,
+always-skip, the fixed valuation rule, clustering by session.
+
+- **Its record counts only for the spreads book's own R4-type grant** (§5.1). Picker skill at 0DTE
+  SPY says nothing about cutting or selecting wheel entries, so it is never evidence for a wheel rung.
+- **The cost standard comes first.** The picker's break-even input was a parameter (93.5–94.9%)
+  built on a shadow slippage four times the measured crossing, and all 8 of its skips cite it. The
+  envelope spec §3.2 f recalibrates it before any spreads record window opens.
+- **Expect a null.** The spreads live bar's H0 is "intraday expectancy after measured costs ≤ 0".
+  A known-near-null environment is a clean baseline for the placebo test.
+
 ## 12. Placement and fences
 
 **`src/mastermind/` (enrichment tier)** holds the prompt builders, the brief and amendment calls,
@@ -835,8 +860,14 @@ Import-based tests do not catch a DB-mediated path, which is why the writer and 
   - `claude_cut` gains the plan input (record-only first);
   - the roll review gains structured agree / disagree and X1;
   - covered calls are untouched except through tap-only book-repair proposals.
-- **Spreads:** unchanged. It keeps its own day plan and picker, and the wheel brief's thesis is not
-  fed to it (correlated failure, confounded records).
+- **Spreads** (revision 3: no longer "unchanged"):
+  - it keeps its own day plan and picker, and the wheel brief's thesis is not fed to it (correlated
+    failure, confounded records);
+  - it gets the envelope spec's fixes (§3.2 there): the static macro calendar into `risk.events`,
+    the account-halt and slow-breaker link, caps of about 0.5% / 1% / −2% of NLV, a measured cost
+    standard, `mode: shadow` until the skipped backtest passes;
+  - on an operator ruling (E3 there), it moves to SPXW, which frees SPY for the wheel;
+  - its picker is an R4-type grant, grandfathered in paper (§5.1); its record pilots §11 (§11.10).
 - **Value book:**
   - the brief reads the value view, sanity-bounded;
   - the second written exception is unchanged, except the sanity quarantine (Phase 0) and the
@@ -857,19 +888,30 @@ Import-based tests do not catch a DB-mediated path, which is why the writer and 
 | Decisions 3, 15 and 33: Claude may cut a CSP, never raise it; paper-applied, record-only live, breaker | same | L1 as a separate exception | **In line:** L1 is a second input to the same clamp |
 | 2026-08-10 removals: the skill-proposal loop and verdict-EV / calibration scoring | STATUS.md "Removed 2026-08-10" | Weekly retro; Brier as a promotion bar | **In line:** retro dropped; probabilities are a guardrail scored against market-implied, never a promotion criterion. What differs from the removed scoring: exogenous questions resolved by Python against a market baseline, not a verdict's EV. Reopening the retro would be a separate ruling |
 | 2026-10-14: leveraged ETFs "roll where possible, else assign" | `src/monitor/intraday.py:532` | L3 auto roll veto | **In line:** no veto at any rung unless this ruling is reopened |
-| N18: `min_strike_vs_basis: 1.00` | `risk_limits.yaml` | Not addressed | **Put to the operator (D14)**, by replay |
+| N18: `min_strike_vs_basis: 1.00` | `risk_limits.yaml` | Not addressed | **Put to the operator (D14)**, by replay. Revision 3: moved to the envelope spec (E12), with a leveraged-ETF class floor |
+| TQQQ/UPRO/SOXL/DPST as `would_own` exceptions (2026-08-27, 2026-09-29); decision 32's leveraged floor of 1 lot; the 2026-10-22 fair-value waiver on bottoming lots; regime multipliers for every name; the spreads plan's backtest-before-paper rule and its SPY choice | `universe.yaml`, `risk_limits.yaml`, `regime_limits.py`, spreads plan lines 560 and 707 | — | **Revision 3:** handled in the envelope spec §5 (leveraged puts off except a drawdown sleeve; UPRO and DPST out; no waiver for leveraged lots; an `index_1x` class multiplier; backtest reinstated; SPXW on a measured cost condition) |
 
 ## 15. Phasing
 
+**Revision 3: the envelope spec is a prerequisite.** Its phases (E0 stop the bleeding and measure;
+E1 backtests and replays; E2 envelope live in paper; E3 spreads to SPX; E4 glide complete) are in
+its §4.
+
+- Phase 0 below changes no risk and may run beside E0–E1.
+- Phase 2 onward waits for E2, so that every R0 record is made against the repaired envelope.
+- Every risk-changing rung needs E2 complete and the harness passing; the R3 allocation lever also
+  needs the leveraged sleeve live.
+
 | Phase | Content | Claude's authority | Gate to the next phase |
 |---|---|---|---|
-| **0 Cleanup** | Delete the prices and IV text from `_UNIVERSE_CONTEXT` (keep tiers and structural rules; add HACK and IGV rows). **Quarantine the value fair-value fault:** withhold any VALUE NOTE whose Python fair value / price is outside [0.1, 10], flag the name in the value book, and diagnose GOOGL and META (units vs method; a change to a value rule bumps `ruleset_version`). Fix the S19 title consistency check. Date the dossier prose. Add spot, entry credit, unrealised, basis and earnings to the roll prompt, and fix its "Entry delta" label. Drop "default to sell" from the rubric. Stop writing `claude_memory`. Fix the 2-day actuals look-back. Stamp model and prompt versions on review rows. Score the existing spreads plans (§11.9). Backtest the stacking rule against the `claude_cut` rows | unchanged (`claude_cut` as today) | none |
-| **1 Envelope repair** (can run beside Phase 2) | Find why `gross_notional_cap` never fired; make the gross cap unconditional; add the tech-linked group cap; add the stacking rule if the backtest supports it; add the slow breaker; build the survivability harness and run it on the deterministic envelope | unchanged | Operator rulings D13; the harness passes on the deterministic envelope. **Required before any risk-changing rung** |
+| **Prerequisite: envelope spec E0–E2** | Everything in the envelope spec through its phase E2 (see above) | unchanged | Its own gates; E2 complete before Phase 2 |
+| **0 Cleanup** | Delete the prices and IV text from `_UNIVERSE_CONTEXT` (keep tiers and structural rules; add HACK and IGV rows). **Quarantine the value fair-value fault:** withhold any VALUE NOTE whose Python fair value / price is outside [0.1, 10], flag the name in the value book, and diagnose GOOGL and META (units vs method; a change to a value rule bumps `ruleset_version`). Fix the S19 title consistency check. Date the dossier prose. Add spot, entry credit, unrealised, basis and earnings to the roll prompt, and fix its "Entry delta" label. Drop "default to sell" from the rubric. Stop writing `claude_memory`. Fix the 2-day actuals look-back. Stamp model and prompt versions on review rows. Score the existing spreads plans (§11.9). (The stacking-rule backtest moved to the envelope spec's E1) | unchanged (`claude_cut` as today) | none |
+| **1 Envelope repair** | **Moved to the envelope spec** (revision 3): the shock budget with its glide, the exposure-weighted backstop, the gap measures, the leverage-weighted group cap and stacking rule, the slow breaker spanning books, the survivability harness | unchanged | The envelope spec's E2 complete and its harness passing. **Required before any risk-changing rung** |
 | **2 Knowledge** | The fact layer (§8): book truth, the dry-run roll answer, the 45-day calendar (static config + earnings), the sourced market-state additions, the track record (if D18 allows), freshness and grounding. **Facts go into the existing reviewer and roll prompts first** | unchanged | Blinded claim audit of reviews passes |
-| **3 Brief, record-only** | `mastermind.db`, the one-shot process, the post-close brief, the 08:45 check, amendments, `plan_view`; R0 shadow on every decision episode; structured roll agree / disagree; the probability guardrail; the web page. Tap-only book-repair proposals (X1 and §7) once D14 is ruled | **R0 everywhere.** X1 and repair taps (a human decides) | ≥ 60 sessions; pre-registered evidence report per §11 |
+| **3 Brief, record-only** | `mastermind.db`, the one-shot process, the post-close brief, the 08:45 check, amendments, `plan_view`; R0 shadow on every decision episode; structured roll agree / disagree; the probability guardrail; the web page. Claude's endorsement of the tap-only book-repair proposals (X1 and §7) once the envelope spec's E12 is ruled | **R0 everywhere.** X1 and repair taps (a human decides) | ≥ 60 sessions; pre-registered evidence report per §11 |
 | **4 R1 plan input, applied in paper** | `min(det, review_cut, plan_cap)` applied in paper; the pause on amendments goes live | R1 (reducing) | D1 promotion ruling on the record |
 | **5 R2 select, applied in paper** | A menu ≤ baseline risk, plus skip; cross-scan allocation only if the regret test supports it | R2 (reducing) | §5.1 bar; third written exception |
-| **6+ Risk-changing rungs** | R3 size within a fixed cap, R4 strike menu, auto R5 by trade class, X2 auto exits; each with a full shadow decider book first | one rung at a time | Phase 1 complete; survivability test per rung; §5.1 bars; a written exception each |
+| **6+ Risk-changing rungs** | R3 size within a fixed cap, R4 strike menu, auto R5 by trade class, X2 auto exits; each with a full shadow decider book first | one rung at a time | The envelope spec's E2 complete (and, for the R3 allocation lever, its leveraged sleeve live); survivability test per rung; §5.1 bars; a written exception each |
 | **Live** | The operator reads each lever's record and flips `apply_live` one lever at a time; a live process re-validates its rungs at startup | | |
 
 ## 16. Decisions for the operator
@@ -885,7 +927,7 @@ revision's adjudication is marked.
 | **D2** | L2a / L2b | **L2a dropped** (evidence §10.2); measure first-come vs best-of-day regret first. **L2b deferred**; if built, record-only, labelled risk-changing, materiality-only | None remaining |
 | **D3** | Web research in the brief | **No in Phases 2–3.** It conflicts with the N3 hardening, and web text grounds nothing. Later only as a separate tool-bearing researcher (allow-listed domains, structured quoted rows, never groundable fact ids) feeding a tool-less decider | None |
 | **D4** | L3 exits | **No auto veto.** **Yes** to X1 tap-only close / assign proposals on the existing card, shadow-valued whether tapped or not. Keep the per-decision roll review, structured and scored by short; drop the plan's per-short section | Opus first proposed folding roll reviews into the brief, then withdrew. **Adjudicated:** keep the live review |
-| **D5** | Books governed | **Wheel only.** Spreads keeps its own plan and picker; value is a sanity-bounded read input | None |
+| **D5** | Books governed | **Wheel only** for authority. Spreads keeps its own plan and picker; value is a sanity-bounded read input. **Revision 3:** spreads gets the envelope spec's fixes and account couplings, and on a ruling moves to SPXW; its picker is classified as an R4-type grant, grandfathered in paper, record-only in any live plan; its record pilots §11's machinery and is never evidence for a wheel rung (§11.10) | Opus (envelope review): the spreads book as the R2/R4 evidence lab for the wheel. Sonnet: a machinery pilot only. **Adjudicated** for Sonnet |
 | **D6** | Promotion and demotion bars | **Replaced by §11:** pre-registered, decision episodes, random placebo and dumb-rule controls at the interval's lower bound, the fixed valuation rule with sign agreement, regime coverage, bars by class, a posterior demotion rule with a minimum count, a tail rule and stated false-demotion rates | None on substance. Opus favoured a full shadow decider book early; Sonnet a cheaper per-episode menu valuation. **Adjudicated:** per-episode valuation from Phase 3; a full shadow book only for risk-changing rungs |
 | **D7** | Where and when | **A launcher-scheduled one-shot** (own process = own exception boundary; fresh code each run; no news budget): the brief at ~17:30 ET, a deterministic pre-open check at 08:45 ET, conditional amendments; `data/mastermind.db`; a pause of at most 20 minutes once L1 applies | Sonnet's last position: the news scheduler is acceptable for v1, with a single brief at 09:00–09:15. Opus: a post-close one-shot plus a pre-open check. **Adjudicated** on R3 information merits: both batches of information, and retry slack, without the news process's budget and failure domain |
 | **D8** | Cost cap | **A per-kind call and token governor for robustness**, not a dollar cap and not an architectural driver. Ollama never plans; a Sonnet degrade is not an outage plan; a missing plan means the deterministic system | Sonnet's load estimate (+~43% context tokens, nearly all Opus) is **unverified** and secondary under R3 |
@@ -897,14 +939,14 @@ revision's adjudication is marked.
 |---|---|---|
 | **D10** | Confirm the destination and the permanent hard lines (§1, §3), including the survivability test and fixed-terms envelopes | Adopt; add the hard lines to CLAUDE.md as the invariant's second half when Phase 3 lands |
 | **D11** | The objective and primary metric: what "better" means | Income per risk-unit-day with a loss-tail term; the operator sets the exchange rate between income and drawdown. Everything in §11 depends on it |
-| **D12** | The risk-classification test (§4): the measures and their tolerances | Adopt the five measures; zero tolerance for "reducing" |
-| **D13** | Envelope repair settings (§6): the gross cap level and scope; the tech-linked group cap; the stacking rule; the slow breaker's window, threshold and action | Rule after the Phase 1 backtests; the level for the gross cap is the most consequential (100% would block every new CSP today) |
-| **D14** | Book repair (§7): `min_strike_vs_basis` by replay; tap-only covered-call overlays as named N18 exceptions; hedges and trims deferred until their order paths exist | Rule on the floor first; overlays next |
+| **D12** | The risk-classification test (§4): the measures and their tolerances | Adopt the measures as revised in revision 3: net delta, S10 by full revaluation, the G10 / P20 gap measures, exposure-weighted collateral and gross, leverage-weighted risk units; zero tolerance for "reducing" |
+| **D13** | Envelope repair settings | **Moved to the envelope spec (revision 3):** the shock budget and glide (E4), the gross backstop (E5), the gap measures (E6), the slow breaker (E14), the tech-linked cap and stacking rule (E15) |
+| **D14** | Book repair | **Moved to the envelope spec (revision 3), E12:** `min_strike_vs_basis` by replay with a leveraged class floor; tap-only overlays, trims and de-lever proposals once their order paths exist. Claude's endorsement of proposals stays here (§7) |
 | **D15** | The value book's clamped drivers: grandfather or convert to Python-built menus | Grandfather now with the Phase 0 sanity quarantine; plan the conversion, since a relative cap imported Python's GOOGL / META fault |
 | **D16** | The evaluation design (§11), pre-registered in the plan | Adopt |
 | **D17** | Fidelity and fallback | Backend stamped on every row; an Ollama day counts as missing; missing days logged with their cause; the blinded claim audit before any brief reaches a lever |
 | **D18** | Reopen decision 1 for the deterministic track record (§8.5) | Reopen for deterministic outcome facts only |
-| **D19** | The calendar source | Static FOMC / BLS / BEA dates in config; earnings from the blackout's provider; consensus only inside the one-week window; fix the actuals look-back |
+| **D19** | The calendar source | Static FOMC / BLS / BEA dates in config; earnings from the blackout's provider; consensus only inside the one-week window; fix the actuals look-back. **Revision 3:** the static schedule is built in the envelope spec's phase E0 and is also the spreads book's `risk.events` |
 | **D20** | Score the existing 22 spreads plans before building the brief | Yes (Phase 0) |
 | **D21** | What Claude sees of its own scorecard | Only buckets with ≥ 100 resolved items; Python recalibrates instead |
 
@@ -926,3 +968,6 @@ revision's adjudication is marked.
 - **Which probability questions, if any, a lever will read.** If none by Phase 4, cut them.
 - **How a cross-scan allocation menu would trade the cost of waiting** against a better candidate
   later. This waits on the regret measurement (§10.2).
+- **Revision 3:** the envelope, leveraged-ETF and spreads unknowns (IBKR 0DTE house margin, the
+  after-hours exercise cut-off, SPXW wing widths, SOXX/VOO liquidity, ThetaData coverage) are listed
+  in the envelope spec §7.
