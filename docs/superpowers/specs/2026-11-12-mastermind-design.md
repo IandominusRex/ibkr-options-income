@@ -1,9 +1,11 @@
 # The Mastermind — Claude as the best-informed mind on the book — design
 
-Date: 2026-11-12 · Status: **revision 3 (2026-11-13), for operator review**. Revision 3 moves envelope
+Date: 2026-11-12 · Status: **revision 4 (2026-11-14), for operator review**. Revision 3 moved envelope
 repair, book repair and every spreads decision into a prerequisite spec,
-`2026-11-13-risk-envelope-design.md` (the **envelope spec**), and adjusts this spec to match (§0.3).
-Everything below the §0.3 note is revision 2's text except where §0.3 lists a change.
+`2026-11-13-risk-envelope-design.md` (the **envelope spec**), and adjusted this spec to match (§0.3).
+Revision 4 adds long options: Claude's hedge roles, a paper-only put budget for Claude, a shadow
+directional track and a premium-cost dimension in §4 (§0.4). Everything below the §0.3 note is
+revision 2's text except where §0.3 or §0.4 lists a change.
 
 Revision 1 (commit 6f5317f, same
 day) was reviewed by two independent reviewers (Opus and Sonnet), who critiqued it and rebutted
@@ -82,6 +84,34 @@ this spec what the envelope spec owns, and references it back.
 | 20 | **§2.3 corrected.** Gross ran 1.08–1.53× nominal (peak 1.53 on Nov 5, not 1.44) and 1.30–1.88× leverage-weighted | §2.3, §4 |
 | 21 | **Phasing.** The envelope spec's phases E0–E2 precede this spec's Phase 2; its Phase 1 is replaced by a reference; risk-changing rungs need E2 complete | §15 |
 | 22 | **Decisions.** D13 and D14 move to the envelope spec (E4–E5, E12, E14–E15). D5, D12 and D19 are amended | §16 |
+
+### 0.4 Revision 4 (2026-11-14): long options
+
+The operator asked: *"what about buying puts and calls as a trading strategy? … I wanted the
+mastermind to be able to buy puts when relevant."* Scope, his choice: index hedges and directional
+bets; event protection and stock replacement are out. Two reviewers researched it and rebutted each
+other (O3, S3, O3R, S3R). The operator's four rulings are recorded as OR9–OR12 in the envelope spec
+§0.1. The deterministic hedge (a Python-run Nasdaq-100 bridge during the glide, earning no envelope
+headroom) is specified there, in §3.10. This spec holds Claude's part.
+
+**The operator's choice, stated plainly.** Both reviewers recommended that Claude get no automatic
+authority to buy puts, because timing a hedge cannot be shown to be skilful in any useful horizon
+(decades of down legs) and buying when stress shows up is the costliest time to buy (0.20 on the
+dollar at VIX 25–35 against 0.43–0.70 in calm states, S&P 1990–2026 [M]). The operator chose to give
+Claude a **small automatic put budget in paper only**, knowing it cannot be proven skilful, to test
+his "when relevant" hypothesis. It is a written exception to the core invariant, paper-applied,
+record-only in live, and never promoted to live by this spec.
+
+| # | Change | Where |
+|---|---|---|
+| 23 | **New hard lines 9–11**: long options earn no headroom; premium only from operator-set fixed budgets; no live opening buy caused by Claude | §3 |
+| 24 | **§4 gains a premium-cost / carry dimension.** A purchase is risk-reducing only if no worse on every risk measure **and** within the deterministic baseline's spend for the period (B0) **and** outside the stress block. Spend above B0 inside a fixed budget is **changing (cost)**. Lifting or skipping a hedge is changing | §4 |
+| 25 | **R5 split** into R5-R (book-repair proposals) and R5-H (hedge roles C1–C4); **HP, Claude's paper put budget**, a new exception row; **Track D** outside the ladder | §5.1 |
+| 26 | **Claude's hedge roles** (C1 daily stance, C2 "buy puts now" tap, C3 "cash in / roll down" tap, C4 shape at scheduled rolls) | §10.6 |
+| 27 | **The paper put budget (HP)**: Python's menu, a fixed unit of 0.1% of NLV₀ a month, at most 3 banked; Claude chooses when and which item; **exempt from the VIX ≥ 25 block** (paper only, reasons given); measured against the schedule, random timing and no hedge; a breaker | §10.7, §11.12 |
+| 28 | **Track D, directional, shadow only**: Python menus, a fixed premium per idea, controls (random direction, always-call, the same view in stock), a bar of ≥ 250 ideas and ≥ 120 market-day clusters; the news `overreaction_likely` verdicts and the spreads plan's bias scored forward from now | §10.8, §11.13 |
+| 29 | **Measurement**: long-option items valued from captured quotes, not stored IV; hedge, paper-budget and Track D records; honest time to evidence | §11.3, §11.6, §11.11–11.13 |
+| 30 | Placement, interaction, prior rulings, phasing, decisions H11–H16, unverified | §8.1, §9.1, §12–§17 |
 
 ## 1. Intent and destination
 
@@ -224,6 +254,16 @@ ruling.
    missing output. Ollama never produces a lever value or a plan.
 8. **Isolation.** A call that decides has no tools. Untrusted text (news, web) never sits in the
    context of a tool-bearing call that can also decide.
+9. **Long options earn no headroom** (revision 4). Every admission test reads S10_gross, which
+   counts no long option from any source: the hedge book, Claude's paper puts, a Track D item if one
+   is ever traded, or a put bought by hand in TWS (envelope spec §3.4.1). S10_net is display and
+   survivability only.
+10. **Premium is spent only from fixed-terms budgets the operator sets** (revision 4): the bridge's
+    and Claude's paper unit. Claude never sets a budget, a unit, a contract count, a strike, a price,
+    a tenor or an exit for a bought option. It chooses a menu letter, or "no buy".
+11. **No live opening buy is caused by Claude under this spec** (revision 4). Claude's paper put
+    budget is record-only in live, refused by the Rules Engine under `LIVE_TRADING=true`; going live
+    needs its own later ruling.
 
 ## 4. Risk classification, not "reduce-only"
 
@@ -258,10 +298,30 @@ fixed set of risk measures (revision 3: the definitions are the envelope spec's 
   on leveraged ETFs;
 - committed collateral, **exposure-weighted** (leveraged ETFs at their leverage);
 - gross notional / NLV, **exposure-weighted** (U_ew);
-- risk units per name, per sector and for the tech-linked group (leverage-weighted).
+- risk units per name, per sector and for the tech-linked group (leverage-weighted);
+- revision 4: **T20** (the tech-linked group −20%) and **S-SMH**, the envelope spec's §3.4.3 tech
+  scenarios;
+- revision 4: **premium committed and carry**: the debit of any bought option, and its expected
+  annualised carry per protected point of S10 and T20. It ranks non-dominated items and enters the
+  record. It never gates as a multiple of a Python estimate (§3 line 3).
 
 An application is **risk-reducing** only if it is no worse on every measure. Otherwise it is
-**risk-changing**, whatever the contract count. The class decides the evidence bar (§11.5) and
+**risk-changing**, whatever the contract count.
+
+**The premium-cost rule (revision 4).** Every risk measure above improves when a put is bought, so
+under the risk measures alone "buy fifty puts" would be risk-reducing. The reviewers' two halves are
+merged (O3's cost dimension, S3R's baseline-spend gate). An application that spends premium is
+**risk-reducing** only if all three hold:
+
+1. it is no worse on every risk measure;
+2. its spend is within the deterministic baseline's own spend for that period (**B0**: the bridge's
+   scheduled purchase, or zero where no programme runs);
+3. the stress block is clear (envelope spec §3.10.6).
+
+Spend above B0 but inside a fixed-terms budget is **risk-changing (cost)**. Spend above every budget
+is refused, not classified. Lifting, skipping, shrinking or delaying a hedge against its baseline
+raises every risk measure at once, so it is **risk-changing**. The class depends on the baseline,
+which is why the baseline is fixed first (the bridge's schedule). The class decides the evidence bar (§11.5) and
 whether the rung needs envelope repair first (§15). Without G10 and P20, a TQQQ lot replacing equal
 beta-dollars of QQQ reads as reducing: the same delta and linear loss, less collateral. With them it
 is risk-changing, as its gap and decay tail say it should be.
@@ -277,6 +337,14 @@ is risk-changing, as its gap and decay tail say it should be.
 | Nominate a name for the scan | **changing** (adds trades) |
 | Size above the deterministic size | **changing** |
 | A strike nearer the money | **changing** |
+| Revision 4. The bridge's scheduled default hedge (Python; no Claude) | reducing, within B0 |
+| Another hedge item at the same scheduled date and spend, no worse than the default on every scenario (C4) | reducing, within B0 |
+| A tapped "buy puts now" above the schedule, inside the bridge's budget (C2) | **changing (cost)**; a human taps |
+| Claude's paper-budget buy (HP) | **changing (cost)**; reducing on every risk measure |
+| Skip, shrink, delay, lift or early-monetise the bridge's hedge | **changing** |
+| A hedge larger than 50% of the book's beta-weighted delta | refused (it would turn the book short) |
+| A long call on a name or factor the book is already long | **changing**: the same bet, added |
+| A long put on the book's own factor (the index or a tech-linked name) | a hedge, not a directional bet: it routes to the hedge roles and never reduces S10_gross |
 
 ## 5. The earned autonomy ladder
 
@@ -293,7 +361,10 @@ read. Every rung has a breaker and a paired counterfactual on every decision epi
 | **R2 select** | Chooses one item from a Python-built menu whose items are all ≤ the baseline on every §4 measure: the baseline, one more conservative strike or size, skip. Later, a cross-scan best-of-day allocation (only if the regret test in §10.2 finds it material) | menu ≤ baseline risk | reducing | ≥ 100 decision episodes over ≥ 1 down leg and ≥ 1 up/calm leg of ≥ 10 sessions; beats the random, dumb-rule and always-skip controls at the lower bound of a day × name clustered interval on rules-based shadow P&L per risk-unit-day; same sign under expiry valuation | Third written exception, naming the menu |
 | **R3 size within a cap** | Sizes above the deterministic size, up to a fixed cap in risk units. Never above the unscaled hard caps or the **regime-scaled ceiling**: easing the regime is D9, never granted here. Revision 3: also **the allocation lever inside the envelope**, choosing a leveraged lot over the unleveraged equivalent from a Python-built equal-exposure menu, inside the human-set leveraged sleeve cap (envelope spec §3.9) | integer above `B`, up to the fixed cap; or an equal-exposure menu | **changing** | Envelope repair landed (envelope spec phase E2; for the allocation lever, the leveraged sleeve live too); the always-most-aggressive replay and the analytic worst case pass; R2 clean; the R0 "reclaim" record (what Claude would have added) positive under both valuations; a full shadow decider book over ≥ one leg of each kind | Written exception plus the cap in risk units. Note: today the deterministic size already sits at the cap or the regime ceiling, so R3 has little room |
 | **R4 strike from a menu** | Chooses strike and expiry from the gate-passed chain menu, including one notch riskier than baseline, inside the fixed envelope. The spreads picker is already an R4-type grant (below) | Python-built chain menu | **changing** | As R3, plus a clean R3 record | Written exception |
-| **R5 propose trades** | Proposes trades of Python-defined classes: book repair (§7), hedges, opportunistic entries. Python builds, prices and gates them | Python-defined trade classes; a fixed "autonomy envelope" in dollars | depends on the trade | Tap-only from the start (outside the ladder). Auto only after R4 is clean, plus its own replay | Written exception per trade class |
+| **R5-R propose repair** | Proposes trades of Python-defined repair classes (§7) and, later, opportunistic entries. Python builds, prices and gates them | Python-defined trade classes; a fixed "autonomy envelope" in dollars | depends on the trade | Tap-only from the start (outside the ladder). Auto only after R4 is clean, plus its own replay | Written exception per trade class |
+| **R5-H hedge roles** (revision 4) | C1 a daily stance (record); C2 "buy puts now" and C3 "cash in / roll down" proposals (tap); C4 a shape choice at the bridge's scheduled roll, at its fixed date and spend (§10.6) | the bridge's menu and budget (envelope spec §3.10) | C1 none; C2 changing (cost), tapped; C3 changing, tapped; C4 reducing within B0 | C1–C3 none (a tap adds no authority). C4: record-only through the bridge; applied in paper only on a renewed programme, by an R2-type ruling after ≥ 12 scheduled rolls of record, judged on execution and cost per protected point | C4: a written exception when applied. **Live auto: never under this spec** |
+| **HP paper put budget** (revision 4, OR10) | **Automatically buys index puts in paper**: chooses *when* to spend one fixed unit (0.1% of NLV₀, accruing monthly) and *which* item from a Python-built menu (§10.7) | the hedge book's instrument only; a Python menu with "no buy"; fixed spend | **changing (cost)**; reducing on every risk measure | **None: granted by the operator without a record, paper only.** Survivability passes by construction (worst case: 3 units open, 1.2% of NLV₀ a year) | **A written exception (§10.7).** Record-only in live; never promoted by this spec |
+| **Track D directional** (revision 4, OR11) | Up to 3 ideas a day from a Python menu, **shadow only, no order path** (§10.8) | Python menu; a fixed premium per idea | outside the ladder | ≥ 250 ideas and ≥ 120 market-day clusters before an order path may even be proposed (§11.13) | A separate spec and ruling for any order path |
 | **X1 exits, tap** | Proposes close / assign instead of the policy's answer, on the existing decision card | Python-feasible exits | n/a (a human decides) | None (a tap adds no authority) | D4 |
 | **X2 exits, auto** | Chooses among Python-feasible exits that are **risk-reducing** by §4 (for example, close instead of roll) | feasible exits ≤ the policy's risk | reducing | ≥ 100 roll-stream episodes clustered by short; beats the policy and the random control | Written exception. Never a veto that forces a leveraged-ETF assignment unless the 2026-10-14 ruling is reopened |
 
@@ -313,6 +384,17 @@ The destination is the top of each row with `AutonomyLevel.FULL`.
   pilots this spec's §11 machinery (pre-registration, placebo, valuation rule). **It is never
   evidence for a wheel rung**: skill at a 0DTE SPY menu says nothing about cutting or selecting
   wheel entries.
+
+**Revision 4 additions.**
+
+- **The bridge's existence, budget, instrument, schedule, size rule, stress block and monetisation
+  rule are envelope levels** (envelope spec §3.10, §3.9): the operator's, never a rung.
+- **HP is the one Claude grant made without an evidence record.** The operator chose it, in paper,
+  knowing its record cannot show timing skill in any horizon this spec plans for (§11.12). That is
+  why it is paper-only, record-only in live and outside promotion: a good HP record is not evidence
+  for any live grant, and no rung's record is evidence for it.
+- **Track D's record is never evidence for a wheel rung, nor the reverse.** Neither is the hedge
+  record: hedge timing and entry selection are different skills.
 
 ### 5.2 Mapping onto `AutonomyLevel` and `promotion_blockers`
 
@@ -379,6 +461,8 @@ call protects by about its premium; the rest needs call-aways or tapped trims.
 - **Decision 30 stands.** Claude never holds, delays or moves a covered call's strike. Proposing an
   overlay for a human to tap is not a hold.
 - **The plan's "reduce" stance lands here.** It becomes a repair proposal, never an automatic sale.
+- **Revision 4: a hedge is not repair.** The bridge (envelope spec §3.10) is insurance during the
+  glide; trims and covered calls remain the main repair. Single-name protective puts are out of scope.
 
 ## 8. Knowledge: the read-only fact layer
 
@@ -409,7 +493,11 @@ assigned.
   use (the envelope spec computes them daily from its phase E0);
 - drawdown on the 3-session and slow windows, and the breaker state;
 - concentration by name, sector and tech-linked group;
-- scenario P&L for index −5%, −10% and +5% (beta-scaled, full revaluation).
+- scenario P&L for index −5%, −10% and +5% (beta-scaled, full revaluation);
+- revision 4: T20 and S-SMH, gross and net of long options; the hedge book (position, points
+  protected = S10_gross − S10_net, budget used and left, the stress-block state, the next scheduled
+  roll); Claude's paper budget (units banked, open, spent); the VIX/VXN state with the conditional
+  payoff per premium dollar for that state (envelope spec §2.6).
 
 **Sources.** The news process already reads `portfolio_snapshots` and the regime record, and that
 covers most of this. The **roll policy's current answer** cannot come from `evaluate_roll`, which
@@ -514,10 +602,10 @@ it compresses the whole day's reasoning into the minutes before the open, with n
 
 | When (ET) | What | Model | Output |
 |---|---|---|---|
-| ~17:30, trading days (after EOD and after-close earnings) | **The brief**, a one-shot | Opus | Tomorrow's plan (§9.3) |
+| ~17:30, trading days (after EOD and after-close earnings) | **The brief**, a one-shot | Opus | Tomorrow's plan (§9.3). Revision 4: the hedge stance and any C2/C3 proposal (§10.6), any paper-budget letter (§10.7), up to 3 Track D ideas (§10.8) |
 | 08:45 | **Pre-open check, deterministic Python, no LLM.** Did a plan falsifier fire? Did a High-impact print land outside its playbook band? Did a pre-market earnings release or an overnight gap beyond k ATR hit a planned name? | none | A list of invalidated plan items |
 | 08:45–09:20, only if the check flagged items | **Amendment** for the flagged names | Opus | Item-level amendments |
-| Intraday, on a trigger (regime change, index shock, breaker trip, ±2 ATR on a held name) | **Amendment** for the affected names, ≤ 2 a day | Opus | Item-level amendments |
+| Intraday, on a trigger (regime change, index shock, breaker trip, ±2 ATR on a held name) | **Amendment** for the affected names, ≤ 2 a day | Opus | Item-level amendments. Revision 4: may carry a paper-budget letter from that session's menu (§10.7) |
 | Every scan with candidates | **Candidate review** (kept, on every candidate), now with the plan in context | Sonnet | As today; `claude_cut` |
 | Every roll decision (one per short per action per ET day since `9da9e8a`) | **Roll review** (kept), with a structured agree / disagree, a reason and an optional close / assign proposal | Sonnet | Stored, scored (§11), X1 |
 
@@ -641,6 +729,129 @@ Record every "would ease" read, and Claude's view on every ladder-blocked and re
 as R0 decision episodes valued under the fixed rule (§11.3). That is the evidence any future ruling
 on over-restriction would need. Easing itself is never granted under this spec.
 
+### 10.6 Hedges: Claude's roles (R5-H; revision 4)
+
+The bridge is Python's (envelope spec §3.10): its schedule, size, budget, instrument and stress block
+are fixed. Claude's roles around it are the reviewers' merged set (O3R C1–C4, S3R §2.1):
+
+| Role | What Claude does | Mechanism | Class | Why it is honest |
+|---|---|---|---|---|
+| **C1, the daily stance** | One of {hold the programme, add (a menu letter), cash in / lift (a leg), none}, a reason tied to fact ids, a falsifier on Python levels | R0 row in the brief, every trading day, with or without a bridge running | record | Costs nothing; valued against the programme, no hedge, a random roll date and the trim-equivalent (§11.11) |
+| **C2, "buy puts now"** | Proposes one item above the schedule | Python builds, prices and gates it from the bridge's menu, inside the bridge's budget; the card shows the VIX/VXN state and the payoff per premium dollar for that state, S10_gross / S10_net and T20. **The stress block applies.** A human taps | changing (cost) | Meets "able to buy puts when relevant" without timing authority |
+| **C3, "cash in / roll down"** | Proposes an early close or a roll down after a fall | An annotation on the bridge's card (the X1 pattern); Python builds and gates the order; a human taps | changing | Monetisation is where hedges are won or lost, and the multiple is fragile (envelope spec §2.6), so it stays a human decision until a rule is replayed and ruled |
+| **C4, the shape at a scheduled roll** | Chooses among items at the scheduled date and fixed spend, each no worse than the default on every scenario in {S10, S20, T20, G10, P20} and inside the floors (DTE ≥ 45, long delta ≥ 0.15) | A menu letter; a missing or bad answer means the default item | reducing, within B0 | No timing: date and dollars are fixed. **Record-only through the bridge** (2–3 rolls are too few to read): the default is bought and Claude's pick is shadow-valued |
+
+**Every proposal and pick is shadow-valued whether tapped or not.** Never granted, at any rung of
+this spec: skipping, delaying, shrinking or lifting the programme automatically, or any automatic
+purchase above it in live.
+
+### 10.7 The paper put budget, HP (a written exception; revision 4, OR10)
+
+**The exception.** In **paper**, Claude may cause an **opening buy of an index put**: it chooses
+*when* to spend one fixed unit of a separate small budget and *which* item of a menu Python built.
+Python builds and prices the menu, sets the contract count from the fixed unit, sends a `LimitOrder`
+at mid on qualified contracts quoted through `req_fresh_mkt_data`, and gates it with
+`validate_hedge` at decision time and again at send time (envelope spec §3.10.10). Claude never types a
+size, a strike, a price, a tenor or an exit. Unlike `claude_cut`, which only lowers, and the value
+verdict, whose READY reaches a stock buy only through Python's price and timing gates, here Claude's
+choice is itself the opening decision: when, and which option. It is
+**paper-applied and record-only in live**: `validate_hedge` refuses a `hedge:claude:` order under
+`LIVE_TRADING=true`, and no switch in this spec changes that. Going live needs its own later ruling.
+
+**Class (§4).** Reducing on every risk measure (net delta, S10_net, T20, G10 and P20 improve;
+collateral and U_ew are unchanged). Spend is above B0, because the budget is in addition to the
+programme. So it is **risk-changing (cost)**. It is granted without a §11 evidence record, by the
+operator's choice: permissible only because it is paper and its worst case is its premium.
+
+**The budget** (adjudicated from the operator's "about 0.1% of NLV a month"):
+
+| Term | Level | Why |
+|---|---|---|
+| Unit | **0.1% of NLV₀** (NLV on the first day, in fixed dollars; ≈ $650 today) | The operator's figure |
+| Accrual | One unit per 30 days; **at most 3 banked** | The hypothesis is about *when*. A use-it-or-lose-it monthly unit would be a schedule in disguise. The bank cap bounds what one stress episode can absorb to 0.3% of NLV₀ |
+| Per buy | Exactly one unit: contracts = floor(unit ÷ the item's debit); an item that fits no whole contract is not on the menu | Fixed spend; Claude never sizes |
+| Pace | At most one buy per session | A spike gets at most three buys over three sessions |
+| Open at cost | ≤ 3 units | Bounds the paper loss at once |
+| 12 months | ≤ 12 units (1.2% of NLV₀) | Follows from the accrual |
+
+At today's prices one QQQ 45-day 0.30-delta put costs more than a unit [M], so on the QQQ route the
+menu leans to verticals and further-OTM strikes; XND's smaller contract helps. If the E0 capture
+shows the menu empty on most days, the operator may set the unit to 0.2% with 2 banked (H13).
+
+**The menu.** Python's, built each session from captured quotes on **the hedge book's instrument
+only** (XND, or QQQ under the envelope spec's §3.10.0 rule): tenors {30–45, 60–90 DTE} × long-leg
+delta {about 0.30, about 0.15–0.20} × {outright, vertical at least 10% of spot wide}, plus **"no buy"
+(the default)**. Floors: DTE ≥ 30, long delta ≥ 0.10, quote ≤ 10% of mid. No 0DTE, no calls, no
+other underlying.
+
+**The channel.** A letter from the brief (≈ 17:30 ET) or an amendment (§9.1), with a reason tied to
+fact ids and a falsifier. Python sends in a fixed window the next session (10:00–10:30 ET; within 30
+minutes of an amendment), re-quotes, recomputes the contract count **downward only**, and re-runs
+`validate_hedge`. **Fallback = no buy:** an Ollama-produced, malformed, ungrounded or stale answer, or
+a missing day.
+
+**Exits are Python's.** Each buy is sold at ≤ 21 DTE remaining, or by the bridge's monetisation rule
+once one is ruled. Claude's "cash in" on one of its own puts is a tapped proposal (C3), shadow-valued
+both ways. There are no rolls: each unit is its own trade.
+
+**The VIX ≥ 25 block: Claude's paper budget is exempt.** The decision and its reasons:
+
+1. The block encodes the evidence that stressed-state buying returns about 0.20 on the dollar. The
+   operator's hypothesis is that Claude can tell *which* stressed moments are worth buying. A blocked
+   experiment produces no observation in the very state the hypothesis is about, so it could only
+   confirm the block by construction.
+2. The cost is bounded and not real: at most 3 units (0.3% of NLV₀) open, in paper.
+3. The record measures the question directly: Claude's stressed-state buys against **random buys in
+   the same VIX state at equal spend** (§11.12), beside the deterministic block's counterfactual.
+4. The exemption is **paper-only**. Any live version would carry the block unless its own ruling,
+   reading this record, lifts it.
+
+What is **not** exempt: the account halt, the daily and slow breakers and every hard line. A trip
+demotes HP to record-only (§3 line 5, §11.7), and the record keeps valuing what Claude would have
+bought, so the censored days still produce counterfactual rows.
+
+**No credit.** HP's puts are excluded from S10_gross and U_ew (hard line 9), included in S10_net and
+the harness, and their marks enter the daily loss leg net, by book.
+
+**The breaker.** HP drops to record-only, with a human reset, on any of:
+
+- a cumulative realised and marked loss of **6 units (0.6% of NLV₀)** since the start;
+- trailing the schedule control (§11.12) by **4 units over any rolling 6 months**: a cost stop,
+  which will fire on noise as well as on bad timing, and says so on its card;
+- any account breaker trip, the slow breaker or a halt.
+
+**The review.** Twelve months after the first buy, or on the tail stop, the operator reads the record
+and rules continue or stop. Nothing in the record promotes HP to live.
+
+### 10.8 Track D: directional ideas, shadow only (revision 4, OR11)
+
+Outside the ladder. **No order path in v1:** paper or live needs a separate spec, plan and ruling.
+Shadow measures skill at no cost; paper orders in the `DUQ` account would spend the excess liquidity
+and NLV that feed the CSP budget, the breakers and the glide (the reasoning envelope E1 applies to
+spreads).
+
+| Element | Design |
+|---|---|
+| Menu | Python's, daily after the close, from captured quotes: QQQ/XND, SPY, IWM and about 10 liquid single names (held names included in shadow). Items: long call or long put, ATM or 5% OTM; a debit vertical ATM/±5%; 30–60 DTE; **skip** (the default). Items quoted wider than 5% of mid are dropped |
+| Claude's output | ≤ 3 ideas a day: name, direction, a menu letter, reasons as fact ids, a falsifier on Python levels. No typed numbers |
+| Premium per idea | **0.25% of NLV₀, fixed dollars**; fractional contracts allowed in shadow, whole-contract feasibility recorded. Adjudicated against S3's $1,000: return on premium is scale-free, so the choice only sets the units of the loss record, and 0.25% is the size any later order path would use |
+| Valuation | Captured mids with the measured half-spread on entry and exit; exit at +100% or −50% of premium or 30 DTE remaining, pre-registered; hold-to-expiry beside it; the two must agree in sign |
+| Controls, same day and name | **Matched random direction** (the placebo); **always-call** (free beta: this book is ~1.9× QQQ); **the same view expressed in stock** (delta-matched shares); a 200/50-day trend rule; always-skip |
+| Concentration | **A long call on a name, or a factor, the book is already long is the same bet:** flagged `same_bet`, scored separately, and barred from any future order path (with tech-linked names while the group cap binds, and QQQ/XND while S10_gross > L(t)). A long put on the book's own factor is a hedge: it routes to C1/C2 and never counts as directional skill |
+| Contamination | Forward ideas only. No backtest of Claude on pre-freeze data (look-ahead and memorisation in LLM forecasts [W]) |
+| Bar | §11.13 |
+
+**Two free streams, scored forward from now (Phase 0, no new Claude call):**
+
+- **The news verdicts.** Every `overreaction_likely` (and `further_*_likely`) explanation is scored as
+  a fade at +1, +3 and +5 sessions, against a deterministic "buy any ≥ 7% one-day drop" rule and
+  against the `unclear` large movers, clustered by event day. So far [V counts, S3 scoring]: 15
+  `overreaction_likely` calls on 6 event-days; hit rates 46% / 54% / 50% at +1 / +3 / +5 on the 13
+  ticker calls; no edge over the rule.
+- **The spreads plan's bias**, scored open-to-close (the plan posts at ~09:33 ET) against the base
+  rate. So far [V]: bearish on 4 days (Oct 15, 20, 23, Nov 10), SPY up open-to-close on all 4; never
+  bullish; Nov 5 (−4.24% open-to-close) was neutral.
+
 ## 11. Measurement
 
 ### 11.1 Pre-registration
@@ -696,6 +907,10 @@ the reviewer does not see the plan) measures anchoring.
   in sign.
 - **Partial equilibrium:** report everything as a "direct effect". A lever applied in live gets a
   day-level comparison against a shadow book.
+- **Revision 4: bought options are valued from captured leg quotes** (envelope spec §3.10.8): every
+  hedge menu item, HP buy and Track D idea, at captured mids with the measured half-spread.
+  Black-Scholes is a labelled fallback. Stored `iv_history` is not used: it read QQQ at 14.6% on
+  Nov 5 against a VXN of 38.3, which would have marked a hedge at a fraction of its value.
 
 ### 11.4 Probabilities: a guardrail only, scored against the market
 
@@ -737,6 +952,10 @@ The figures reconcile both reviewers' calculations; the assumptions are stated.
 | Stance IC (cross-sectional, 5-session index-relative returns, momentum baseline) | ~39 names, 59% tech-linked, effective N per day ~12–20 (assumption) | IC 0.10: **5–9 months**; IC 0.05: **1.5–2.5 years** |
 | Brier skill vs market-implied | ~2,500 independent questions | **years**; a guardrail only |
 | Regime coverage | One down leg and one up/calm leg | depends on the market; **≥ 2–3 months** at best |
+| Revision 4: hedge or paper-budget **timing** (C1, HP) | Better P&L per down leg than the schedule or random timing at equal spend: ~20–40 independent down legs (O3), or ~670–1,070 non-overlapping 60-day windows (S3). Nasdaq-100 ≥ 10% drawdowns arrive ~1.2 a year | **decades: never, for this spec's purposes** |
+| Revision 4: hedge cost side | Premium per protected point, execution against mid, entry-state mix | **months** (and it confirms what the literature says: it costs) |
+| Revision 4: C4 shape choice | Execution and cost per protected point at fixed date and spend | ≥ 12 scheduled rolls: **~3 years** at four a year |
+| Revision 4: Track D | +20 points of return on premium over random: ~250 ideas (two-sided, SD ~115%); +10 points: ~600–1,000 | **2–4 years** for +20; +10 is not attainable |
 
 **Implication.**
 
@@ -799,6 +1018,60 @@ always-skip, the fixed valuation rule, clustering by session.
 - **Expect a null.** The spreads live bar's H0 is "intraday expectancy after measured costs ≤ 0".
   A known-near-null environment is a clean baseline for the placebo test.
 
+### 11.11 The hedge roles (revision 4)
+
+- **C1** (the stance) is valued daily against the programme, no hedge, a random roll date at equal
+  spend, the trim that removes the same S10, and the monetisation rule once ruled.
+- **C2 / C3** proposals are valued along "tapped" and "not tapped", whether or not tapped, so the
+  operator's choices do not contaminate the record.
+- **C4** is scored on execution against mid and cost per protected point (minimum over the scenario
+  grid) against the default item: not on crash P&L, which it cannot influence.
+- **Per pre-registered down leg** (the index ≥ 1σ₆₀ below its 60-session high): hedge value at the
+  trough and at exit as a share of the book's loss in that leg.
+- **No skill claim is made.** The record is read at the review gate as a one-page account, and the
+  ruling is judgment (envelope spec §3.10.2).
+
+### 11.12 The paper put budget (revision 4)
+
+Pre-registered before the first buy:
+
+- **Primary:** net P&L per unit spent, valued on captured quotes with Python's exits; expiry value
+  beside it.
+- **Controls, all at equal spend, on the same instrument and menu:**
+  1. **the schedule:** one unit on the first session of each accrual period, the default item;
+  2. **random timing:** the same number of buys on sessions drawn at random from those on which a
+     unit was banked, (a) with Claude's item mix, which isolates timing, and (b) with the default
+     item; 1,000 draws, Claude's percentile reported. Repeated **within each VIX state** (< 15,
+     15–25, ≥ 25), so stressed-state buys are compared with random stressed-state buys;
+  3. **no hedge** (zero);
+  4. **the block counterfactual:** the record with every buy made under the stress block removed.
+- **Per down leg:** value at the trough and at exit as a share of the book's loss in that leg.
+- **The state split,** beside the S&P prior (payoff per premium dollar 0.43 below VIX 15, 0.70 at
+  15–25, 0.20 at 25–35).
+- **Time to evidence, plainly:** a timing claim needs decades of down legs (§11.6). A year shows
+  cost, the state mix, execution and gross failures, nothing more. The operator chose HP knowing
+  this; its review is a judgment on cost and behaviour, not a test of skill.
+
+### 11.13 Track D (revision 4)
+
+**The bar to even propose an order path** (adjudicated between O3R's ≥ 200 ideas and S3R's ≥ 250
+ideas and ≥ 120 clusters):
+
+- **≥ 250 resolved ideas and ≥ 120 distinct market-day clusters**, spanning ≥ 1 down and ≥ 1 up or
+  calm leg of ≥ 10 sessions;
+- the 90% lower bound of the day-clustered mean return on premium above **each** of random direction,
+  always-call, the same view in stock and the trend rule; a pre-registered effect of ≥ +15 points;
+- the same sign under the rule exit and hold-to-expiry.
+
+**Why both counts.** 250 is the two-sided 80%-power sample for +20 points at a per-idea SD of about
+115% (O3); 200 had no power calculation behind it. The cluster count guards against news days that
+produce several correlated ideas (S3R): four names on one day is one observation, not four. At about
+1.5 independent clusters a week that is ~1.5 years for the clusters and **2–4 years** for the edge.
+Passing it permits only a proposal, in a separate spec, of a paper order path.
+
+**The free streams** (§10.8) use the same machinery: fades clustered by event day against the "≥ 7%
+drop" rule; the spreads bias against its base rate. Each is a smoke test that costs nothing.
+
 ## 12. Placement and fences
 
 **`src/mastermind/` (enrichment tier)** holds the prompt builders, the brief and amendment calls,
@@ -853,6 +1126,21 @@ launcher the way `scripts.run_eod` is (state file, timeout, logging).
 
 Import-based tests do not catch a DB-mediated path, which is why the writer and reader tests matter.
 
+**Revision 4: long options.**
+
+- The hedge package (`src/hedge/`, deterministic, envelope spec §3.10.9) reads Claude's C4 and HP
+  letters only through `plan_view`, which returns a validated menu letter (or "no buy") for today's
+  menu id and nothing else. It re-reads `plan_view` at send time.
+- `mastermind.db` stores the C1 stance, C2/C3 proposals, C4 and HP letters, Track D ideas and their
+  reasons. Python's menus, captured quotes and marks live in the trading DB's `hedge_*` tables,
+  written only by `src/hedge/`; the fact layer and the brief read them through
+  `src/common/hedge_view.py`.
+- Track D is shadow only: its menus and marks are Python rows; nothing in Track D reaches an
+  order path.
+- Fence tests add: `src.mastermind` never imports `src.hedge`, and the reverse; `plan_view` returns
+  only letters from today's menu; HP's `hedge:claude:` orders are refused under
+  `LIVE_TRADING=true`; an Ollama backend never yields an HP or C4 letter.
+
 ## 13. Interaction with existing systems
 
 - **Wheel:**
@@ -876,6 +1164,10 @@ Import-based tests do not catch a DB-mediated path, which is why the writer and 
     hold.
 - **Regime:** Claude's regime read is recorded beside the deterministic regime, never in place of
   it (D9).
+- **Hedge book** (revision 4): Python runs the bridge (envelope spec §3.10). Claude records a daily
+  stance, proposes (tap), picks a shape at scheduled rolls (record-only through the bridge) and, in
+  paper, spends its own small put budget. The bridge and HP share the instrument and the order path,
+  on separate order refs and budgets.
 
 ## 14. Prior rulings this spec touches
 
@@ -890,6 +1182,9 @@ Import-based tests do not catch a DB-mediated path, which is why the writer and 
 | 2026-10-14: leveraged ETFs "roll where possible, else assign" | `src/monitor/intraday.py:532` | L3 auto roll veto | **In line:** no veto at any rung unless this ruling is reopened |
 | N18: `min_strike_vs_basis: 1.00` | `risk_limits.yaml` | Not addressed | **Put to the operator (D14)**, by replay. Revision 3: moved to the envelope spec (E12), with a leveraged-ETF class floor |
 | TQQQ/UPRO/SOXL/DPST as `would_own` exceptions (2026-08-27, 2026-09-29); decision 32's leveraged floor of 1 lot; the 2026-10-22 fair-value waiver on bottoming lots; regime multipliers for every name; the spreads plan's backtest-before-paper rule and its SPY choice | `universe.yaml`, `risk_limits.yaml`, `regime_limits.py`, spreads plan lines 560 and 707 | — | **Revision 3:** handled in the envelope spec §5 (leveraged puts off except a drawdown sleeve; UPRO and DPST out; no waiver for leveraged lots; an `index_1x` class multiplier; backtest reinstated; SPXW on a measured cost condition) |
+| The core invariant: Claude never places, sizes or gates an order; two written exceptions (`claude_cut`, the value verdict) | CLAUDE.md | — | **Revision 4:** a new written exception, HP (§10.7): in paper, Claude chooses when and which item of a Python menu to open, at a fixed unit; record-only in live. The bridge itself is Python's and needs no exception |
+| Rev 3 §5.1: R5 "hedges" tap-only, auto after R4 | §5.1 | — | **Revision 4:** split. R5-H hedge roles C1–C4 (§10.6), no live auto under this spec; HP paper auto by the operator's ruling; Track D outside the ladder |
+| Envelope spec OR1: no long 0DTE options | envelope spec §3.1 | — | **Stands.** No 0DTE item on any menu here |
 
 ## 15. Phasing
 
@@ -905,14 +1200,14 @@ its §4.
 | Phase | Content | Claude's authority | Gate to the next phase |
 |---|---|---|---|
 | **Prerequisite: envelope spec E0–E2** | Everything in the envelope spec through its phase E2 (see above) | unchanged | Its own gates; E2 complete before Phase 2 |
-| **0 Cleanup** | Delete the prices and IV text from `_UNIVERSE_CONTEXT` (keep tiers and structural rules; add HACK and IGV rows). **Quarantine the value fair-value fault:** withhold any VALUE NOTE whose Python fair value / price is outside [0.1, 10], flag the name in the value book, and diagnose GOOGL and META (units vs method; a change to a value rule bumps `ruleset_version`). Fix the S19 title consistency check. Date the dossier prose. Add spot, entry credit, unrealised, basis and earnings to the roll prompt, and fix its "Entry delta" label. Drop "default to sell" from the rubric. Stop writing `claude_memory`. Fix the 2-day actuals look-back. Stamp model and prompt versions on review rows. Score the existing spreads plans (§11.9). (The stacking-rule backtest moved to the envelope spec's E1) | unchanged (`claude_cut` as today) | none |
+| **0 Cleanup** | Delete the prices and IV text from `_UNIVERSE_CONTEXT` (keep tiers and structural rules; add HACK and IGV rows). **Quarantine the value fair-value fault:** withhold any VALUE NOTE whose Python fair value / price is outside [0.1, 10], flag the name in the value book, and diagnose GOOGL and META (units vs method; a change to a value rule bumps `ruleset_version`). Fix the S19 title consistency check. Date the dossier prose. Add spot, entry credit, unrealised, basis and earnings to the roll prompt, and fix its "Entry delta" label. Drop "default to sell" from the rubric. Stop writing `claude_memory`. Fix the 2-day actuals look-back. Stamp model and prompt versions on review rows. Score the existing spreads plans (§11.9). (The stacking-rule backtest moved to the envelope spec's E1). **Revision 4:** pre-register and start the forward scoring of the news verdicts and the spreads plan's bias (§10.8) | unchanged (`claude_cut` as today) | none |
 | **1 Envelope repair** | **Moved to the envelope spec** (revision 3): the shock budget with its glide, the exposure-weighted backstop, the gap measures, the leverage-weighted group cap and stacking rule, the slow breaker spanning books, the survivability harness | unchanged | The envelope spec's E2 complete and its harness passing. **Required before any risk-changing rung** |
 | **2 Knowledge** | The fact layer (§8): book truth, the dry-run roll answer, the 45-day calendar (static config + earnings), the sourced market-state additions, the track record (if D18 allows), freshness and grounding. **Facts go into the existing reviewer and roll prompts first** | unchanged | Blinded claim audit of reviews passes |
-| **3 Brief, record-only** | `mastermind.db`, the one-shot process, the post-close brief, the 08:45 check, amendments, `plan_view`; R0 shadow on every decision episode; structured roll agree / disagree; the probability guardrail; the web page. Claude's endorsement of the tap-only book-repair proposals (X1 and §7) once the envelope spec's E12 is ruled | **R0 everywhere.** X1 and repair taps (a human decides) | ≥ 60 sessions; pre-registered evidence report per §11 |
+| **3 Brief, record-only** | `mastermind.db`, the one-shot process, the post-close brief, the 08:45 check, amendments, `plan_view`; R0 shadow on every decision episode; structured roll agree / disagree; the probability guardrail; the web page. Claude's endorsement of the tap-only book-repair proposals (X1 and §7) once the envelope spec's E12 is ruled. **Revision 4:** C1 stance; C2 and C3 proposals while a bridge runs; C4 record-only; Track D shadow menus and ideas; **HP applied in paper** (it needs the envelope spec's E2 buy-to-open path and this phase's brief; it is not tied to the bridge) | **R0 everywhere**, except **HP in paper** (the operator's grant, §10.7). X1, repair and hedge taps (a human decides) | ≥ 60 sessions; pre-registered evidence report per §11. HP: its own 12-month review (§10.7) |
 | **4 R1 plan input, applied in paper** | `min(det, review_cut, plan_cap)` applied in paper; the pause on amendments goes live | R1 (reducing) | D1 promotion ruling on the record |
 | **5 R2 select, applied in paper** | A menu ≤ baseline risk, plus skip; cross-scan allocation only if the regret test supports it | R2 (reducing) | §5.1 bar; third written exception |
 | **6+ Risk-changing rungs** | R3 size within a fixed cap, R4 strike menu, auto R5 by trade class, X2 auto exits; each with a full shadow decider book first | one rung at a time | The envelope spec's E2 complete (and, for the R3 allocation lever, its leveraged sleeve live); survivability test per rung; §5.1 bars; a written exception each |
-| **Live** | The operator reads each lever's record and flips `apply_live` one lever at a time; a live process re-validates its rungs at startup | | |
+| **Live** | The operator reads each lever's record and flips `apply_live` one lever at a time; a live process re-validates its rungs at startup. **Revision 4:** HP, C4 and Track D have no live flag in this spec | | |
 
 ## 16. Decisions for the operator
 
@@ -950,6 +1245,20 @@ revision's adjudication is marked.
 | **D20** | Score the existing 22 spreads plans before building the brief | Yes (Phase 0) |
 | **D21** | What Claude sees of its own scorecard | Only buckets with ≥ 100 resolved items; Python recalibrates instead |
 
+### 16.3 Revision 4: H11–H16 (long options, this spec's part)
+
+H1–H10 (the bridge, its budget, instrument, stress block, S10_gross, data, tech scenarios, fence and
+build) are in the envelope spec §6.1.
+
+| H | Question | Recommendation | Dissent / note |
+|---|---|---|---|
+| **H11** | The §4 premium-cost dimension | Adopt: premium committed and carry as a measure; a purchase is reducing only within B0 with the stress block clear; spend above B0 inside a budget is changing (cost); lift / skip / shrink / delay is changing; T20 and S-SMH join the measures | O3 had "within budget = reducing", withdrawn in O3R; S3R's B0 gate adopted |
+| **H12** | Claude's hedge roles | C1 stance (record), C2 "buy puts now" (tap, stress block applies), C3 "cash in / roll down" (tap), C4 shape at scheduled rolls (record-only through the bridge; applied in paper on a renewed programme only after ≥ 12 rolls, by an R2-type ruling). No live auto | O3R: C4 applied in paper after 12 rolls; S3R: C4 "almost empty", no evidential weight. Both kept: it is record-only while there are too few rolls to read |
+| **H13** | HP, the paper put budget | Adopt as §10.7: unit 0.1% of NLV₀, one a month, ≤ 3 banked, one buy a session, Python menu on the hedge instrument with "no buy" default, Python exits, paper only, record-only in live, no S10 credit, breaker at 6 units lost or 4 units behind the schedule in 6 months, 12-month review. If the E0 capture shows the menu mostly empty at 0.1%, a unit of 0.2% with 2 banked | Both reviewers recommended tap-only; the operator chose auto in paper (OR10) |
+| **H14** | HP and the VIX ≥ 25 block | **Exempt, paper only** (§10.7: a blocked test cannot observe the state its hypothesis is about; cost bounded at 3 units; measured against random buys in the same VIX state). Breakers and halts still demote it | The alternative, keeping the block, makes the record a test of calm-state timing only |
+| **H15** | Track D | Shadow only, no order path in v1; Python menus; 0.25% of NLV₀ per idea; controls random direction, always-call, the same view in stock, trend, always-skip; long calls on held names or factors flagged as the same bet; bar ≥ 250 ideas and ≥ 120 market-day clusters, both valuations, ≥ +15 points pre-registered | O3R ≥ 200 ideas at $1k; S3R ≥ 250 ideas and ≥ 120 clusters at 0.25%. Adjudicated for S3R on the power calculation |
+| **H16** | Hard lines 9–11 and the free streams | Adopt the three hard lines (§3); start the forward scoring of the news verdicts and the spreads bias in Phase 0 | None |
+
 ## 17. Unverified, and open research
 
 - **The GOOGL / META value fair-value root cause** (a units fault or the method). It must be settled
@@ -971,3 +1280,8 @@ revision's adjudication is marked.
 - **Revision 3:** the envelope, leveraged-ETF and spreads unknowns (IBKR 0DTE house margin, the
   after-hours exercise cut-off, SPXW wing widths, SOXX/VOO liquidity, ThetaData coverage) are listed
   in the envelope spec §7.
+- **Revision 4:** XND liquidity and IBKR's handling of it; every hedge cost and coverage figure
+  (Black-Scholes with an assumed skew, no historical index quotes); whether a 0.1%-of-NLV unit buys a
+  whole contract on most days; the brief's added length with the hedge block, the HP letter and three
+  Track D ideas; the news-verdict scoring so far (13 ticker calls, 6 event-days) is a smoke test, not
+  evidence.

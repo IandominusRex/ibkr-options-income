@@ -1,8 +1,10 @@
 # Risk envelope, leveraged-ETF policy and the spreads book — design
 
-Date: 2026-11-13 · Status: **draft for operator review**. Sequenced **before** the Mastermind
-(`2026-11-12-mastermind-design.md`, now revision 3). That spec's envelope repair, book repair and
-spreads decisions now live here; it references this spec as a prerequisite.
+Date: 2026-11-13 · Status: **revision 2 (2026-11-14), draft for operator review**. Sequenced
+**before** the Mastermind (`2026-11-12-mastermind-design.md`, now revision 4). That spec's envelope
+repair, book repair and spreads decisions now live here; it references this spec as a prerequisite.
+Revision 2 adds bought index puts as a **bridge hedge** during the glide (§0.1, §2.6, §3.10) and
+decisions H1–H10; Claude's roles in hedging and the directional track are in the Mastermind (its §10.6–10.8).
 
 **How this was produced.** Two reviewers (Opus and Sonnet) researched the operator's request
 independently, then rebutted each other. The operator made eight binding rulings in the same session
@@ -27,6 +29,26 @@ secondary source; **[U]** unverified. Reviewer findings are cited as **O2** / **
 | OR6 | **Claude's rungs.** Utilisation bands and limit levels are the operator's. Allocation inside the envelope (leveraged vs unleveraged) is R3. Strike/expiry is R4; the spreads picker's menu has an inside strike, so it is R4-type and paper only. Add a nonlinear-gap measure to the Mastermind's risk classification |
 | OR7 | One combined spec, sequenced before the Mastermind; decisions prefixed **E** |
 | OR8 | Update the Mastermind to match; move what this spec takes over and reference it back |
+
+### 0.1 Revision 2 (2026-11-14): long options
+
+The operator asked: *"what about buying puts and calls as a trading strategy? these are different
+from 0DTE credit spreads. I wanted the mastermind to be able to buy puts when relevant."* He chose
+the scope: **index hedges and directional bets**. Event protection and stock replacement are out of
+scope. Two reviewers (Opus, Sonnet) researched it independently and rebutted each other, cited here
+as **O3 / S3** (critiques) and **O3R / S3R** (rebuttals). The operator then ruled (binding):
+
+| # | Ruling |
+|---|---|
+| OR9 | **The hedge is a bridge with a review gate.** A small index-hedge programme, owned by Python and run on a fixed schedule, runs only during the 13-week glide. Continuing past the glide needs an operator review, with a conditional sunset. Budget about 0.25% of NLV a month. Trims and covered calls are the main repair, and the spec says so. New hedge size is blocked at VIX ≥ 25; a self-funding roll is still allowed. **No S10 or U_ew admission credit:** opens are gated on S10_gross, which closes the "every position revalued" loophole, including puts bought by hand in TWS. Hedged S10 is for display and the survivability harness only. Gates read live greeks, not stored `iv_history`. Shadow valuation uses captured quotes |
+| OR10 | **Claude gets a small auto budget for buying puts, in paper only** (the operator's choice over the reviewers' tap-only recommendation, knowing it cannot be proven skilful), in addition to the reviewers' merged roles. Specified in the Mastermind (its §10.7) |
+| OR11 | **Directional bets are shadow-only (Track D).** No order path in v1. Specified in the Mastermind (its §10.8) |
+| OR12 | **The instrument:** XND first if a 2–4 week shadow quote-capture bar passes, otherwise QQQ with no wheel QQQ shorts while a QQQ hedge is open and the E8/E9 conflict handled explicitly. Reject SPY/SPX/XSP, VIX calls and index collars. The hedge has its own book (`hedge:<id>`), disjoint from the other books at contract and underlying level |
+
+What revision 2 changes here: §2.6 (evidence), §3.1 (the hedge row), §3.4.1 (S10_gross, live
+greeks), §3.4.3 (T20, S-SMH), §3.9 (Claude's place), **new §3.10 (the bridge hedge)**, §4 (phasing),
+§5, §6 (**H1–H10**), §7 and §8. The Mastermind's revision 4 holds Claude's hedge roles, the paper put
+budget, Track D, the premium-cost dimension of its §4, and decisions H11–H16.
 
 ## 1. Intent
 
@@ -58,6 +80,12 @@ The operator's request, verbatim:
    budget ran at a median 98% of its limit for a month. The binding problem is too much high-beta
    stock, not idle money. A shock-loss envelope replaces the reserve idea. The income at stake in
    holding back is small next to the loss at stake in not repairing the book (§3.8).
+4. **Buying puts (revision 2).** A small Python-run index-put bridge during the glide, on the
+   Nasdaq-100, at about 0.25% of NLV a month, earning no envelope headroom. It is insurance, not
+   repair: at the Nov 5 low a hedge sized for 7 points of S10 would have cut about a quarter of the
+   loss, a proportional trim would have cut more, and a standing QQQ hedge lost 5.6–10.6% of its
+   notional a year in the backtest. **Trims and covered calls remain the main repair** (§3.10).
+   Directional long options stay in shadow (Mastermind §10.8).
 
 **Why this comes before the Mastermind.** The Mastermind's risk-changing rungs need a repaired
 envelope, a survivability harness and book repair. This spec is that work, plus the policy changes
@@ -202,6 +230,65 @@ bounded by its premium. This decides how S10 must be computed (§3.4.1).
 | O2R: re-run the tail-class lean-in "under the system's 2× stop" | Done (§2.4). But the wheel does not stop a non-leveraged name at the line; it rolls or is assigned |
 | Mastermind rev 2: gross peaked at 1.44 | **1.53** (Nov 5) |
 
+### 2.6 Long options: evidence (revision 2)
+
+Re-verified for this revision against the code and copies of the databases taken 2026-11-13
+16:39 +0800. Every hedge cost below is a **Black-Scholes model with an assumed skew** [M]: no
+historical index option quotes exist in the estate, so none of these costs is measured.
+
+**The book and the indexes [V].**
+
+| Fact | Value | Source |
+|---|---|---|
+| Book NLV against index returns, 22 sessions Oct 14–Nov 12 (daily regression) | SPY β 2.74, **R² 0.77**; QQQ β 1.87, **R² 0.94**; SMH β 1.03, **R² 0.94**. Both reviewers got the same figures independently; re-run here | `portfolio_snapshots`, `price_history`; scratch `h/basis.py` |
+| The slide | NLV Oct 14 → Nov 5 −23.3% while SPY fell 4.8%, QQQ 11.2%, SMH 20.7%. From the Oct 13 NLV ($784.6k) to the Nov 5 low ($577.5k): −26.4% | same |
+| S10 vs a tech scenario on the Nov 12 book, full revaluation | S10 **22.3%**; **T20** (the 23 `regime.tech_linked` names −20%, TQQQ/SOXL at 3× capped at −100%, every other name β × −5%) **23.7%**. S10's *level* matched the realised event; its *label* (SPY −10%) and its hedge mapping did not | scratch `s3r_t20.py` |
+| A hedge's credit under the two scenarios (60 DTE, Nov 11 IVs, skew 0.8 [M]) | Gain per 100 of notional, S10 / T20: SPY 95P 4.57 / 1.68 (ratio **0.37**); QQQ 95P 7.68 / 12.42 (1.62); SMH 95P 14.52 / 11.31 (0.78). An SPY hedge credited under S10 would deliver about a third of that under the scenario that happened | scratch `s3r_credit.py` |
+| Stored IV on stress days | QQQ `iv_history` (source `ibkr`) against VXN: Oct 16 17.0% / 27.1; Oct 22 18.9% / 28.7; Oct 30 16.5% / 28.5; **Nov 5 14.6% / 38.3**; Nov 6 31.7% / 34.0. The stored IV collapses on exactly the worst days | `iv_history`; FRED `VXNCLS` |
+| SPY IV history | **Ends 2026-10-05** (QQQ and SMH run to Nov 12) | `iv_history` |
+| What a gate on stored IV would do | Full revaluation of the short puts at a collapsed IV understates S10, G10, P20 and the +10-vol sensitivity: **the gate is loosest exactly when it should be tightest**. IV-rank floors misfire on the same days. A hedge marked at 14.6% on Nov 5 is worth a fraction of its real mark, which biases any hedge record against the hedge | — |
+| Index option chains stored | `option_quotes` holds 8 SPY, 18 QQQ and 27 SMH chain samples, all Jun 15–25, 2026 (S3). There is no index-leg quote history for Oct–Nov | `option_quotes` |
+| No buy-to-open path exists | `Strategy` = {COVERED_CALL, CASH_SECURED_PUT, ROLL} (`schemas.py:26-29`); `build_limit_order` returns `LimitOrder(action="SELL")` (`order_builder.py:26-48`); every monitor and exit skips `position >= 0` or keeps `position < 0` (`triggers.py:29,53,82,111,143,181,261`; `roll_policy.py:64`; `intraday.py:712`; `profit_take.py:253,448`; `roll_executor.py:87`; `capital_release.py:169`). A bought option would be **unmanaged**: no roll, no close, no expiry handling | code |
+| Collateral | `capital.py:179` counts only short puts; a long put adds none | code |
+| External-close reconciliation | `reconcile_external_closes` (`reconciliation.py:482`) books any option BOT execution that is not on an `OrderRow` and matches a wheel short still net short as a **manual close** of that short. A hedge order kept out of `OrderRow` is invisible to its own-order skip | code |
+| Exercise | An ITM QQQ or SPY long put at expiry auto-exercises: it sells the ETF's shares (wheel shares if the wheel holds them, a short stock position if not). XND and SPX are cash-settled and European [W: Nasdaq XND fact sheet] | — |
+
+**What a hedge would have done in this slide [M on V prices; VXN-based IV, skew 0.3–0.8].**
+
+| Hedge | Premium, % of NLV | Loss at the Nov 5 low | Loss on Nov 11 |
+|---|---|---|---|
+| None | — | −26.4% | −17.7% |
+| QQQ 95% put, 60 DTE, sized for 7 points of S10 | 1.2–1.4 | **−19.5%** (covers 26% of the loss) | −15.5% (13%) |
+| QQQ 95/85 put spread, same sizing | 1.5–1.7 | −19.8% | −14.8% (16%) |
+| QQQ 90% put, 60–90 DTE (O3's 15-contract hedge, re-priced at VXN) | 1.6–2.6 | covers 25–30% | covers 5–9% |
+| SPY 95% put, same sizing | 1.0–1.9 | −22.2% | −17.5% (1%) |
+| A pro-rata trim of 32% of the book on Oct 13 (approximate) | none | **−18.0%** | **−12.1%** |
+
+The one number: **a hedge sized to remove 7 of the 22 S10 points would have cut the loss at the
+Nov 5 low by about a quarter (−26% → about −19.5%), and by 5–17% of it on Nov 11–12 after the
+rebound, depending on strike: about a tenth.** Its premium was about 1–2% of NLV. A proportional trim
+beat every put at both dates. The budgeted bridge of §3.10 buys about a third of that size. (O3's
+first "~30%" used the wrong base and stored IV; S3's "95–99%" is delivered ÷ credited, not coverage.)
+
+**Carry and timing [M].**
+
+| Fact | Value | Source |
+|---|---|---|
+| Always-on index puts, long history | 1.8–4.4% of hedged notional a year, calibrated to Israelov's PPUT drag (S&P 1991–2026, NDX 2002–2026; O3). 4.3–6.9% a year at skews 0.3–1.0 (S3). The calibration is one point; skew is the largest uncertainty | O3, S3; Israelov, "Pathetic Protection" [W, secondary] |
+| A standing QQQ hedge on this panel (8 non-overlapping rolls, Jun 2025–Nov 2026, held to expiry) | **−5.6% to −10.6% of notional a year; 0 of 8 rolls won.** With a 2× take-profit: −2.7% to −6.9% | scratch `s3r_standing.py` |
+| Buying when stressed (S&P 1990–2026, 1,806 overlapping 60-day entries, 95% put) | Payoff per $ of premium: VIX < 15 **0.43**; 15–25 **0.70**; **25–35 0.20**; ≥ 35 0.29 | scratch `s3_cond.py` |
+| In this slide | A QQQ 95% put bought on the first VIX ≥ 25 close (Nov 5, the low) lost **66–79%** of its premium by Nov 11. Bought on Oct 14 (SMH below its 50-day) it was worth +356–422% at the trough | S3, re-run in O3R |
+| Monetisation | On NDX 2002–2026 a 2× take-profit trimmed the bleed by 0.1–1.5 points of notional a year; 3× and 5× were no better than holding. The multiple is fragile | scratch `s3r_monet.py` |
+| Learnability of timing | A 95% put paid more than it cost in 12 of 215 non-overlapping 60-day windows. Detecting a rule that cuts the bleed by a quarter needs ~670–1,070 windows; independent ≥ 10% drawdowns run 0.62 a year (S&P), 1.19 (NDX), 1.26 (SOX). **Decades** | S3 `s3_sd.py`, `s3_eps.py`; O3 §A.4 |
+| Hedge-funded CSP headroom | One S10 point admits ~$80–100k of 0.25-delta put strike by full revaluation, earning $4.6–5.7k a year held to expiry or $0.7–0.85k with the 2× line (§2.4 rates). The hedge's net carry is $4.3–7.5k a year per point. **At best break-even**, and the wheel's realised put P&L is −$10.2k | O3, S3R `s3r_csp_s10.py` |
+| Trims vs hedges per unit of risk | Trims cost ~0.3–0.6% of NLV a year per S10 point (CAPM, ERP 3–6%); puts ~0.4–1.2% net. Israelov: a divested portfolio matched PPUT's return with a third smaller worst drawdown [W] | O3, S3 |
+
+**XND (Nasdaq-100 micro, 1/100 of NDX)** [W, unverified]: about $28.3k a contract; European,
+cash-settled. One third-party snapshot (Nov 12) shows **total open interest ~19.9K, ~2.0K traded, and
+an average bid/ask of ~30% of mid across the whole chain** (wings included). The whole chain's open
+interest is smaller than one QQQ strike's (27,575 on QQQ 680P, Jun 25 [V, `option_quotes`]). **XND
+liquidity is unmeasured;** IBKR's routing, fees and paper behaviour for XND are [U].
+
 ## 3. Decisions
 
 ### 3.0 Adjudications where the reviewers still disagreed
@@ -237,7 +324,7 @@ spread's margin is its width at 0DTE or 30DTE, and the account is not short of c
 | Naked short 0DTE puts or calls | About $106k of Reg T margin per SPX contract; a Nov 5 day costs about $26k per contract against a ~$300 credit (O2, [M]); fails survivability (Mastermind §3 line 4) on today's book |
 | Short strangles | Both tails of the above |
 | Long 0DTE calls or puts for income or direction | Negative expected value on average, the other side of the variance premium; retail buyers' losses (Beckmeyer et al.); no evidence of directional skill (the spreads plan's bias was neutral 18 of 22 days, never bullish) |
-| 0DTE as the wheel's hedge | Wrong tenor: the damage was a multi-week slide (NLV −17.7% Oct 13–Nov 11). A hedge, if any, is a 30–90-day index put spread under Mastermind R5, needing a buy-to-open path |
+| 0DTE as the wheel's hedge | Wrong tenor: the damage was a multi-week slide (NLV −17.7% Oct 13–Nov 11). **Revision 2:** the hedge, if any, is the 60–120-day Nasdaq-100 bridge of §3.10, run by Python; the rejection of long 0DTE options stands unchanged |
 | "More short positions" | The account is already 94% long stock; more short premium adds the same sign of risk |
 
 **Deferred, not rejected:** iron condors and flies, as Python-built shadow menu items valued daily,
@@ -354,6 +441,25 @@ is allowed only if S10 after the trade ≤ L(t). While the book is above L(t), o
 not raise S10 pass. Closes, covered calls and rolls are not tested against L(t): rolls stay governed
 by `roll:`, and their effect on S10 is reported. **No rule forces a sale.**
 
+**Long options, and the loophole (revision 2, OR9; H1).** As first written, "every position fully
+revalued" includes a long put. Any bought put, including one bought by hand in TWS, would lower S10
+and open room for new CSPs under L(t), with no rule on its tenor, basis or decay. So:
+
+- **S10_gross** revalues every share and every *short* option, and **no long option, whoever bought
+  it** (the hedge book, Claude's paper puts, a manual TWS order). **Every admission test reads
+  S10_gross**: the L(t) rule above, and the same convention for S20, G10, P20 and T20 wherever they
+  classify or gate.
+- **S10_net** includes long options. It is shown everywhere beside S10_gross and feeds the
+  survivability harness (§3.4.6). It never admits a trade.
+- This lands in E0, before any buy-to-open path exists, because the loophole exists without one.
+- Any later headroom credit for a hedge needs its own ruling after the review gate (H10).
+
+**IV for the gates (revision 2, OR9; H7).** Admission-time S10_gross, G10, P20 and T20 reprice each
+option at the **live IV from IBKR model greeks**, fetched through `req_fresh_mkt_data` at decision time
+and again at send time, not from `iv_history`. Stored IV collapsed on the worst days (Nov 5: 14.6%
+against VXN 38.3; §2.6). The daily display may use stored IV only after the sanity check of §3.10.8,
+and labels it.
+
 **What the glide will feel like, honestly.**
 
 - Covered calls on every holding lower S10 by about 1.8 points (22.0% → 20.2%).
@@ -385,6 +491,22 @@ They feed the Mastermind's §4 classification (a choice worse on G10 or P20 is r
 the brief's facts. They are display and classification measures, not limits: the leveraged sleeve
 cap bounds that tail (§3.5). Evidence: SOXL fell −38.7% on Nov 5; 17 days of ≤ −20% in 4,195 sessions (S2).
 
+**The tech scenarios (revision 2; H8).** S10 is a one-factor SPY measure, and the damage was a
+tech/semis factor move (book R² 0.94 on QQQ and SMH, 0.77 on SPY; §2.6). Two scenarios are added:
+
+- **T20:** the 23 `regime.tech_linked` names −20% (leveraged ETFs at their leverage, capped at
+  −100%), every other name β × −5%, full revaluation. 23.7% on the Nov 12 book, against S10 22.3%.
+- **S-SMH:** SMH −30% with SPY −8%, names scaled by their beta to SMH. The semis sub-factor, for SOXL
+  and the semis names.
+
+Both are **display, survivability-harness and classification** measures, and T20 is a member of the
+scenario grid for any future hedge credit (H10). **Neither is a limit.** Adjudicated (§3.10.0): T20
+sits within 1.4 points of S10 today, so a T20 limit at the same target would not bind before S10, and
+for tech-linked names it duplicates the leverage-weighted group cap (§3.4.4, E15). The E1 replay
+reports T20 against a QQQ-beta-scaled variant (O3R's objection that T20 moves 23 names equally), and
+**if T20 − S10 exceeds 3 points on adoption day or after, it returns to the operator as a candidate
+binding limit** (H8).
+
 #### 3.4.4 Correlated exposure: tech-linked group cap and stacking rule (moved from Mastermind §6.2)
 
 - **A tech-linked group cap** in risk units over `regime.tech_linked` (23 names), **leverage-weighted** (TQQQ and SOXL count 3×).
@@ -409,7 +531,8 @@ The analytic worst case and the always-most-aggressive replay, on the 17-month p
 `sizing_counterfactual.py` machinery.
 
 - **What it covers:** S10, U_ew, G10 and P20, plus the spreads book at its caps as a loss source
-  (−2% of NLV a month at worst).
+  (−2% of NLV a month at worst). Revision 2: also T20 and S-SMH, each computed gross and net of long
+  options, with the hedge book and Claude's paper puts at their captured marks.
 - **When it runs:** on the deterministic envelope first, before any risk-changing rung is proposed.
 - **Its limits:** one bull leg and one sell-off; no 2020 and no 2022.
 
@@ -504,7 +627,9 @@ shrinks S10 without a forced sale.
    - **Trims**, which need a stock-sell order path (does not exist).
    - **De-lever** for leveraged shares: sell the 3× shares, optionally buying the unleveraged twin at
      up to the same beta-dollars. It needs stock sell and buy paths.
-   - Protective puts later, which need a buy-to-open path.
+   - Protective puts on single names: **out of scope** (revision 2; the operator scoped long options
+     to index hedges and directional bets). They would also net against wheel CSPs on the same names
+     and exercise into wheel or value shares. The index bridge is §3.10, and it is not repair.
 3. **The SOXL 500 shares are the named hard case.**
    - A call at 0.25 delta (~$95, +43%) sells about $1.7k a month [M].
    - It reduces delta. It is roughly zero-EV at SOXL's measured VRP. Its crash protection is its premium.
@@ -578,19 +703,209 @@ the only gates.
 | Strike and expiry from a gate-passed chain menu | changing | **R4** |
 | The spreads picker (menu includes an inside strike) | changing | **R4-type, grandfathered in paper, record-only in any live plan.** Its record is evidence for the spreads book and a pilot of the Mastermind's measurement machinery; never evidence for a wheel rung |
 | Which book-repair proposals to surface and endorse | a selection; a human taps | Mastermind §7 (R5 classes) |
+| **Revision 2.** Whether the hedge bridge exists; its budget, instrument, structure family, schedule, size rule, stress block, monetisation rule and review gate | envelope | **The operator only**; Python runs it (§3.10) |
+| A daily "would hedge" stance; tap-only "buy puts now" and "cash in / roll down" proposals; a shape choice at a scheduled roll at fixed spend | R0; tap; reducing within the programme's spend | Mastermind §10.7 (R5-H) |
+| Claude's paper put budget: when to spend one fixed unit, and on which Python-built menu item | **changing (cost)**; reducing on every risk measure | Mastermind §10.7 (**HP**): paper only, record-only in live, no S10 credit |
+| Directional ideas | outside the ladder | Mastermind §10.8 (Track D, shadow only) |
 
 R0 now: shadow every sleeve trigger, every band-relevant day and every equal-exposure menu (index
 lot, leveraged equivalent, index put vertical, skip), each item shadow-valued.
+
+### 3.10 Index hedges: the bridge (revision 2; OR9, OR12)
+
+#### 3.10.0 Adjudications where the reviewers still disagreed
+
+| Point | O3 / O3R | S3 / S3R | Decision | Why |
+|---|---|---|---|---|
+| Budget | ≤ 0.35% of NLV per rolling 30 days; ≤ 1.25% for the bridge | Pilot 0.25% a month, 2% a year | **Net premium ≤ 1.0% of NLV₀ over the bridge, accruing at 0.25% a month with a two-month opening allowance; open premium at cost ≤ 0.6%** (§3.10.3) | Disagree with both on the unit. A rolling-30-day cap on premium paid is breached on day one by any 60–120-day put (one of ~2 points costs ~0.4–0.6% of NLV up front), so it pushes the programme to 30-day far-OTM puts: the instrument both reviewers called the optimiser trap. Net premium, accrued, fits the tenor. 1.0% over the ~4 months the bridge holds protection (13 weeks plus the last put's run-off) is the operator's ~0.25% a month |
+| Size rule | min(budget, S10_gross − L(t)) | min(budget, λ × (S10_gross − target)), λ ≤ 0.5 | **S3R's, λ = 0.5** | L(t) starts at today's S10 rounded up, so O3R's rule hedges nothing on day one. Measured against the target, the hedge shrinks as repair works: the conditional sunset OR9 asks for |
+| Self-funding roll under the stress block | Net debit ≤ 0.1% of NLV | Rolls exempt | **Net debit ≤ 0, contracts not increased** | OR9 says self-funding. A roll that adds premium in stress is new spend at the worst price (0.20 on the dollar, §2.6) |
+| Instrument | XND first, if ≤ 8% of mid and ≥ 15 contracts displayed on ≥ 80% of captures | XND only on a measured bar (≤ 8% median, ≥ 30 executable), else QQQ | **Capture both for 20 sessions in E0. XND if its quote bar passes and its all-in cost per protected point is ≤ 1.5× QQQ's; else QQQ** (OR12) | Neither tied the bar to cost against the alternative. XND's structural gains (cash settlement, no netting, no margin channel, no E8/E9 conflict) are worth a premium, but not any premium: at the one ~30% chain-average spread seen, friction on 10–15 contracts could exceed a month's carry |
+| QQQ fallback vs E8/E9 | Accept S3's disjointness | QQQ out of `actively_wheeling` during the pilot | **E8 stands as ruled. While a QQQ hedge is open the Rules Engine refuses any wheel QQQ opening, and the hedge refuses to open while the wheel holds any QQQ short or share; E9's QQQ lot is inert in that window** | S10_gross above L(t) blocks new CSPs during the bridge anyway, so the cost is nil. A rule, not a universe edit, leaves E8 intact when the bridge ends |
+| Coverage | −26% → −19.5% at the low (a quarter); ~15% by Nov 11 | 25–30% at the low; 5–13% on Nov 11–12 | **About a quarter at the low; 5–17% on Nov 11–12 by strike, about a tenth** (§2.6) | Re-run: S3's 95/85 spread delivered 2.9 points of 17.7 on Nov 11 (16%), outside S3's range; O3's 15% is the top of the range, not its middle |
+| Tech scenario | T20, then withdrawn for S-QQQ / S-SMH from positions | S-QQQ / S-SMH, then withdrawn for T20; T20 display only | **T20 and S-SMH: display, harness, credit grid. Not limits; a 3-point trigger returns T20 to the operator** (§3.4.3) | T20 needs no second per-name beta (S3R) and uses a config list that exists. At 23.7% against S10's 22.3% a T20 limit would not bind first, and it duplicates the group cap |
+| Monetisation | Take half at 3× cost when the index is ≥ 1σ₆₀ down | 2× take-profit, replayed first | **None active until the E1 replay rules one; hold to the roll date meanwhile.** 2× is the leading candidate | S3R's replay: 3× was worse than holding on the 95% put. The multiple is fragile, so it is ruled on a replay, not chosen in a spec |
+| Who owns the programme | Operator ruling + a fence; not a core-invariant exception | A new written exception even with no Claude in it | **O3R's** | The invariant concerns LLM involvement and the Rules Engine being the only path. A Python programme gated by `validate_hedge` twice breaks neither. The written exception is Claude's paper budget (Mastermind §10.7) |
+| Minimum build | Own `hedge_*` tables so the 20+ SELL-is-open sites never see a hedge row | 13 items incl. a hedge manager and a `reconcile_external_closes` skip | **The union, minus S3R's seven-builder reporting carve-out** (§3.10.10) | O3R is right that separate tables make the wheel-table carve-out unnecessary. But separation *creates* the reconciliation hole: a hedge order absent from `OrderRow` drops out of the own-order skip (§2.6), so S3R's `hedge:` skip is required. Broker-ledger builders still see hedge executions and filter `book="hedge"` |
+| Stress trigger | VIX ≥ 25 or VXN ≥ 90th percentile | Same, or either up > 30% in 5 sessions | **VIX ≥ 25 (ruled) or VXN ≥ its 1-year 90th percentile (recommended)** | The instrument is priced off VXN. The 5-session rise rule had no evidence offered for it |
+
+#### 3.10.1 What the hedge is for, said plainly
+
+- **Trims and covered calls are the main repair.** Per unit of risk removed, a trim costs about half
+  what a put costs (§2.6; Israelov). At the Nov 5 low a hedge sized for 7 points of S10 cut about a
+  quarter of the loss, and a proportional trim cut more, at both dates.
+- **A standing hedge does not pay here.** On this panel a rolled QQQ hedge lost 5.6–10.6% of its
+  notional a year, and 0 of 8 rolls won [M].
+- **What the bridge is:** a small cushion against a second leg down while repair works, for shares
+  the operator chooses not to sell (the SOXL basis, AMD/GOOGL/NVDA at about 65% of NLV, the manual
+  stock). It is the second-best answer to that choice, not a source of return.
+- **It earns no envelope headroom** (§3.10.7). Hedge-funded CSP headroom is at best break-even (§2.6).
+
+#### 3.10.2 Life: a bridge, a review gate, a conditional sunset (H2)
+
+- **Start:** on the operator's ruling, after the E2 envelope is live, the §3.10.10 build passes its
+  tests and the instrument is chosen (§3.10.4).
+- **End:** at E4, when L(t) reaches the target. A late start means a short bridge. From E4 nothing
+  new is bought or rolled; the open position is sold at its roll date.
+- **Conditional sunset inside the bridge:** the size rule (§3.10.5) is measured against the 15%
+  target, so the hedge shrinks to zero as repair closes the gap, whatever the date.
+- **The review gate:** at E4, or earlier if the size rule has been zero for 20 sessions, the operator
+  reads a one-page record: premium spent, value returned in each down leg, and what a trim, the
+  schedule at equal spend and no hedge would have done, beside the E1 replay. **The default is off.**
+  Continuing needs a fresh ruling, under the same rules, at no more than 2% of NLV a rolling year.
+
+#### 3.10.3 Budget (H3)
+
+Fixed terms (Mastermind §3 line 3): NLV₀ is NLV on the bridge's first day, converted to dollars once.
+
+| Cap | Level |
+|---|---|
+| Net premium over the bridge (paid, less received from sales and cash settlement) | **≤ 1.0% of NLV₀** (~$6.5k today) |
+| Pace | Cumulative net premium ≤ 0.25% of NLV₀ × (months elapsed + 2), under the cap above |
+| Open premium at cost | ≤ 0.6% of NLV₀ |
+| On renewal, if ruled | ≤ 2% of NLV per rolling 12 months, hard |
+| Its line | Its own, outside the CSP budget. Claude's paper put budget is a separate line (Mastermind §10.7) |
+
+At today's prices this buys about **1.5–2.5 points of S10 protection** [M]: a third of the 7-point
+gap at most. The hedge cushions the repair; it does not do it.
+
+#### 3.10.4 Instrument (OR12; H4)
+
+| Instrument | Verdict | Reason |
+|---|---|---|
+| **XND** (Nasdaq-100 micro) | **First, if the E0 capture passes** (§3.10.0 bar) | Right factor (the QQQ index, R² 0.94). Cash-settled and European: no exercise into anyone's shares, no early assignment of a vertical's short leg, no T−2 rule. Never the same contract or underlying as any other book, so "book = underlying" attribution works unchanged and no same-underlying margin offset can widen the CSP budget. Liquidity unmeasured (§2.6) |
+| **QQQ** | **Fallback** | Right factor; 97.8% of put quotes ≤ 10% of mid (§2.2). American and physically settled: **an ITM long put at expiry auto-exercises**, selling wheel shares or opening a short stock position. So: closed by T−2 sessions, with a lapse instruction (`IB.exerciseOptions`, action 2; paper behaviour [U]) if that close fails; contract-clash rules both ways; no wheel QQQ shorts or shares while it is open (§3.10.0); attribution by `hedge:` orderRef and `conId` |
+| SPY, SPX, XSP | **Rejected** | Wrong exposure: R² 0.77, and an SPY put delivers about a third of its S10 credit under T20 (§2.6). The spreads fence: all three are `book_underlyings` today; after E3 SPX/XSP stay there and `books.py` (`is_spreads_underlying`, `_DAILY_ROOTS`) would tag a hedge as spreads; SPY goes to the wheel. SPX is ~$763k a contract (1.2× NLV). SPY settles in shares |
+| NDX | Rejected | ~$2.8M a contract (4.4× NLV) |
+| SMH / SOXX | Not in v1 | SMH put quotes ≤ 10% of mid only 38.2% of the time (§2.2); premium ~2× QQQ's; SOXX has no history. S-SMH is displayed |
+| VIX calls | **Rejected** | Contango carry; the damage was a slide (VIX 16.4–27.2 Oct 22–Nov 12, one spike), not a spike; no tech factor; a second pricing model on a forward |
+| Index collars with a short index call | **Rejected** | The call leg is a naked short index call against single-stock longs, which the Rules Engine refuses (no naked short legs, ever). It sells cheap index calls to buy rich index puts and caps the rebound (SOXL +62% in four sessions off Nov 5) |
+| Single-name protective puts | Out of scope | §3.7 |
+
+#### 3.10.5 Structure, size, schedule, monetisation (H5)
+
+- **The menu family:** outright puts or put verticals on the chosen instrument; long-leg delta
+  0.15–0.30 (about 90–95% of spot); 60–120 DTE at open, 90 targeted; a vertical at least 10% of spot
+  wide. No ratio, calendar or diagonal; no naked short leg.
+- **The default item** is the one with the best *minimum* protection per premium dollar across
+  {S10, S20, T20, G10, P20}. The floors (DTE ≥ 45, long-leg delta ≥ 0.15) stop any optimiser, Python
+  or Claude, from picking the short-dated far-OTM put that buys S10 cheaply and decays to nothing on a
+  slow slide (S3 §1.2).
+- **Size:** points protected = min(budget-limited points, 0.5 × max(0, S10_gross − 15%)). The hedge's
+  delta never exceeds 50% of the book's beta-weighted delta, so the hedge never turns the book short.
+- **Schedule, not trigger:** buy on the bridge's first day; roll at ≤ 30 DTE remaining (sell the old
+  item, buy the current default); one position at a time.
+- **Monetisation:** none until the E1 replay rules one (2× cost is the leading candidate). Until then
+  the hedge is held to its roll date. Early closes happen only by an operator tap (including
+  Claude's tapped "cash in" proposal, Mastermind §10.7).
+
+#### 3.10.6 The stress block (OR9; H6)
+
+- **No new hedge size** on a session after a VIX close ≥ 25 (ruled) or a VXN close at or above its
+  one-year 90th percentile (recommended).
+- **A self-funding roll is still allowed:** net debit ≤ 0 and no more contracts. Otherwise the hedge
+  is held, and closed by T−2 on the QQQ route.
+- An account halt or a slow-breaker trip also blocks new size; a self-funding roll is still allowed.
+- **Why:** a 95% put bought at VIX 25–35 returned 0.20 on the dollar against 0.43–0.70 in calm
+  states; bought on Nov 5 it lost 66–79% in four sessions; the same hedge cost about 55% more on
+  Nov 11 than on Oct 13 (§2.6). "Relevant" arrives after the price does.
+- The block applies to the programme and to any tapped "buy puts now" proposal, which draws on the
+  programme's budget. **Claude's paper put budget is exempt**, by the decision and for the reasons in
+  Mastermind §10.7.
+
+#### 3.10.7 Envelope accounting (OR9; H1)
+
+- **Admission reads S10_gross** (§3.4.1): no long option, from any source, creates S10 headroom.
+  S10_net is display and harness only.
+- **U_ew** counts stock and short-put strike, so a long put adds nothing to it and earns no room. The
+  spec states it so that no later edit adds a credit.
+- **Collateral, sector, group and tech-linked caps:** the hedge book is excluded.
+- **Breakers:** hedge marks enter the daily loss leg **net**, read through `src/common/hedge_view.py`;
+  a trip card shows the loss by book. The drawdown legs already see the hedge through NLV.
+- **The margin channel:** IBKR may margin a long and a short put on one underlying as a spread [U],
+  lowering maintenance margin and raising EL, which the CSP budget reads (`capital.py:93-103`). XND
+  never pairs with a wheel position; the QQQ rule (§3.10.0) closes the channel on the fallback.
+
+#### 3.10.8 Data: live greeks, a sanity check, captured quotes (OR9; H7)
+
+1. **Gates read live greeks** (§3.4.1), at decision and at send time.
+2. **An IV sanity check on `iv_history` writes:** index ETFs against a ratio band to the VIX family
+   (QQQ's normal ratio to VXN is about 0.87; Nov 5 was 0.38), single names against their own
+   20-session median. Out-of-band rows are flagged, not used, and raise a data alert.
+3. **Leg-quote capture from E0:** bid, ask and size for every hedge menu item's legs (XND and QQQ),
+   twice a session at fixed times, into `hedge_quotes`, inside the market-data line budget. **All
+   shadow valuation** (the programme, every menu item, Claude's picks, Track D) uses captured mids with
+   the measured half-spread. Black-Scholes is a labelled fallback only.
+4. **SPY IV capture restarts in E0** (it stopped on Oct 5).
+
+#### 3.10.9 Book, attribution and fence (OR12; H9)
+
+- **The book:** `book="hedge"`. Order refs `hedge:<id>` (the programme) and `hedge:claude:<id>`
+  (Claude's paper budget), written before `placeOrder` (the value-book pattern).
+- **Underlying-level disjointness:** `hedge.underlyings` in config. For XND, `Config` refuses any
+  overlap with `universe.yaml` or `spreads.book_underlyings` (the `_spreads_isolated` pattern). On the
+  QQQ fallback (a universe name) it is the Rules-Engine rule of §3.10.0 instead.
+- **Contract-level disjointness, both ways:** `validate_hedge` refuses a buy in any contract another
+  book holds; the Rules Engine refuses a wheel short in any contract the hedge book holds
+  (`hedge_contract_clash`). IBKR nets same-contract positions across clientIds.
+- `books.py` gains `is_hedge_underlying` and `is_hedge_order_ref`; `get_positions()` drops hedge
+  positions by default (by underlying for XND, by `conId` through `hedge_view` for QQQ); ledger
+  ingest tags `book="hedge"` by underlying and by the `hedge:` ref; `wheel_shares` W is unaffected.
+- **Placement and fence.** `validate_hedge` lives in the Rules Engine (`src/engine/risk_engine.py`),
+  the one path to an order. The menu, size rule, schedule, executor wrapper and lifecycle live in a
+  deterministic `src/hedge/` package run by the trading process on its own clientId. It imports no
+  enrichment (`src.claude`, `src.news`, `src.value_ai`, `src.spreads_ai`, the enrichment analytics);
+  `src.spreads` and `src.value` do not import it; Claude reaches it only as a menu letter through
+  `plan_view` (Mastermind §12). `src/common/hedge_view.py` (`mode=ro`, plain SQL, imports only
+  config) is everyone else's view. Only `src/hedge/` writes hedge rows. Enforced by
+  `tests/test_hedge_fence.py` (`ast` imports, a `sys.modules` check, the writer test). CLAUDE.md gains
+  a hedge-fence section when it is built.
+
+#### 3.10.10 The minimum buy-to-open build (H9)
+
+Hedge-only. It belongs to this spec's phases: items 1–2 in E0, the rest in E2.
+
+| # | Item |
+|---|---|
+| 1 | **Quote capture** (§3.10.8) and the E0 instrument measurement. No order path needed |
+| 2 | **S10_gross / S10_net, T20, S-SMH** in the shock module, with live greeks for gating |
+| 3 | `Strategy.HEDGE` and a `HedgeCandidate` schema: legs, Python-computed debit, max loss and scenario credits |
+| 4 | **`validate_hedge`**, pure, no LLM, at decision time and again at send time on a fresh quote: the budget caps; max loss = debit; no naked short leg; underlying in `hedge.underlyings`; contract clash; the QQQ-route rule; DTE and delta windows; quote ≤ 8% of mid, two-sided and fresh; the stress block with its self-funding carve-out; halt; hedge delta ≤ 50% of book beta-delta; refuse a `hedge:claude:` order under `LIVE_TRADING=true`. Scoped out of the income gates (ROC, yield, IV rank, IV/RV, `min_credit`), as rolls are |
+| 5 | `build_hedge_order`: BUY `LimitOrder` at mid; a BAG for a vertical (a neutral copy of the roll-combo shape, not an import from the fenced `src/spreads/`); a chase with `reprice_limit("BUY", ceiling=approved debit × 1.05)` |
+| 6 | `execute_hedge`: `qualifyContractsAsync` for every leg, `req_fresh_mkt_data`, the order ref before `placeOrder`, partial fills and unconfirmed cancels (the Nov 10 spreads lesson) |
+| 7 | **Own tables** in the trading DB (`hedge_programme`, `hedge_orders`, `hedge_fills`, `hedge_quotes`, `hedge_marks`), written only by `src/hedge/`. The wheel's `orders` / `fills` never receive a hedge row, so the 20+ sites that read SELL as an open are untouched |
+| 8 | **A hedge manager** in the trading process: schedule, roll, the T−2 close and lapse instruction (QQQ), cash settlement (XND), monetisation once ruled. Every existing monitor skips long options |
+| 9 | **`reconcile_external_closes` skips an execution whose order ref starts `hedge:`** (one line and a test) |
+| 10 | Attribution (§3.10.9). Builders that read the broker ledger filter `book="hedge"`; a small read-only `src/reporting/hedge.py` reports hedge P&L |
+| 11 | Capital and breakers: a test that `capital.py` counts no hedge collateral and sees the debit in cash; the daily leg net through `hedge_view`; halt blocks new size |
+| 12 | Fence tests and docs per CLAUDE.md: ARCHITECTURE.md (new package, models, `hedge_view`), `config/examples/risk_limits.yaml` `hedge:` block, SETUP.md if operator-facing, STATUS.md, the CLAUDE.md hedge-fence section |
+
+**Out of v1:** directional orders, single-name protective puts, SMH, VIX options, collars, and any
+BUY-open arm in the wheel's reporting builders. Whether the trade ledger's FIFO pairs a long open and
+close correctly (`trade_ledger.py:834` labels a buy "Long") is a test to write, not an assumption [U].
+
+#### 3.10.11 The programme's own record
+
+Measured and shown, never promoted, because the bridge will see one or two down legs at most:
+
+- premium per S10_gross point-day protected, beside the trim and covered-call costs;
+- the cover ratio in each pre-registered down leg (the index ≥ 1σ₆₀ below its 60-session high), at
+  the trough and at exit, against no hedge, the trim that removes the same S10, and always-on at equal
+  spend;
+- execution against mid, and the rolling 60-session R² of NLV on the instrument.
+
+The decision to continue is made on prior evidence and the operator's utility (§3.10.2). Claude's
+hedge records are measured under Mastermind §11.11–11.12.
 
 ## 4. Phasing
 
 | Phase | Content | Gate to the next |
 |---|---|---|
-| **E0. Stop the bleeding, measure** (no new authority; risk-reducing or display only) | Spreads: §3.2 a, b, c, e, f and h (calendar, halt link, daily-leg coupling, NLV caps, cost standard, shadow mode). Wheel: leveraged CSPs off (`csp_mode: drawdown_only` with the sleeve closed); `vrp_waiver` off for leveraged names; UPRO and DPST out. S10, S20, G10, P20, U_ew and L(t) computed daily and shown (brief, web, Telegram), not yet enforced. The discretionary-buy display. SOXX into price/IV history. Docs per the CLAUDE.md table | Operator adopts this spec and rules E1, E2, E8 |
-| **E1. Backtests and replays** | The spreads ThetaData backtest (§3.2 g). SPXW shadow cost measurement (§3.3). The survivability harness on the deterministic envelope (§3.4.6). The D14 replay (§3.7). The tech-linked cap and stacking-rule backtest (§3.4.4). The leveraged-sleeve replay (§3.5). The wheel-faithful index-class replay (§3.8) | Each replay's report read by the operator; rulings E3–E7, E9, E10, E12, E14, E15 |
-| **E2. Envelope live (paper)** | S10 with the glide, and U_ew unconditional, enforced. The tech-linked cap and stacking rule if supported. The slow breaker spanning books. The index class. The leveraged sleeve. Tap-only repair proposals: CC overlays at the ruled floor and the leveraged carve-out; trims and de-lever once their order paths exist (each its own plan task). The index-class multiplier stays record-only until its replay agrees | Harness passes on the live envelope; ≥ 20 sessions with no envelope defect |
+| **E0. Stop the bleeding, measure** (no new authority; risk-reducing or display only) | Spreads: §3.2 a, b, c, e, f and h (calendar, halt link, daily-leg coupling, NLV caps, cost standard, shadow mode). Wheel: leveraged CSPs off (`csp_mode: drawdown_only` with the sleeve closed); `vrp_waiver` off for leveraged names; UPRO and DPST out. S10, S20, G10, P20, U_ew and L(t) computed daily and shown (brief, web, Telegram), not yet enforced. The discretionary-buy display. SOXX into price/IV history. Docs per the CLAUDE.md table. **Revision 2:** S10_gross / S10_net (the loophole closed before any buy path), T20 and S-SMH displayed; live greeks for gating; the IV sanity check; SPY IV capture restarted; XND and QQQ hedge-menu quote capture (20 sessions) | Operator adopts this spec and rules E1, E2, E8, H1, H7 |
+| **E1. Backtests and replays** | The spreads ThetaData backtest (§3.2 g). SPXW shadow cost measurement (§3.3). The survivability harness on the deterministic envelope (§3.4.6). The D14 replay (§3.7). The tech-linked cap and stacking-rule backtest (§3.4.4). The leveraged-sleeve replay (§3.5). The wheel-faithful index-class replay (§3.8). **Revision 2:** the hedge replay (default item vs none vs always-on vs trim-equivalent, the monetisation candidates, on S&P 1991–2026, NDX 2002–2026 and the 17-month panel, priced from captured quotes where they exist); the XND/QQQ cost comparison; T20 against a QQQ-beta-scaled variant | Each replay's report read by the operator; rulings E3–E7, E9, E10, E12, E14, E15, H4, H5, H8 |
+| **E2. Envelope live (paper)** | S10 with the glide, and U_ew unconditional, enforced. The tech-linked cap and stacking rule if supported. The slow breaker spanning books. The index class. The leveraged sleeve. Tap-only repair proposals: CC overlays at the ruled floor and the leveraged carve-out; trims and de-lever once their order paths exist (each its own plan task). The index-class multiplier stays record-only until its replay agrees. **Revision 2:** the minimum buy-to-open build (§3.10.10 items 3–12), then **the bridge hedge in paper** on ruling H2 (its own plan task; it starts when the build passes, whatever week of the glide that is) | Harness passes on the live envelope; ≥ 20 sessions with no envelope defect |
 | **E3. Spreads to SPX, SPY freed** | Only if the backtest passed and the SPXW cost condition holds (E3). The fence task of §3.3 as one change, at a flat-book cutover. Then SPY joins the index class | Operator ruling E3 |
-| **E4. Glide complete** | L(t) reaches the target. Levels change thereafter only by §3.8's stabilisation rule | — |
+| **E4. Glide complete** | L(t) reaches the target. Levels change thereafter only by §3.8's stabilisation rule. **Revision 2: the bridge ends** (nothing new bought or rolled); the review gate of §3.10.2 | The review: default off |
 
 **Sequencing with the Mastermind.**
 
@@ -599,6 +914,10 @@ lot, leveraged equivalent, index put vertical, skip), each item shadow-valued.
   envelope.
 - **Mastermind risk-changing rungs** (R3, R4, auto R5, X2) need E2 complete and the harness passing.
 - **The R3 allocation lever** also needs the leveraged sleeve live.
+- **Revision 2.** Claude's paper put budget (Mastermind HP) needs the E2 buy-to-open path and the
+  Mastermind's Phase 3 brief. It is not tied to the bridge and may start after the bridge has ended;
+  it then uses the same `src/hedge/` order path and instrument. The forward scoring of the news
+  verdicts and the spreads plan's bias (Mastermind Phase 0) needs neither and starts now.
 
 ## 5. Prior rulings this spec touches
 
@@ -614,6 +933,9 @@ lot, leveraged equivalent, index put vertical, skip), each item shadow-valued.
 | Spreads plan: SPY now, SPX "if the per-trade cap rises to roughly $5,000" | plan line 560 | **Superseded:** SPXW 25-wide on a measured cost condition at the new 0.5%-of-NLV cap |
 | `book_underlyings: [SPY, SPX, XSP]` and the CLAUDE.md spreads-fence text | `spreads.yaml:12`; CLAUDE.md | **Changes at E3** if the operator rules so |
 | N18: `min_strike_vs_basis: 1.00` | `risk_limits.yaml:15` | **Put to the operator (E12)** by replay, with a leveraged class floor |
+| Revision 1 of this spec: "every position fully revalued" in S10; a hedge as "a 30–90-day index put spread under Mastermind R5"; "protective puts later" | §3.4.1, §3.1, §3.7 | **Revision 2:** admission reads S10_gross (no long option counts); the hedge is the §3.10 Nasdaq-100 bridge run by Python; single-name protective puts out of scope |
+| E8 / E9: QQQ into `actively_wheeling` and the index class | §3.6 | **Stands.** On the QQQ hedge fallback only, a Rules-Engine rule suspends wheel QQQ openings while a QQQ hedge is open (§3.10.0) |
+| The core invariant: Claude never places, sizes or gates an order | CLAUDE.md | Unchanged by the bridge (Python's). Claude's paper put budget is a new written exception, in the Mastermind §10.7 |
 
 ## 6. Open decisions for the operator
 
@@ -638,6 +960,23 @@ D13 and D14 now point here.
 | **E14** | The slow breaker (was part of D13) | 20–30-session window on account NLV; on a trip: demote risk-changing rungs, block risk-changing levers, scale the CSP budget, stop spreads entries; human reset | Threshold set after the E1 replay |
 | **E15** | The tech-linked cap and stacking rule (was part of D13) | Leverage-weighted group cap; stacking rule; both only if the backtest against the `claude_cut` rows supports them | — |
 
+### 6.1 Revision 2: H1–H10 (long options, this spec's part)
+
+Numbered H so they collide with neither E1–E15 nor D1–D21. The Mastermind owns H11–H16.
+
+| H | Question | Recommendation | Dissent / note |
+|---|---|---|---|
+| **H1** | Admission on S10_gross (the loophole) | Adopt in E0, before any buy path: admission tests read S10_gross (no long option, from any source); S10_net is display and harness only | None. Both reviewers converged |
+| **H2** | The bridge | Yes: Python-run, from the E2 ruling to E4; conditional sunset through the size rule; review gate at E4 with the default off; renewal ≤ 2% of NLV a year by fresh ruling | S3 first proposed a standing programme; withdrawn in S3R on the 0-of-8 backtest |
+| **H3** | Budget | Net premium ≤ 1.0% of NLV₀ over the bridge; pace 0.25% × (months + 2); open premium at cost ≤ 0.6%; own line | O3R 0.35% / 30 days and 1.25%; S3R 0.25% a month and 2% a year. Adjudicated in §3.10.0 (unit of the cap) |
+| **H4** | Instrument | XND if the 20-session E0 capture passes (median quoted spread ≤ 8% of mid on the default item's legs; displayed size ≥ the bridge's contract count on ≥ 80% of captures; all-in cost per protected point ≤ 1.5× QQQ's); else QQQ under §3.10.0's rule. SPY/SPX/XSP, NDX, VIX calls and index collars rejected; SMH not in v1 | XND liquidity is unmeasured; the one third-party snapshot (~19.9K total OI, ~30% average chain spread) is a warning |
+| **H5** | Structure, size, schedule, monetisation | §3.10.5: 60–120 DTE, long delta 0.15–0.30, outright or ≥ 10%-wide vertical, default = best minimum protection per dollar over the scenario grid; size min(budget, 0.5 × (S10_gross − 15%)); roll at ≤ 30 DTE; hedge delta ≤ 50% of book beta-delta; no monetisation rule until the E1 replay | The 2× take-profit is the leading candidate; 3× was worse than holding |
+| **H6** | The stress block | No new size after a VIX close ≥ 25 (ruled) or VXN ≥ its 1-year 90th percentile (recommended); self-funding roll = net debit ≤ 0, no added contracts; halt and slow breaker also block new size | O3R allowed a 0.1%-of-NLV debit as "self-funding"; not adopted |
+| **H7** | Data | Gates on live greeks; the `iv_history` sanity check; leg-quote capture from E0; SPY IV capture restarted; shadow valuation on captured mids | None |
+| **H8** | Tech scenarios | T20 and S-SMH as display, harness and credit-grid measures; not limits; T20 returns to the operator as a candidate limit if T20 − S10 > 3 points | O3R preferred S-QQQ / S-SMH from positions; S3R preferred T20. Adjudicated for T20 |
+| **H9** | Book, fence and build | `book="hedge"`, `hedge:` and `hedge:claude:` refs, underlying and contract disjointness, `hedge_view`, `src/hedge/`, own tables, the reconciliation skip, `tests/test_hedge_fence.py`, a CLAUDE.md hedge-fence section; the §3.10.10 build | None on substance; the build list is the union adjudicated in §3.10.0 |
+| **H10** | Any future headroom credit for a hedge | **None in this spec.** A later ruling, after the review gate, would need at least: credit = the minimum over {S10, S20, T20, G10, P20}; a haircut by the 60-session R² of NLV on the instrument; hedge DTE ≥ the longest admitted position's DTE + 10 sessions; ≤ 2 points; no lift while it supports open risk; a harness pass | Both reviewers: zero credit in v1. Hedge-funded headroom is at best break-even (§2.6) |
+
 ## 7. Unverified, and open research
 
 - IBKR house margin on 0DTE and naked index options; expiration-day liquidation timing; the
@@ -653,6 +992,17 @@ D13 and D14 now point here.
   for the account's own names; the 2× line marked at mid without slippage. The 3× studies use a
   realised-vol IV proxy that rises with the drop by construction.
 - Why `gross_notional_cap` never fired with `value.book.enabled: true` (Mastermind rev 2 §2.3).
+- **Revision 2:**
+  - **XND liquidity** (one third-party snapshot only), Phlx fees, IBKR routing and paper behaviour for XND.
+  - **Every hedge cost and coverage figure** is Black-Scholes with an assumed skew (0.3 PPUT-calibrated
+    to 0.8 from a few June 2026 chains), with no historical index option quotes; the standing-hedge
+    backtest has 8 rolls; the trim comparison assumes P&L scales with exposure.
+  - IBKR's margin treatment of a long and a short put on one underlying (Reg T spread offset).
+  - `IB.exerciseOptions` lapse instructions on the paper account; IBKR's handling of an ITM long
+    put the account cannot deliver against.
+  - Whether the trade ledger's FIFO pairs a long-option open and close exactly.
+  - Why SPY's `iv_history` stops on 2026-10-05, and where the SPY IV/RV ratio of §3.3 came from.
+  - US-situs estate treatment of listed index options for a Singapore non-resident (not tax advice).
 
 ## 8. What the implementation plan must update
 
@@ -666,3 +1016,8 @@ Per CLAUDE.md's doc-update table:
 - **For a new module:** ARCHITECTURE.md for `src/common/spreads_view.py` and the shock/gap module in
   `src/analytics/` (deterministic tier; imports no enrichment).
 - **STATUS.md**, for every item built or deferred.
+- **Revision 2:** ARCHITECTURE.md for `src/hedge/`, `src/common/hedge_view.py`, `src/reporting/hedge.py`,
+  the `hedge_*` ORM rows (`src/storage/`) and the `HedgeCandidate` schema (`src/common/`);
+  `config/examples/risk_limits.yaml` for the `hedge:` block (underlyings, budget, windows, stress
+  block, size rule); CLAUDE.md for a hedge-fence section and the core-invariant note on Claude's paper
+  put budget; SETUP.md for the operator-facing bridge and its Telegram/web surfaces; STATUS.md.
