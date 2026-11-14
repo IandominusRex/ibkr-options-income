@@ -2192,6 +2192,23 @@ adds **re-evaluations** (spec §7.1) and **Stage 1b**, the point-in-time backtes
 | `python -m scripts.value_claude [--read SYMBOL] [--reset-breaker]` | Claude's side of the value book (Part 4): the breaker, today's read budget and the queue; queues a read; resets the breaker. |
 | `python -m scripts.value_backtest [--universe evidence\|trading] [--names A,B] [--limit N] [--start D] [--end D] [--bars provider\|research] [--refresh] [--out F]` | Stage 1b: the point-in-time backtest of Python's rules (Part 3). |
 
+## 20. The risk envelope's switches (2026-11-14, in progress)
+
+The risk-envelope build (`docs/superpowers/plans/2026-11-14-risk-envelope.md`) ships behaviours that
+must wait on data behind **switches**. Each is a row in `system_settings`; a replay or capture report that
+PASSes turns its switch on automatically in **paper** (you get a Telegram notice in the account thread),
+and you can set or reverse any of them by hand. In **live** every switch reads its default whatever is
+stored (`spxw_ready`, which only records the E3 verdict, excepted). A report never overwrites a value you
+set by hand, and a FAIL never turns anything off: only you do.
+
+### Scripts
+
+| Command | What it does |
+|---|---|
+| `python -m scripts.envelope show` | Every switch with its value, source (`cli`, `report:<id>` or default) and when it was set. |
+| `python -m scripts.envelope switch NAME VALUE` | Set one by hand (refused if the value is outside the switch's set); sends a Telegram notice. Reverse a report's change with the default it prints, e.g. `python -m scripts.envelope switch slow_breaker off`. |
+| `python -m scripts.envelope apply-reports` | Apply the PASSed result files in `data/envelope_reports/` now. The EOD run does this every evening. |
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

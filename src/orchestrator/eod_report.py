@@ -439,6 +439,19 @@ async def _send_eod_telegram(summary: EODSummary, narrative: str | None) -> None
         logger.exception("Failed to send EOD Telegram message")
 
 
+async def _apply_envelope_reports() -> None:
+    """Apply the PASSed result files (``src.storage.envelope_switches.apply_reports``) and send one
+    notice per switch change. Never raises: a report or Telegram failure is logged only."""
+    try:
+        from src.notify.notices import send_notice
+        from src.storage.envelope_switches import apply_reports
+
+        for message in apply_reports():
+            await send_notice(message)
+    except Exception:
+        logger.exception("EOD: applying envelope reports failed — continuing")
+
+
 async def _fetch_account_snapshot(ib, account: str) -> AccountSnapshot:
     """Fetch the account summary with a hard timeout; fall back to the last
     ``portfolio_snapshots`` row (logged as a WARNING) if IBKR never responds.
@@ -594,6 +607,10 @@ async def run() -> None:
 
     # 7. Send Telegram.
     await _send_eod_telegram(summary, narrative)
+
+    # 7a. Data-gated envelope switches: a PASSed replay/capture report in data/envelope_reports/
+    #     turns its switch on (paper only) and the operator is told. Best-effort, never fatal.
+    await _apply_envelope_reports()
 
     # 7b. Trade ledger: pull recent executions from the IBKR Flex Web Service (spec R6).
     #     Reporting only — a Flex failure never fails the EOD report. Runs after the Telegram

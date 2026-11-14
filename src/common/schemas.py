@@ -2190,3 +2190,20 @@ class SpreadPickRecord(BaseModel):
     market: SpreadMarketSnapshot
     prompt_text: str
     raw_response: str | None
+
+
+class EnvelopeReportResult(BaseModel):
+    """One replay or capture report's verdict, written to ``data/envelope_reports/<id>.json``.
+
+    ``src.storage.envelope_switches.apply_reports`` reads these: a ``passed is True`` result sets
+    ``switch`` to ``value_on_pass`` (paper only, never over a value the operator set by hand); a
+    FAIL or ``None`` (insufficient data) changes nothing.
+    """
+
+    id: str  # e.g. "E14", "H4", "spreads_paper", "harness"
+    passed: bool | None  # None = insufficient data (changes nothing)
+    criterion: str  # the plan's one-line rule, copied
+    metrics: dict[str, float | str | None] = Field(default_factory=dict)
+    switch: str  # the switch a PASS sets
+    value_on_pass: str  # the value it sets
+    written_at: datetime
