@@ -2387,6 +2387,7 @@ snapshot, a price series missing) writes nothing and says why; it never invents 
 | Command | What it does |
 |---|---|
 | `python -m scripts.envelope_harness [--db PATH] [--since DATE] [--attempt-every N] [--dry-run]` | The survivability harness (P1, P2): today's book on the `price_history` panel, the analytic worst case (S10, S20, G10, P20, T20, S-SMH, gross and net, plus the spreads book's 2% month) and the always-most-aggressive path under the envelope against the status-quo path, with the `record` sessions in `envelope_snapshots` and their defects. A PASS needs no admission above L(t) or L_ew(t), a worst 20-session drawdown no worse than the status quo's, **and** at least 10 clean record sessions; writes `harness.json` (switch `envelope_enforce` -> `on`). Run it after the envelope has been in `record` for 10 sessions. |
+| `python -m scripts.envelope_rules_backtest [--db PATH] [--start DATE] [--end DATE] [--dry-run]` | The E15 backtest: replays the tech-linked cap and the stacking rule against the 10 `claude_cut` puts and the profitable uncut system CSP opens of Oct 13-Nov 12. Each rule is judged on its own: it must trim or block at least 6 of the 10 cut puts and block at most 25% of the profitable uncut opens. Writes `E15_tech_cap.json` (switch `tech_cap`) and `E15_stacking.json` (switch `stacking_rule`). The value book's stock is not in its tech exposure. |
 
 ## Troubleshooting
 

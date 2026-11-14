@@ -361,6 +361,10 @@ synthetic inputs only. Each one's output is a result file that does not exist un
   analytic worst case, and today's book replayed on the panel two ways (status quo against always-most-aggressive
   under the envelope). `passed` needs P2 and 10 record sessions with no P1 defect; a P2 pass with too few record
   sessions is "no result". It needs the envelope to have run in `record` for 10 sessions before it can PASS.
+- **The tech-cap and stacking backtest** (Task 27, `scripts/envelope_rules_backtest.py`): each rule's production
+  function replayed against the `claude_cut` rows and the profitable uncut system CSP opens of Oct 13-Nov 12; a
+  rule passes on its own (trims or blocks at least 6 of 10 cut rows, blocks at most 25% of the profitable uncut
+  opens) and writes its own result file (`E15_tech_cap.json`, `E15_stacking.json`).
 
 ## Built (2026-11-15 — risk envelope Section G: limits behind switches)
 
