@@ -248,6 +248,82 @@ def trim_proposals(
     return out
 
 
+def twin_shares_for(
+    shares: float,
+    spot: float,
+    leverage: int,
+    twin_spot: float | None,
+    beta_gov: float,
+    beta_twin: float,
+) -> int:
+    """Whole shares of the unleveraged twin worth at most the sold leveraged shares'
+    beta-dollars (``shares x spot x leverage x beta_gov``, the twin at ``beta_twin``): rounded
+    down. 0 with no twin price (never sized on a guess)."""
+    if twin_spot is None or not twin_spot > 0 or not beta_twin > 0:
+        return 0
+    beta_dollars = shares * spot * max(1, leverage) * beta_gov
+    return _floor(beta_dollars / (twin_spot * beta_twin))
+
+
+def delever_proposals(
+    inputs: ShockInputs,
+    room: EnvelopeRoom,
+    sellable: dict[str, float],
+    *,
+    now: datetime,
+    twin_spots: dict[str, float],
+    before: ShockResult | None = None,
+) -> list[RepairProposal]:
+    """A de-lever for every held leveraged ETF (spec §3.7 items 2-3): sell its sellable shares
+    (the wheel's own, not under a call: never a value or LES share), and optionally buy the
+    governing twin (QQQ for TQQQ, SOXX for SOXL) at up to the same beta-dollars. The twin's price
+    is its spot in the book, else *twin_spots* (the latest stored close)."""
+    base = before if before is not None else measure(inputs)
+    out: list[RepairProposal] = []
+    for sym in sorted(s for s in sellable if s in inputs.leverage and sellable[s] >= 1):
+        spot = _spot(inputs, sym)
+        if spot is None:
+            continue
+        qty = _floor(sellable[sym])
+        lev = int(inputs.leverage[sym])
+        twin = inputs.governing.get(sym)
+        twin_spot = (_spot(inputs, twin) or twin_spots.get(twin)) if twin else None
+        beta_gov = inputs.betas.get(twin, 0.0) if twin else 0.0
+        n_twin = twin_shares_for(qty, spot, lev, twin_spot, beta_gov, beta_gov) if twin else 0
+        lines = without_shares(inputs, sym, qty).lines
+        if n_twin > 0 and twin and twin_spot:
+            lines = lines + (BookLine(twin, "stock", float(n_twin), twin_spot, book="wheel"),)
+        after = measure(replace(inputs, lines=lines))
+        if not after.measured:
+            continue
+        twin_text = (
+            f", then optionally buy {n_twin:,} {twin} (the same index beta-dollars)"
+            if n_twin > 0
+            else (f"; no {twin} price on record, so no twin buy" if twin else "")
+        )
+        detail = (
+            f"De-lever {sym}: sell {qty:,} shares (about ${qty * spot:,.0f}, {lev}x){twin_text}. "
+            "Each leg is its own gated order; the buy waits for the sell to fill."
+        )
+        out.append(
+            _proposal(
+                "delever",
+                sym,
+                detail,
+                base,
+                after,
+                room,
+                now,
+                shares=float(qty),
+                twin=twin,
+                twin_shares=float(n_twin),
+                mark=spot,
+                twin_mark=twin_spot if n_twin > 0 else None,
+            )
+        )
+    return out
+
+
 def build_proposals(
     *,
     inputs: ShockInputs,
@@ -257,10 +333,11 @@ def build_proposals(
     now: datetime,
     sellable: dict[str, float] | None = None,
     trim_points: float = 1.0,
+    twin_spots: dict[str, float] | None = None,
 ) -> list[RepairProposal]:
     """Every repair proposal for today, from the book (*inputs*), today's room, the day's
-    covered-call candidates and the wheel's sellable shares (*sellable*, for trims). An
-    unmeasured book builds nothing: every card must show its numbers."""
+    covered-call candidates and the wheel's sellable shares (*sellable*, for trims and
+    de-levers). An unmeasured book builds nothing: every card must show its numbers."""
     before = measure(inputs)
     if not before.measured:
         return []
@@ -268,6 +345,9 @@ def build_proposals(
         *cc_overlay_proposals(inputs, room, cc_candidates, now=now, before=before),
         *stop_adding_proposals(inputs, room, addable, now=now, before=before),
         *trim_proposals(inputs, room, sellable or {}, now=now, points=trim_points, before=before),
+        *delever_proposals(
+            inputs, room, sellable or {}, now=now, twin_spots=twin_spots or {}, before=before
+        ),
     ]
 
 

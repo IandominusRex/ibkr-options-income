@@ -60,11 +60,52 @@ async def execute_trim(ib: Any, proposal: RepairProposal) -> str:
     return text
 
 
-async def execute_repair(ib: Any, proposal: RepairProposal) -> str:
-    """The stock orders of an approved trim (Task 31). Never raises."""
+async def execute_delever(ib: Any, proposal: RepairProposal, *, with_twin: bool) -> str:
+    """Task 32: SELL the leveraged ETF's shares; then, when *with_twin* and the sell filled at
+    least in part, BUY the twin sized to the share of the sell that filled (at most the beta-
+    dollars the proposal priced). Each leg is its own gated order; the buy is a stock BUY like any
+    other, admitted only inside the envelope, at decision time and at send time."""
+    assert proposal.id is not None
+    sell = StockOrderIntent(
+        side="SELL",
+        symbol=proposal.symbol,
+        qty=int(proposal.shares),
+        source="repair",
+        ref_id=f"{proposal.id}-sell",
+        tapped=True,
+        reason=f"de-lever, repair proposal {proposal.id}",
+    )
+    sold = await _leg(ib, sell)
+    lines = [_line(sold)]
+    filled = sold.filled if sold.status in ("filled", "partial") else 0.0
+    if with_twin and filled > 0 and proposal.twin and proposal.twin_shares >= 1 and sell.qty > 0:
+        qty = int(proposal.twin_shares * min(1.0, filled / sell.qty) + 1e-9)
+        if qty >= 1:
+            buy = StockOrderIntent(
+                side="BUY",
+                symbol=proposal.twin,
+                qty=qty,
+                source="repair",
+                ref_id=f"{proposal.id}-twin",
+                tapped=True,
+                reason=f"de-lever twin, repair proposal {proposal.id}",
+            )
+            lines.append(_line(await _leg(ib, buy)))
+    text = "\n".join(lines)
+    await asyncio.to_thread(
+        decide, proposal.id, "sent" if filled > 0 else "failed", by="telegram", result=text
+    )
+    return text
+
+
+async def execute_repair(ib: Any, proposal: RepairProposal, *, with_twin: bool = True) -> str:
+    """The stock orders of an approved trim (Task 31) or de-lever (Task 32; *with_twin* False
+    is the card's "sell only"). Never raises."""
     try:
         if proposal.kind == "trim":
             return await execute_trim(ib, proposal)
+        if proposal.kind == "delever":
+            return await execute_delever(ib, proposal, with_twin=with_twin)
         return f"Nothing to send for a {proposal.kind} proposal."
     except Exception:
         log.exception("repair proposal %s: the stock order failed", proposal.id)

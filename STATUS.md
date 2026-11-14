@@ -370,6 +370,11 @@ unmerged; the daemons run none of it until a merge and `./ibkr restart`.
   until the next ET day (`resolve_stale_stock_orders`); a stock order that crashed before `placeOrder` is marked
   rejected at the next start. **Needs live-paper verification:** the first tapped trim on the paper account
   (qualify, quote, fill, the ledger row's `orderRef`).
+- **De-lever** (Task 32, `engine.repair.delever_proposals`, `repair_orders.execute_delever`): a daily tap-only
+  card per held leveraged ETF: sell its uncovered wheel shares, then (unless "Sell only") buy the governing twin
+  at up to the same beta-dollars, sized to the share of the sell that filled; each leg is its own gated order and
+  the twin buy must pass the envelope. S10 barely moves (same index beta-dollars); what goes is the gap and decay
+  tail, which the card does not price.
 
 ## Built (2026-11-15 — risk envelope Section H: replays and the harness)
 

@@ -481,7 +481,7 @@ async def _handle_repair_button(query: Any, context: ContextTypes.DEFAULT_TYPE, 
     """``repair:<id>:approve|reject`` (risk-envelope Task 30). Tap-only: this tap is the human
     decision; nothing in a repair proposal is ever sent without one (P10)."""
     parts = data.split(":")
-    if len(parts) != 3 or parts[2] not in ("approve", "reject"):
+    if len(parts) != 3 or parts[2] not in ("approve", "reject", "sellonly"):
         logger.warning("Unexpected repair callback_data: %r", data)
         return
     try:
@@ -489,16 +489,23 @@ async def _handle_repair_button(query: Any, context: ContextTypes.DEFAULT_TYPE, 
     except ValueError:
         logger.warning("Non-integer repair id in callback_data: %r", data)
         return
-    text = await asyncio.to_thread(_process_repair_button, proposal_id, parts[2])
-    await query.edit_message_text(text)
-    logger.info("Repair button %s for proposal %s processed", parts[2], proposal_id)
-    if parts[2] != "approve":
-        return
     from src.storage.repair_proposals import load_proposal
 
+    if parts[2] == "sellonly":  # a de-lever's "Sell only" (Task 32); on any other card, nothing
+        first = await asyncio.to_thread(load_proposal, proposal_id)
+        if first is None or first[0].kind != "delever":
+            logger.warning("Sell only on a non-de-lever repair card: %r", data)
+            return
+    action = "reject" if parts[2] == "reject" else "approve"
+    text = await asyncio.to_thread(_process_repair_button, proposal_id, action)
+    await query.edit_message_text(text)
+    logger.info("Repair button %s for proposal %s processed", parts[2], proposal_id)
+    if action != "approve":
+        return
     loaded = await asyncio.to_thread(load_proposal, proposal_id)
     if loaded is None or loaded[1] != "approved" or loaded[0].kind not in ("trim", "delever"):
         return
+    with_twin = parts[2] != "sellonly"
     ib_exec: IB | None = context.bot_data.get("ib_exec")
     if ib_exec is None or not ib_exec.isConnected():
         from src.storage.repair_proposals import decide
@@ -512,7 +519,7 @@ async def _handle_repair_button(query: Any, context: ContextTypes.DEFAULT_TYPE, 
 
     async def _send() -> None:
         # Its own task: a stock order waits up to the fill timeout, and the bot keeps serving.
-        done = await execute_repair(ib_exec, loaded[0])
+        done = await execute_repair(ib_exec, loaded[0], with_twin=with_twin)
         try:
             await query.edit_message_text(f"{text}\n{done}")
         except Exception:

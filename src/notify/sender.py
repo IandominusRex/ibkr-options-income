@@ -1077,16 +1077,16 @@ async def send_order_notification(
         logger.exception("Failed to send order notification for order_id=%s", order_id)
 
 
-def repair_keyboard(proposal_id: int) -> InlineKeyboardMarkup:
-    """Approve / Reject for a tap-only repair card (``repair:<id>:approve|reject``)."""
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("✅ Approve", callback_data=f"repair:{proposal_id}:approve"),
-                InlineKeyboardButton("❌ Reject", callback_data=f"repair:{proposal_id}:reject"),
-            ]
-        ]
-    )
+def repair_keyboard(proposal_id: int, kind: str = "") -> InlineKeyboardMarkup:
+    """Approve / Reject for a tap-only repair card (``repair:<id>:approve|reject``). A de-lever
+    (Task 32) adds "Sell only" (``repair:<id>:sellonly``: the sell leg without the twin buy)."""
+    row = [InlineKeyboardButton("✅ Approve", callback_data=f"repair:{proposal_id}:approve")]
+    if kind == "delever":
+        row.append(
+            InlineKeyboardButton("Sell only", callback_data=f"repair:{proposal_id}:sellonly")
+        )
+    row.append(InlineKeyboardButton("❌ Reject", callback_data=f"repair:{proposal_id}:reject"))
+    return InlineKeyboardMarkup([row])
 
 
 async def send_repair_cards(proposals: list[RepairProposal]) -> int:
@@ -1111,7 +1111,7 @@ async def send_repair_cards(proposals: list[RepairProposal]) -> int:
                         chat_id=str(chat_id),
                         message_thread_id=thread_id(cfg.secrets.telegram_thread_account),
                         text=format_repair_proposal(p),
-                        reply_markup=repair_keyboard(p.id),
+                        reply_markup=repair_keyboard(p.id, p.kind),
                     )
                     posted += 1
                 except Exception:

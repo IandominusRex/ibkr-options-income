@@ -131,6 +131,11 @@ def build_and_store(
             now=datetime.now(UTC),
             sellable=sellable_shares(positions),
             trim_points=get_envelope_cfg().trim_points,
+            twin_spots={
+                twin: px
+                for twin in set(inputs.governing.values())
+                if (px := latest_close(twin)) is not None
+            },
         )
         saved = save_proposals(proposals, today)
     except Exception:
