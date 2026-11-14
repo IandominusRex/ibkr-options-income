@@ -75,6 +75,23 @@ envelope:
   live_iv_timeout_seconds: 8    # how long one chunk waits for IBKR model greeks; a miss is unmeasured
   t20_trigger_points: 3.0       # H8: the first session T20 - S10 exceeds this turns switch t20_limit on (paper), once
 
+# --- Index-hedge quote capture (risk-envelope Task 16, 2026-11-14) ---
+# Until the buy-to-open build (Task 33) this block only drives the twice-a-session capture of bid, ask and
+# size for every hedge menu item's legs (XND and QQQ) into hedge_quotes, and the H4 instrument report
+# (python -m scripts.hedge_capture_report). Typed in src/common/config.py (HedgeCfg).
+hedge:
+  instruments:                  # the candidates, XND first; sec_type/exchange name the underlying, options go SMART with trading_class
+    XND: {sec_type: IND, exchange: NASDAQ, trading_class: XND, multiplier: 100}   # verify with: python -m scripts.hedge_capture_report --probe
+    QQQ: {sec_type: STK, exchange: SMART, trading_class: QQQ, multiplier: 100}
+  capture_times_et: ["10:30", "14:30"]   # fixed times, ET: each runs once per session, in the first intraday cycle after it
+  capture_max_lines: 10         # market-data lines open at once during a capture (at most 10), cancelled between chunks
+  dte_window: [60, 120]         # H5: menu expiries, days to expiry at capture (90 targeted)
+  dte_floor: 45                 # H5: never a menu item under this many days
+  long_delta: [0.15, 0.30]      # H5: |delta| band of the long put (0.15 is also the floor)
+  vertical_min_width_pct: 10.0  # H5: a put vertical is at least this % of spot wide
+  quote_max_spread_pct: 8.0     # H4: the median quoted spread of the default item's legs must be at most this % of mid
+  commission_per_contract: 0.65 # IBKR commission per contract per leg, added to the H4 cost per protected point
+
 # --- IV sanity check on iv_history writes (risk-envelope Task 10, 2026-11-14) ---
 # An implausible daily IV observation is stored but flagged, and every reader skips flagged rows
 # (QQQ's stored IV once read 14.6 against a VXN of 38.3). Typed in src/common/config.py (IvSanityCfg).

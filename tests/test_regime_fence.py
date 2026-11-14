@@ -58,6 +58,8 @@ DETERMINISTIC = sorted(
         SRC / "engine" / "envelope.py",
         SRC / "storage" / "envelope_state.py",
         *(SRC / "regime").glob("*.py"),
+        # Task 16: the hedge package (quote capture; the order path arrives in Tasks 33-36)
+        *(SRC / "hedge").glob("*.py"),
         SRC / "storage" / "regime_state.py",
         SRC / "storage" / "les_state.py",
         SRC / "data" / "breadth_backend.py",
@@ -97,6 +99,13 @@ def test_the_envelope_modules_exist_and_are_on_the_deterministic_list() -> None:
         "engine/envelope.py",
         "storage/envelope_state.py",
     ):
+        assert (SRC / rel).exists(), rel
+        assert SRC / rel in DETERMINISTIC, rel
+
+
+def test_the_hedge_modules_are_on_the_deterministic_list() -> None:
+    """Risk-envelope Task 16: every `src/hedge/` module is fenced from the enrichment tier."""
+    for rel in ("hedge/__init__.py", "hedge/capture.py", "hedge/menu.py", "hedge/store.py"):
         assert (SRC / rel).exists(), rel
         assert SRC / rel in DETERMINISTIC, rel
 

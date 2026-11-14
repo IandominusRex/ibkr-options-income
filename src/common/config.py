@@ -2698,6 +2698,94 @@ class RiskEnvelopeCfg(_KeyedCfg):
         return {str(k).upper(): str(g).upper() for k, g in v.items()}
 
 
+class HedgeInstrumentCfg(_KeyedCfg):
+    """One hedge instrument's contract fields (risk-envelope Task 16; spec §3.10.4).
+
+    ``sec_type``/``exchange`` name the underlying (an index or a stock); the options are SMART-routed
+    with ``trading_class``. ``multiplier`` is the option multiplier (100 for both candidates)."""
+
+    KEYS: ClassVar[tuple[str, ...]] = ("sec_type", "exchange", "trading_class", "multiplier")
+
+    sec_type: Literal["IND", "STK"]
+    exchange: str
+    trading_class: str
+    multiplier: int = Field(default=100, ge=1)
+
+
+def _default_hedge_instruments() -> dict[str, HedgeInstrumentCfg]:
+    return {
+        "XND": HedgeInstrumentCfg(
+            sec_type="IND", exchange="NASDAQ", trading_class="XND", multiplier=100
+        ),
+        "QQQ": HedgeInstrumentCfg(
+            sec_type="STK", exchange="SMART", trading_class="QQQ", multiplier=100
+        ),
+    }
+
+
+class HedgeCfg(_KeyedCfg):
+    """The bridge hedge's capture-era settings (risk-envelope Task 16; spec §3.10.3-§3.10.8, H4, H5).
+
+    Until Task 33 only the quote capture reads this block: ``instruments`` are the candidates
+    (XND first, QQQ the fallback), ``capture_times_et`` the two fixed times a session the menu's legs
+    are quoted, ``capture_max_lines`` the market-data lines open at once while it does (at most 10,
+    cancelled between chunks). The menu holds outright puts and put verticals ``vertical_min_width_pct``
+    of spot wide or more, expiring in ``dte_window`` days (never under ``dte_floor``), whose long leg's
+    |delta| is in ``long_delta``. ``quote_max_spread_pct`` is H4's median quoted-spread bar and
+    ``commission_per_contract`` the IBKR commission per contract per leg the H4 cost comparison adds.
+    Lives in ``config/risk_limits.yaml -> hedge:``; a missing block means these defaults."""
+
+    KEYS: ClassVar[tuple[str, ...]] = (
+        "instruments",
+        "capture_times_et",
+        "capture_max_lines",
+        "dte_window",
+        "dte_floor",
+        "long_delta",
+        "vertical_min_width_pct",
+        "quote_max_spread_pct",
+        "commission_per_contract",
+    )
+
+    instruments: dict[str, HedgeInstrumentCfg] = Field(default_factory=_default_hedge_instruments)
+    capture_times_et: list[str] = Field(default_factory=lambda: ["10:30", "14:30"])
+    capture_max_lines: int = Field(default=10, ge=1, le=10)
+    dte_window: tuple[int, int] = (60, 120)
+    dte_floor: int = Field(default=45, ge=0)
+    long_delta: tuple[float, float] = (0.15, 0.30)
+    vertical_min_width_pct: float = Field(default=10.0, gt=0, lt=100)
+    quote_max_spread_pct: float = Field(default=8.0, gt=0)
+    commission_per_contract: float = Field(default=0.65, ge=0)
+
+    @field_validator("instruments")
+    @classmethod
+    def _upper_instruments(cls, v: dict[str, HedgeInstrumentCfg]) -> dict[str, HedgeInstrumentCfg]:
+        return {str(k).upper(): c for k, c in v.items()}
+
+    @field_validator("capture_times_et")
+    @classmethod
+    def _times(cls, v: list[str]) -> list[str]:
+        if not v:
+            raise ValueError("hedge.capture_times_et needs at least one time")
+        return sorted(_hhmm(t) for t in v)
+
+    @field_validator("dte_window")
+    @classmethod
+    def _window(cls, v: tuple[int, int]) -> tuple[int, int]:
+        lo, hi = v
+        if not 0 < lo <= hi:
+            raise ValueError(f"hedge.dte_window {list(v)} must satisfy 0 < low <= high")
+        return v
+
+    @field_validator("long_delta")
+    @classmethod
+    def _delta(cls, v: tuple[float, float]) -> tuple[float, float]:
+        lo, hi = v
+        if not 0.0 < lo <= hi < 1.0:
+            raise ValueError(f"hedge.long_delta {list(v)} must satisfy 0 < low <= high < 1")
+        return v
+
+
 class ClaudeCutCfg(_KeyedCfg):
     """Claude's reduce-only size cut on auto-opened cash-secured puts (spec section 9).
 
@@ -2899,8 +2987,11 @@ class Config(BaseModel):
                 "wheel and the spreads book may never share an underlying"
             )
         if self.spreads.enabled:
+            # The hedge quote capture (risk-envelope Task 16) runs on the scan connection only
+            # while no scan batch is open, so it takes a batch's place, never adds to one.
+            hedge_lines = HedgeCfg(**(self.risk.get("hedge") or {})).capture_max_lines
             budget = (
-                self.market_data.chain_batch_size
+                max(self.market_data.chain_batch_size, hedge_lines)
                 + self.spreads.max_market_data_lines
                 + self.spreads.reserved_monitor_lines
             )
@@ -3013,6 +3104,11 @@ def get_iv_sanity_cfg() -> IvSanityCfg:
 def get_envelope_cfg() -> RiskEnvelopeCfg:
     """The typed ``envelope:`` block of ``config/risk_limits.yaml`` (shipped defaults when absent)."""
     return RiskEnvelopeCfg(**(get_config().risk.get("envelope") or {}))
+
+
+def get_hedge_cfg() -> HedgeCfg:
+    """The typed ``hedge:`` block of ``config/risk_limits.yaml`` (shipped defaults when absent)."""
+    return HedgeCfg(**(get_config().risk.get("hedge") or {}))
 
 
 def get_claude_cut_cfg() -> ClaudeCutCfg:

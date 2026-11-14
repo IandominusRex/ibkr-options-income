@@ -397,6 +397,27 @@ the daemons run none of it until a merge and `./ibkr restart`.
   so expect fixes on first contact; until a PASS, the spreads book records shadow only. The switch is
   read at service start: `./ibkr restart` after it changes.
 
+## Built (2026-11-14 — risk envelope Section E: quote capture)
+
+Plan `docs/superpowers/plans/2026-11-14-risk-envelope.md` Tasks 16-17, spec
+`docs/superpowers/specs/2026-11-13-risk-envelope-design.md` §3.3, §3.10.4, §3.10.8. On `feat/risk-envelope`,
+unmerged; the daemons capture nothing until a merge and `./ibkr restart`. Capture only: no order path.
+
+- **Hedge-menu quote capture** (`src/hedge/`, Task 16): XND and QQQ put legs (outright and verticals at least
+  10% wide, 60-120 DTE, long |delta| 0.15-0.30) quoted twice a session (10:30 and 14:30 ET) into
+  `hedge_quotes` from `approval_service`'s intraday loop, on the scan connection, at most ten lines at a time,
+  waiting while a scan runs. `python -m scripts.hedge_capture_report` computes ruling H4 (XND if its median
+  quoted spread is at most 8% of mid, its size covers the bridge on 80% of captures and its cost per protected
+  point is at most 1.5x QQQ's, over at least 20 sessions; else QQQ) into `data/envelope_reports/H4.json` and
+  `H4_fallback.json`. `src/hedge/` is on the regime fence's deterministic list and has `tests/test_hedge_fence.py`.
+- **Not yet:** the hedge's book, its orders, `validate_hedge` and the bridge (Tasks 33-37). `needed_contracts` is
+  recorded as 0 until Task 36's size rule exists (the report reads it as "at least one contract").
+- **Known limitations:** XND's contract fields (`IND` on `NASDAQ`, class `XND`) come from the plan and have not
+  been checked against IBKR: run `python -m scripts.hedge_capture_report --probe` on the paper Gateway first. The
+  default item is ranked by intrinsic payoff at the scenarios' index moves (a proxy; Task 36 replaces it). The
+  H4 cost per protected point has no exchange fees (not yet taken from IBKR's schedule). A capture that fails is
+  not retried until the next slot.
+
 ## Built (2026-11-14 — risk envelope Section D: measurement and displays)
 
 Plan `docs/superpowers/plans/2026-11-14-risk-envelope.md` Tasks 11-14, spec

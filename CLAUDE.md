@@ -508,6 +508,22 @@ the value book. It is **deterministic tier**:
 
 Enforced by `tests/test_value_fence.py` — keep it green.
 
+### The hedge fence — `src/hedge/` is deterministic and has its own tables (stub, risk-envelope Task 16)
+
+`src/hedge/` (docs/superpowers/plans/2026-11-14-risk-envelope.md; spec §3.10) is the index-hedge package.
+Task 16 builds the **quote capture** only (`menu.py`, `capture.py`, `store.py`): there is no order path in it
+yet. The rules from the start, enforced by `tests/test_hedge_fence.py` and `tests/test_regime_fence.py`:
+
+- It is **deterministic tier**: it imports nothing from `src.claude`, `src.news`, `src.spreads_ai`,
+  `src.value_ai` or the sentiment, sector and market-conditions analytics, and it is on the regime fence's
+  deterministic list.
+- **Only `src/hedge/` constructs `hedge_*` rows** (`HedgeQuoteRow` now). Reading is allowed anywhere.
+- Its market data goes through `req_fresh_mkt_data` only, in chunks of at most ten lines cancelled between
+  chunks, and only while no scan is running (it takes a chain batch's place in the line budget).
+
+Tasks 33-37 complete this section (the book, the order path, `validate_hedge`, `src/common/hedge_view.py`, the
+clientId, the reconciliation skip and the contract-clash rules).
+
 ## Reference documentation
 
 - **`ib_async_documentation.md`** (root) is the **official ib_async documentation** for this

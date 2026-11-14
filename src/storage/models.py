@@ -293,6 +293,36 @@ class EnvelopeSnapshotRow(Base):
     reasons: Mapped[list] = mapped_column(JSON, default=list)
 
 
+class HedgeQuoteRow(Base):
+    """One captured hedge-menu leg quote (risk-envelope Task 16; spec §3.10.8 item 3): the bid, ask
+    and displayed size of a put on the hedge instrument (XND or QQQ) as one item's long or short leg,
+    at one capture. ``needed_contracts`` is the bridge size the Task 36 rule would want at that
+    moment (0 until it exists); ``is_default`` marks the capture's default item. Written by
+    ``src/hedge/store.py`` only; read by ``scripts/hedge_capture_report.py``."""
+
+    __tablename__ = "hedge_quotes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    session_date: Mapped[date] = mapped_column(Date, index=True)
+    instrument: Mapped[str] = mapped_column(String(8), index=True)
+    item_key: Mapped[str] = mapped_column(String(48))
+    leg: Mapped[str] = mapped_column(String(5))  # long | short
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    con_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    strike: Mapped[float] = mapped_column(Float)
+    right: Mapped[str] = mapped_column(String(1))
+    expiry: Mapped[date] = mapped_column(Date)
+    spot: Mapped[float] = mapped_column(Float)
+    bid: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ask: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bid_size: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ask_size: Mapped[float | None] = mapped_column(Float, nullable=True)
+    mid: Mapped[float | None] = mapped_column(Float, nullable=True)
+    delta: Mapped[float | None] = mapped_column(Float, nullable=True)
+    needed_contracts: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class PriceHistoryRow(Base):
     """Daily OHLCV bars (one settled session per row) backing the technical indicators
     and HV30. Bootstrapped by scripts/backfill_prices.py and kept fresh by a daily append;

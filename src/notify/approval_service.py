@@ -1928,6 +1928,17 @@ async def _intraday_scan_loop(
                 except Exception:
                     logger.exception("Intraday loop: capital release failed")
 
+            # 1a''. Hedge-menu quote capture (risk-envelope Task 16): XND and QQQ legs quoted twice
+            #     a session at the fixed hedge.capture_times_et, into hedge_quotes. Quote capture
+            #     only, no order path; it takes a chain batch's lines, so it waits while a scan runs.
+            if ib_scan.isConnected():
+                try:
+                    from src.hedge.capture import run_due_capture
+
+                    await run_due_capture(ib_scan, scan_running=bool(bot_data.get("scan_running")))
+                except Exception:
+                    logger.exception("Intraday loop: hedge quote capture failed")
+
             # 1b. Periodic reconciliation (SYSTEM_REVIEW F7): recover entry fills missed during a
             #     mid-session reconnect, and record manual buy-to-closes done in TWS.
             if ib_exec is not None and ib_exec.isConnected():

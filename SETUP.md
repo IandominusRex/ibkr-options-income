@@ -2263,6 +2263,35 @@ the new `envelope_snapshots` table, so restart the trading service before the AP
 | `python -m scripts.envelope switch NAME VALUE` | Set one by hand (refused if the value is outside the switch's set); sends a Telegram notice. Reverse a report's change with the default it prints, e.g. `python -m scripts.envelope switch slow_breaker off`. |
 | `python -m scripts.envelope apply-reports` | Apply the PASSed result files in `data/envelope_reports/` now. The EOD run does this every evening. |
 
+### Quote capture (Section E, 2026-11-14)
+
+**Hedge-menu quotes (Task 16).** From the first restart on this code, the trading service quotes the index
+hedge's candidate legs twice a session, at 10:30 and 14:30 ET (`hedge.capture_times_et`), in the first intraday
+cycle after each time: XND (the Nasdaq-100 micro index) and QQQ, 60-120 day puts and put verticals at least
+10% wide, bid, ask, displayed size and delta, into the `hedge_quotes` table. It is capture only (no order), at
+most ten market-data lines at a time (cancelled between chunks), and it waits while a scan is running. The
+`hedge:` block of `config/examples/risk_limits.yaml` is new; your private `risk_limits.yaml` does not need it
+(the code defaults match the example, and a mistyped key is refused at first use).
+
+**Before the first capture, run the one-off probe** against the paper Gateway (it connects with the
+healthcheck clientId and places nothing): `python -m scripts.hedge_capture_report --probe`. It prints what
+IBKR says about XND's contract (the underlying's exchange, the option chains and trading classes). The
+shipped XND fields (`IND` on `NASDAQ`, trading class `XND`, multiplier 100) were written from the plan, not
+from IBKR; if the probe shows different fields, correct `hedge.instruments.XND` in your private
+`risk_limits.yaml`. A capture that cannot qualify XND logs a warning and records QQQ only; after 20 sessions
+the H4 report then falls back to QQQ.
+
+After at least 20 capture sessions run `python -m scripts.hedge_capture_report` (add `--dry-run` to print
+without writing). It writes `data/envelope_reports/H4.json`; the next EOD run applies a PASS (switch
+`hedge_instrument` = `XND`, paper only, a Telegram notice in the account thread). When XND fails the bar it also
+writes `H4_fallback.json` and the switch becomes `QQQ`. Fewer than 20 sessions writes "insufficient data" and
+changes nothing. Reverse by hand with `python -m scripts.envelope switch hedge_instrument none`.
+
+| Command | What it does |
+|---|---|
+| `python -m scripts.hedge_capture_report [--dry-run]` | The H4 hedge-instrument report over the captured quotes: median quoted spread of the default item's legs (at most 8% of mid), displayed size against the bridge's contract count (at least 80% of captures), all-in cost per protected point against QQQ's (at most 1.5x); writes `H4.json` (and `H4_fallback.json`). |
+| `python -m scripts.hedge_capture_report --probe` | One-off: print XND's and QQQ's contract fields from the paper Gateway. |
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
