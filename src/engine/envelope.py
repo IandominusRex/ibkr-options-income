@@ -19,6 +19,9 @@ and ``max_contracts_under`` a count that a generator or the Rules Engine applies
   reason that binds the next contract.
 * ``record_snapshot`` writes the measurement record; ``check_t20_trigger`` is H8's one-time
   switch.
+* ``candidate_line`` turns an opening cash-secured put into the ``BookLine`` the admission test
+  adds; ``with_added`` returns the room and inputs with an accepted lot in them, so the next
+  candidate of a batch is measured against a book that already holds it (Task 18).
 
 Deterministic tier: imports no enrichment (``tests/test_regime_fence.py``).
 """
@@ -33,6 +36,7 @@ from typing import Literal
 from src.analytics.shock import measure
 from src.common.config import get_config, get_envelope_cfg
 from src.common.envelope_types import BookLine, EnvelopeRoom, ShockInputs, ShockResult
+from src.common.schemas import TradeCandidate
 from src.storage.envelope_state import (
     limits_on,
     load_glide,
@@ -130,6 +134,42 @@ def max_contracts_under(
         if reasons:
             return n - 1, reasons[0]
     return max(0, hard_max), ""
+
+
+def candidate_line(
+    cand: TradeCandidate, *, iv: float | None = None, spot: float | None = None
+) -> BookLine:
+    """The short-put ``BookLine`` an opening CSP adds to the book (Tasks 18-19).
+
+    IV (a decimal) is *iv* when the caller has a fresher one (the send-time quote), else the
+    option's own IBKR IV frozen on the card (``quote_iv``); the spot is *spot*, else
+    ``underlying_price``, else the ideal zone's spot. A missing IV or spot leaves the line
+    unmeasured, so the admission test refuses it (never valued at zero)."""
+    use_spot = spot or cand.underlying_price or (cand.ideal.spot if cand.ideal else None)
+    use_iv = iv if iv is not None else cand.quote_iv
+    return BookLine(
+        symbol=cand.underlying.upper(),
+        kind="short_put",
+        qty=float(max(0, cand.contracts)),
+        spot=float(use_spot or 0.0),
+        strike=cand.strike,
+        dte=cand.dte,
+        iv=use_iv if use_iv is not None and use_iv > 0 else None,
+        book="wheel",
+    )
+
+
+def with_added(
+    room: EnvelopeRoom, inputs: ShockInputs, add: list[BookLine]
+) -> tuple[EnvelopeRoom, ShockInputs]:
+    """*room* and *inputs* with *add* in the book: the measures move to the book after the trade,
+    the limits stay. Used after a lot is accepted, so later lots of the same batch see it."""
+    new_inputs = replace(inputs, lines=inputs.lines + tuple(add))
+    after = measure(new_inputs)
+    return (
+        replace(room, s10_gross=after.s10, uew=after.uew, t20_gross=after.t20),
+        new_inputs,
+    )
 
 
 def cash_after_itm_assignment(cash: float, inputs: ShockInputs) -> float:

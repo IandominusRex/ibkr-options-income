@@ -347,6 +347,27 @@ Operator to-dos: re-copy `config/examples/value.yaml`'s `telegram:` and `prompt_
 
 ---
 
+## Built (2026-11-15 — risk envelope Section F: the envelope gate)
+
+Plan `docs/superpowers/plans/2026-11-14-risk-envelope.md` Tasks 18-21, spec
+`docs/superpowers/specs/2026-11-13-risk-envelope-design.md` §3.4.1-3.4.2, §3.5, §3.6, §3.10.7. On
+`feat/risk-envelope`, unmerged. The envelope ships at `envelope_enforce = record` (P1): every test below
+runs and its would-block reasons are written to `sizing_actions` (kind `envelope_record`); nothing is refused
+until the switch is `on` (paper only; live always reads `record`).
+
+- **No reason erased (Task 18, P4, code fact C1).** `risk_engine.validate_candidates` collects the value
+  book's `combined_name_cap` and the envelope reasons apart and appends them after the regime rewrite to
+  `regime_budget` and the guaranteed-floor clear, which used to erase them (HOOD 75P went out as a floor lot
+  on 2026-11-09 at a nominal gross of 1.40).
+- **U_ew replaces the wheel's nominal gross check (Task 18, ruling Q3).** The wheel no longer reads
+  `portfolio.max_gross_notional_pct`; every opening CSP is tested against U_ew (`gross_budget`) and, with the
+  live-IV inputs Task 19 supplies, S10_gross (`shock_budget`) and T20 when its switch is on (`t20_budget`).
+  The value book keeps `max_gross_notional_pct` as its fundable gate.
+- **Leverage weighting (Task 18, §3.5).** A leveraged ETF's stock and short-put collateral count at leverage in
+  the per-ticker collateral tally (and so the large-position slot) and the CSP budget, in the generator, the
+  gate and the send-time regime fit; cash and risk units stay at face. A held leveraged position above a third
+  of the per-ticker cap now occupies a large slot.
+
 ## Built (2026-11-14 — risk envelope Section B: the spreads book's fixes)
 
 Plan `docs/superpowers/plans/2026-11-14-risk-envelope.md` Tasks 3-7, spec

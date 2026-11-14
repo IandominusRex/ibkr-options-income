@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from src.common.books import ValueExposure, is_spreads_underlying, value_exposure
 from src.common.config import RollCfg, get_config
+from src.common.envelope_types import EnvelopeRoom, ShockInputs
 from src.common.market_hours import today_et
 from src.common.schemas import (
     AccountSnapshot,
@@ -49,6 +50,7 @@ from src.engine.regime_limits import (
     daily_limit,
     floor_left,
     governing_index,
+    leverage_factor,
     live_bottoming_delta_reason,
     live_cc_delta_reason,
     live_ladder_reason,
@@ -108,15 +110,22 @@ def _select_budget_representatives(
 
 
 def _cumulative_reasons(
-    cand: TradeCandidate, sector: str | None, caps: Caps, budgets: Budgets
+    cand: TradeCandidate,
+    sector: str | None,
+    caps: Caps,
+    budgets: Budgets,
+    leverage: int = 1,
 ) -> list[str]:
     """The pass-2 (shared-budget) reasons *cand* would be rejected for against *caps*.
 
     Mirrors ``capital._fits`` exactly: the gate must never be looser than the sizer. Pure with
     respect to *budgets* (read only), so it can be run twice, against the regime-scaled caps and
-    then the unscaled ones, to tell a regime rejection from a book rejection.
+    then the unscaled ones, to tell a regime rejection from a book rejection. *leverage*
+    (risk-envelope §3.5) weights the lot's exposure in the per-ticker collateral tally and the CSP
+    budget, as ``_fits`` does; cash and risk units are not scaled.
     """
     reasons: list[str] = []
+    weighted = cand.collateral * max(1, leverage)
     # --- Cumulative concentration, measured in RISK UNITS. Raw collateral encodes share
     # price, which is not a risk measure: a 10-for-1 split would make a name tradeable
     # overnight with identical risk. Risk units (collateral x IV x sqrt(DTE/365)) put a
@@ -124,7 +133,7 @@ def _cumulative_reasons(
     # to a stricter raw-collateral cap.
     #
     # CUMULATIVE per-ticker collateral: this candidate on top of what is already held.
-    cum_collateral = budgets.ticker_collateral.get(cand.underlying, 0.0) + cand.collateral
+    cum_collateral = budgets.ticker_collateral.get(cand.underlying, 0.0) + weighted
     units = risk_units(cand.collateral, cand.current_iv, cand.dte)
     if units is None:
         if cum_collateral > caps.max_ticker_collateral:
@@ -152,7 +161,7 @@ def _cumulative_reasons(
             reasons.append("concentration_limit")
 
     if cand.strategy == Strategy.CASH_SECURED_PUT:
-        if budgets.csp_collateral + cand.collateral > caps.max_csp_collateral:
+        if budgets.csp_collateral + weighted > caps.max_csp_collateral:
             reasons.append("csp_allocation_limit")
     if budgets.cash_used + cand.collateral > caps.deployable_cash:
         reasons.append("buying_power_buffer")
@@ -167,6 +176,7 @@ def validate_candidates(
     *,
     dedupe_same_symbol: bool = True,
     sizing: SizingContext | None = None,
+    envelope: tuple[EnvelopeRoom, ShockInputs] | None = None,
 ) -> list[RiskVerdict]:
     """Gate each candidate against hard limits. One RiskVerdict per candidate.
 
@@ -227,6 +237,25 @@ def validate_candidates(
     `regime_budget` is accepted and tagged ``sizing.floor_lot`` (an in-place update of the
     candidate; the gate returns verdicts only). The generator calls the same functions
     (`src/engine/regime_limits.py`), so the two cannot disagree.
+
+    *envelope* is the risk envelope measured on live IV (risk-envelope Tasks 18-19: the room and
+    the book's shock inputs, `src/engine/envelope.py`). Every opening CSP that reaches the shared
+    budgets is tested with ``envelope.admits``: ``shock_budget`` (S10_gross after the lot above
+    L(t)), ``gross_budget`` (U_ew above its limit), ``t20_budget`` (when the ``t20_limit`` switch is
+    on) or ``envelope_unmeasured``. Covered calls and rolls are never tested. The room's
+    ``enforce`` decides: ``on`` appends the reasons, ``record`` writes them to ``sizing_actions``
+    (kind ``envelope_record``) and admits, ``off`` does nothing. With no envelope and the
+    ``envelope_enforce`` switch ``on``, every opening CSP is refused ``envelope_unmeasured`` (fail
+    closed). A lot accepted in the batch joins the book, so later lots are measured with it.
+
+    **No reason is erased (P4).** The value book's ``combined_name_cap`` and the envelope reasons
+    are collected apart and appended **after** the regime rewrite (``regime_budget``) and the
+    guaranteed floor, so neither can replace or clear them. The wheel's nominal gross cap is
+    gone: U_ew (``gross_budget``) replaces it (ruling Q3; the value book's own gate keeps its
+    nominal cap as the one refusal released capital can cure).
+
+    A leveraged ETF's exposure counts at its leverage (``leverage_factor``) in the per-ticker and
+    CSP budgets, as the generator counts it (§3.5).
     """
     if not candidates:
         return []
@@ -250,18 +279,19 @@ def validate_candidates(
     vx: ValueExposure = value_exposure()
     caps = resolve_caps(account, risk, value_claim=vx.claim)
     sector_of_fn = get_config().universe.get("sectors", {}).get
+
+    def leverage_of(name: str) -> int:
+        return leverage_factor(sizing, name) or 1
+
     budgets: Budgets = seed_budgets(
         positions,
         sector_of_fn,
         iv_by_symbol.get if iv_by_symbol else None,
         caps=caps,
         extra_exposure=vx.by_name,
+        leverage_of=leverage_of,
     )
-    gross_cap = net_liq * float(portfolio.get("max_gross_notional_pct", 100.0)) / 100.0
     combined_cap = net_liq * float(portfolio.get("max_combined_name_pct", 15.0)) / 100.0
-    wheel_stock = sum(
-        abs(p.market_value or 0.0) for p in positions if p.sec_type == "STK" and p.position
-    )
 
     # --- Pass 1: per-candidate gates. No shared budget is read or written here, so these
     # can run in any order and never depend on what else is in *candidates*.
@@ -507,6 +537,7 @@ def validate_candidates(
     accepted_csp: dict[str, str] = {}  # underlying -> governing index, accepted CSPs this batch
     accepted_floor: dict[str, str] = {}  # underlying -> governing index, floor lots this batch
     accepted_signal_lot: set[str] = set()  # names that took a name-level signal lot this batch
+    env_check = _EnvelopeCheck(envelope, candidates, representative_ids)
 
     def _others(by_name: dict[str, str], index: str, underlying: str) -> int:
         return sum(1 for name, idx in by_name.items() if idx == index and name != underlying)
@@ -519,26 +550,29 @@ def validate_candidates(
         is_csp = cand.strategy == Strategy.CASH_SECURED_PUT
         regime_active = sizing is not None and is_csp and active(sizing)
 
+        lev = leverage_of(cand.underlying)
         check_caps = caps
         if regime_active:
             ticker_mult, book_mult = multipliers(sizing, cand.underlying)
             check_caps = scale_caps(caps, ticker=ticker_mult, book=book_mult)
-        reasons.extend(_cumulative_reasons(cand, sector, check_caps, budgets))
+        reasons.extend(_cumulative_reasons(cand, sector, check_caps, budgets, lev))
+        # Reasons the regime rewrite and the guaranteed floor below may never replace or clear
+        # (ruling P4; C1: on 2026-11-09 a floor lot cleared the gross cap this way). Appended
+        # after them.
+        hard_reasons: list[str] = []
         if vx.active and is_csp:
-            # Spec §9.3 item 3: stock of both books + CSP collateral (this batch's accepted lots
-            # included) + approved value buys + this put, within the gross cap of net liq.
-            if wheel_stock + budgets.csp_collateral + vx.gross + cand.collateral > gross_cap:
-                reasons.append("gross_notional_cap")
             # Spec §9.2: one name across both books, where the value book holds it.
             if vx.by_name.get(cand.underlying.upper(), 0.0) > 0 and (
                 budgets.ticker_collateral.get(cand.underlying, 0.0) + cand.collateral > combined_cap
             ):
-                reasons.append("combined_name_cap")
+                hard_reasons.append("combined_name_cap")
+        if is_csp:
+            hard_reasons.extend(env_check.reasons(cand, other=reasons))
 
         took_floor = False
         if regime_active:
             assert sizing is not None
-            if reasons and not _cumulative_reasons(cand, sector, caps, budgets):
+            if reasons and not _cumulative_reasons(cand, sector, caps, budgets, lev):
                 reasons = ["regime_budget"]
             index = governing_index(sizing, cand.underlying)
             limit = daily_limit(sizing, cand.underlying)
@@ -556,6 +590,7 @@ def validate_candidates(
                 if floor_left(sizing, cand.underlying, batch_floor) > 0:
                     reasons = []
                     took_floor = True
+        reasons = reasons + hard_reasons
 
         # One name-level signal lot per name per batch at send time, in the batch's own order (the
         # first one passes). The send batch's per-name dedupe already leaves a single card per
@@ -593,7 +628,10 @@ def validate_candidates(
                 sector=sector,
                 caps=caps,
                 budgets=budgets,
+                leverage=lev,
             )
+            if is_csp:
+                env_check.accept(cand)
             if sizing is not None and is_csp:
                 index = governing_index(sizing, cand.underlying)
                 accepted_csp[cand.underlying] = index
@@ -637,6 +675,79 @@ def validate_candidates(
         )
         for cand in candidates
     ]
+
+
+class _EnvelopeCheck:
+    """The risk envelope inside one ``validate_candidates`` batch (risk-envelope Tasks 18-19).
+
+    Holds the room and the book, applies ``enforce`` (``on`` refuses, ``record`` writes the
+    would-block reasons to ``sizing_actions`` kind ``envelope_record`` and admits, ``off`` does
+    nothing) and adds each accepted lot to the book. With no envelope the ``envelope_enforce``
+    switch is read once, and only when an opening CSP reaches the shared budgets: ``on`` refuses
+    every such CSP ``envelope_unmeasured`` (fail closed); ``record`` and ``off`` have nothing to
+    record or test.
+    """
+
+    def __init__(
+        self,
+        envelope: tuple[EnvelopeRoom, ShockInputs] | None,
+        candidates: list[TradeCandidate],
+        representative_ids: set[str],
+    ) -> None:
+        self.room: EnvelopeRoom | None = None
+        self.inputs: ShockInputs | None = None
+        self.mode = "off"
+        self._found: dict[str, list[str]] = {}
+        has_csp = any(
+            c.strategy == Strategy.CASH_SECURED_PUT and c.candidate_id in representative_ids
+            for c in candidates
+        )
+        if envelope is not None:
+            self.room, self.inputs = envelope
+            self.mode = self.room.enforce
+        elif has_csp:
+            from src.storage.envelope_switches import get_switch
+
+            self.mode = get_switch("envelope_enforce")
+
+    def reasons(self, cand: TradeCandidate, *, other: list[str]) -> list[str]:
+        """The envelope reasons to append for *cand* (``on`` only); *other* is what else refused
+        it so far, for the record."""
+        from src.engine.envelope import UNMEASURED, admits, candidate_line
+
+        if self.mode == "off":
+            return []
+        if self.room is None or self.inputs is None:
+            return [UNMEASURED] if self.mode == "on" else []
+        found = admits(self.room, self.inputs, [candidate_line(cand)])
+        self._found[cand.candidate_id] = found
+        if self.mode == "on":
+            return found
+        if found:
+            from src.regime.actions import record_action
+
+            also = f"; also refused: {', '.join(other)}" if other else ""
+            record_action(
+                cand=cand,
+                kind="envelope_record",
+                deterministic=cand.contracts,
+                sent=cand.contracts,
+                reason=(
+                    f"would refuse ({', '.join(found)}): S10 {self.room.s10_gross:.1f}% vs "
+                    f"L(t) {self.room.s10_limit:.1f}%, U_ew {self.room.uew:.2f} vs "
+                    f"{self.room.uew_limit:.2f}{also}"
+                ),
+            )
+        return []
+
+    def accept(self, cand: TradeCandidate) -> None:
+        """An accepted lot joins the book for the rest of the batch. In ``record`` a lot the
+        envelope would have refused is left out, so the record shows what ``on`` would do."""
+        from src.engine.envelope import candidate_line, with_added
+
+        if self.room is None or self.inputs is None or self._found.get(cand.candidate_id):
+            return
+        self.room, self.inputs = with_added(self.room, self.inputs, [candidate_line(cand)])
 
 
 def validate_live_quote(

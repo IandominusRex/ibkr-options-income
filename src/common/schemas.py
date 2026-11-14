@@ -779,6 +779,13 @@ class TradeCandidate(BaseModel):
     quote_ask: float | None = None
     open_interest: int | None = None
     option_volume: int | None = None
+    # The risk envelope's admission test (risk-envelope Tasks 18-19): the option's own implied
+    # volatility as a decimal (0.30 = 30%) from the quote it was priced on (IBKR's model or
+    # per-contract IV; distinct from ``current_iv``, the underlying's stored IV in percent), and
+    # the underlying's price then. None leaves the candidate's line unmeasured, which the gate
+    # refuses with ``envelope_unmeasured`` (never valued at zero).
+    quote_iv: float | None = None
+    underlying_price: float | None = None
     # ROLL only (2026-10-11): the short this roll closes and its chain position. None on
     # CC/CSP candidates and on roll snapshots frozen before the redesign.
     roll_from: RollOrigin | None = None

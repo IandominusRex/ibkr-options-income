@@ -55,7 +55,12 @@ def test_with_the_book_off_the_wheel_is_unchanged(value_book_db) -> None:
     assert "gross_notional_cap" not in before and "combined_name_cap" not in before
 
 
-def test_the_gross_cap_counts_both_books_and_approved_buys(value_book_db, book_on) -> None:
+def test_the_wheel_gate_no_longer_applies_the_nominal_gross_cap(value_book_db, book_on) -> None:
+    """Risk-envelope Task 18 (ruling Q3): U_ew replaced the wheel's nominal gross cap. The book
+    that used to refuse a $16,000 put (40,000 wheel stock + 15,000 value + 30,000 earmarked +
+    16,000 > 100,000) no longer meets ``gross_notional_cap`` at the wheel's gate; both books'
+    stock is counted by U_ew instead (``gross_budget``, ``tests/test_regime_sizing_integration``),
+    and the value book's own gate still reads the nominal cap (``test_value_risk``)."""
     order("GOOGL", shares=100, filled=100, avg=150.0)  # $15,000 of value stock at cost
     proposal("META", status="funding", cost=30_000.0)  # approved, not yet bought: earmarked
     stock = PositionSnapshot(
@@ -66,11 +71,8 @@ def test_the_gross_cap_counts_both_books_and_approved_buys(value_book_db, book_o
         market_value=40_000.0,
         underlying="MSFT",
     )
-    # 40,000 wheel stock + 15,000 value + 30,000 earmarked + 16,000 put = 101,000 > 100,000
     out = validate_candidates([_candidate(collateral=16_000.0)], _acct(), [stock])[0].reasons
-    assert "gross_notional_cap" in out
-    ok = validate_candidates([_candidate(collateral=14_000.0)], _acct(), [stock])[0].reasons
-    assert "gross_notional_cap" not in ok
+    assert "gross_notional_cap" not in out
 
 
 def test_the_combined_name_cap_and_the_freeze(value_book_db, book_on) -> None:

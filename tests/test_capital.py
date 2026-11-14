@@ -387,3 +387,65 @@ def test_max_contracts_returns_zero_when_nothing_fits():
     )
     assert n == 0
     assert binding == "cash"
+
+
+# --- risk-envelope Task 18: leveraged collateral counts at leverage (spec §3.5) ---------------
+
+
+def test_leveraged_collateral_counts_at_leverage_in_ticker_and_csp_budgets():
+    """A 3x ETF's exposure counts three times in the per-ticker collateral tally and the CSP
+    budget (seeded, sized and charged alike); the cash it ties up and its risk units do not."""
+    held = _short_put("SOXL", strike=20.0, contracts=5)  # $10k of collateral, $30k at 3x
+    held_stock = PositionSnapshot(
+        symbol="SOXL", sec_type="STK", position=100.0, avg_cost=20.0, market_value=2_000.0
+    )
+    book = [held, held_stock]
+    budgets = seed_budgets(book, lambda s: "tech", lambda s: 50.0, leverage_of=lambda s: 3)
+    assert budgets.ticker_collateral["SOXL"] == pytest.approx(30_000.0 + 6_000.0)
+    assert budgets.csp_collateral == pytest.approx(30_000.0)
+    plain = seed_budgets(book, lambda s: "tech", lambda s: 50.0)
+    assert budgets.ticker_risk["SOXL"] == pytest.approx(plain.ticker_risk["SOXL"])  # unscaled
+
+    # Sizing: net liq 300k -> ticker cap 30k, large ceiling 75k (one free slot). A $2,000 lot at
+    # 3x is $6,000 of exposure: 36k + 6k x n <= 75k -> n <= 6 (cash alone would allow 40).
+    caps = resolve_caps(_account(), RISK)
+    n, binding = max_contracts(
+        unit_collateral=2_000.0,
+        current_iv=50.0,
+        dte=10,
+        symbol="SOXL",
+        sector="tech",
+        caps=caps,
+        budgets=seed_budgets(book, lambda s: "tech", leverage_of=lambda s: 3),
+        hard_max=40,
+        leverage=3,
+    )
+    assert (n, binding) == (6, "large_ceiling")
+    n1, _ = max_contracts(
+        unit_collateral=2_000.0,
+        current_iv=50.0,
+        dte=10,
+        symbol="SOXL",
+        sector="tech",
+        caps=caps,
+        budgets=seed_budgets(book, lambda s: "tech"),
+        hard_max=40,
+    )
+    assert n1 > n  # the same lot at 1x fits more
+
+    # Charge: the CSP budget and the ticker tally move at 3x; the cash used at face.
+    fresh = seed_budgets([], lambda s: "tech")
+    charge(
+        contracts=2,
+        unit_collateral=2_000.0,
+        current_iv=None,
+        dte=10,
+        symbol="SOXL",
+        sector="tech",
+        caps=caps,
+        budgets=fresh,
+        leverage=3,
+    )
+    assert fresh.cash_used == pytest.approx(4_000.0)
+    assert fresh.csp_collateral == pytest.approx(12_000.0)
+    assert fresh.ticker_collateral["SOXL"] == pytest.approx(12_000.0)

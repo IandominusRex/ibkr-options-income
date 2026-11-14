@@ -34,6 +34,7 @@ from src.engine.regime_limits import (
     bottoming_guard,
     bottoming_tag,
     floor_left,
+    leverage_factor,
     loss_exit_reason,
     multipliers,
     per_trade_cap,
@@ -148,12 +149,23 @@ def screen_csp_candidates(
     vx = value_exposure()
     caps = resolve_caps(account, risk, value_claim=vx.claim)
     sector_of = cfg.universe.get("sectors", {}).get
+
     # Budgets are seeded with the UNSCALED caps (so the large-position slots never move with the
     # regime); the scaled caps below are used only for the size checks.
+    # A leveraged ETF's exposure counts at its leverage in the per-ticker and CSP budgets
+    # (risk-envelope §3.5, Task 18), exactly as the gate counts it.
+    def leverage_of(name: str) -> int:
+        return leverage_factor(sizing, name) or 1
+
     budgets: Budgets = seed_budgets(
-        positions or [], sector_of, caps=caps, extra_exposure=vx.by_name
+        positions or [],
+        sector_of,
+        caps=caps,
+        extra_exposure=vx.by_name,
+        leverage_of=leverage_of,
     )
     sector = sector_of(symbol)
+    leverage = leverage_of(symbol)
     regime_on = active(sizing)
     scaled_caps = caps
     if regime_on:
@@ -208,6 +220,7 @@ def screen_csp_candidates(
             caps=caps,
             budgets=budgets,
             hard_max=hard_max,
+            leverage=leverage,
         )
         contracts, binding = unscaled, unscaled_binding
         if regime_on:
@@ -220,6 +233,7 @@ def screen_csp_candidates(
                 caps=scaled_caps,
                 budgets=budgets,
                 hard_max=hard_max,
+                leverage=leverage,
             )
         floor_lot = False
         if contracts < 1:
@@ -348,6 +362,8 @@ def screen_csp_candidates(
             greeks_source=quote.greeks_source,
             quote_bid=quote.bid,
             quote_ask=quote.ask,
+            quote_iv=quote.iv if quote.iv is not None and quote.iv > 0 else None,
+            underlying_price=(tech_stats.price or None) or quote.underlying_price,
             open_interest=quote.open_interest,
             option_volume=quote.volume,
             rationale_tags=["iv_rank_unavailable"] if iv_stats.iv_rank is None else [],

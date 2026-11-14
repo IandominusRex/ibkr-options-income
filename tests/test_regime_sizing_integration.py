@@ -7,12 +7,15 @@ pure functions, so they must agree; these tests drive both with a `SizingContext
 from __future__ import annotations
 
 import ast
+from dataclasses import replace
 from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
 
+from src.analytics.shock import measure
 from src.common.config import get_config
+from src.common.envelope_types import BookLine, EnvelopeRoom, ShockInputs
 from src.common.schemas import (
     AccountSnapshot,
     FundamentalStats,
@@ -41,6 +44,10 @@ X = MarketRegime.CRISIS
 TECH = ["QQQ", "TQQQ", "SOXL", "TSLL", "NVDA", "AMD", "AAPL"]
 LEVERAGE = {"TQQQ": 3, "SOXL": 3, "TSLL": 2}
 _EXPIRY = date.today() + timedelta(days=21)
+# A TQQQ put whose ten lots fit every capital cap at 3x leverage (risk-envelope §3.5, Task 18:
+# 10 x $4,000 x 3 = $120k under the 25% large ceiling of $125k), so these tests still see only
+# the leveraged ceiling, not the leverage-weighted collateral.
+TQQQ_STRIKE = 40.0
 
 
 def ctx(
@@ -178,7 +185,7 @@ def test_generator_trims_to_the_per_trade_cap_and_records_the_note():
 
 def test_generator_trims_a_leveraged_etf_in_a_normal_regime(monkeypatch):
     set_risk(monkeypatch, leveraged_sizing={"csp_mode": "normal"})  # decision 32 (Task 8)
-    screen = _screen("TQQQ", sizing=ctx(N, N))
+    screen = _screen("TQQQ", sizing=ctx(N, N), strike=TQQQ_STRIKE)
     c = screen.passed[0]
     assert c.contracts == 6  # calm 3x: floor(10 x 0.6)
     assert c.sizing is not None
@@ -189,7 +196,9 @@ def test_generator_trims_a_leveraged_etf_in_a_normal_regime(monkeypatch):
 
 def test_a_stressed_leveraged_etf_is_trimmed_harder(monkeypatch):
     set_risk(monkeypatch, leveraged_sizing={"csp_mode": "normal"})  # decision 32 (Task 8)
-    screen = _screen("TQQQ", sizing=ctx(N, N, triggers={"TQQQ": ["recent_loss_exit"]}))
+    screen = _screen(
+        "TQQQ", sizing=ctx(N, N, triggers={"TQQQ": ["recent_loss_exit"]}), strike=TQQQ_STRIKE
+    )
     c = screen.passed[0]
     assert c.contracts == 3 and c.sizing is not None and c.sizing.leverage_tier == "stressed"
 
@@ -233,7 +242,10 @@ def test_suspended_context_applies_no_regime_limit_but_keeps_the_leveraged_ceili
 ):
     set_risk(monkeypatch, leveraged_sizing={"csp_mode": "normal"})  # decision 32 (Task 8)
     assert _screen("NVDA", sizing=ctx(S, S, suspended=True)).passed[0].contracts == 10
-    assert _screen("TQQQ", sizing=ctx(S, S, suspended=True)).passed[0].contracts == 6
+    assert (
+        _screen("TQQQ", sizing=ctx(S, S, suspended=True), strike=TQQQ_STRIKE).passed[0].contracts
+        == 6
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -491,11 +503,11 @@ def _card_text(cand: TradeCandidate) -> str:
 
 def test_the_card_says_why_the_size_was_cut(monkeypatch):
     set_risk(monkeypatch, leveraged_sizing={"csp_mode": "normal"})  # decision 32 (Task 8)
-    leveraged = _screen("TQQQ", sizing=ctx(N, N)).passed[0]
+    leveraged = _screen("TQQQ", sizing=ctx(N, N), strike=TQQQ_STRIKE).passed[0]
     assert "Size 6 of 10 (leveraged ETF, 3×, calm)" in _card_text(leveraged)
 
     stressed_lev = _screen(
-        "TQQQ", sizing=ctx(N, N, triggers={"TQQQ": ["recent_loss_exit"]})
+        "TQQQ", sizing=ctx(N, N, triggers={"TQQQ": ["recent_loss_exit"]}), strike=TQQQ_STRIKE
     ).passed[0]
     assert "Size 3 of 10 (leveraged ETF, 3×, stressed" in _card_text(stressed_lev)
 
@@ -509,3 +521,234 @@ def test_the_card_says_why_the_size_was_cut(monkeypatch):
     assert "Size " not in _card_text(untouched)
     plain = _screen("NVDA").passed[0]
     assert "Size " not in _card_text(plain)
+
+
+# --------------------------------------------------------------------------- #
+# risk-envelope Task 18: no reason erased (P4); U_ew replaces the nominal gross check
+# --------------------------------------------------------------------------- #
+
+ENV_NAMES = ("BAC", "WFC", "NVDA", "AMD", "AAPL", "TQQQ", "QQQ", "HOOD", "BOOK")
+
+
+def _env_inputs(*lines: BookLine, nlv: float = 500_000.0) -> ShockInputs:
+    names = set(ENV_NAMES) | {ln.symbol for ln in lines}
+    return ShockInputs(
+        lines=tuple(lines),
+        betas={s: 1.0 for s in names},
+        betas_smh={s: 1.0 for s in names},
+        leverage={"TQQQ": 3},
+        governing={"TQQQ": "QQQ"},
+        tech_linked=frozenset(),
+        semis=frozenset(),
+        nlv=nlv,
+    )
+
+
+def _stock(symbol: str, value: float) -> BookLine:
+    return BookLine(symbol=symbol, kind="stock", qty=value / 100.0, spot=100.0)
+
+
+def _room(
+    inputs: ShockInputs,
+    *,
+    s10_limit: float = 99.0,
+    uew_limit: float = 9.0,
+    enforce: str = "on",
+) -> EnvelopeRoom:
+    res = measure(inputs)
+    return EnvelopeRoom(
+        s10_gross=res.s10,
+        s10_limit=s10_limit,
+        uew=res.uew,
+        uew_limit=uew_limit,
+        t20_gross=res.t20,
+        t20_limit=None,
+        enforce=enforce,
+        measured=res.measured,
+    )
+
+
+def _env_csp(cid: str, underlying: str, **kw) -> TradeCandidate:
+    """A one-lot CSP (strike 150: $15k of U_ew) carrying the IV and spot the envelope reads."""
+    return _csp(cid, underlying, **kw).model_copy(
+        update={"quote_iv": 0.30, "underlying_price": 160.0}
+    )
+
+
+def _over_uew(**room_kw) -> tuple[EnvelopeRoom, ShockInputs]:
+    """A book at U_ew 1.40 (the HOOD day) against a 1.36 limit: any new put breaches it."""
+    inputs = _env_inputs(_stock("HOOD", 700_000.0))
+    return _room(inputs, uew_limit=1.36, **room_kw), inputs
+
+
+def test_a_floor_lot_cannot_clear_the_gross_budget():
+    """C1, the HOOD case: the regime is stressed, the unscaled caps pass, U_ew is over its limit.
+    The guaranteed floor used to clear the reasons; now gross_budget stays beside it."""
+    used = _gate(
+        [_env_csp("a", "BAC")],
+        sizing=ctx(S, S, floors={"SPY": 1}),
+        positions=_book(310_000),
+        envelope=_over_uew(),
+    )
+    assert used["a"].verdict == Verdict.REJECT
+    assert used["a"].reasons == ["regime_budget", "gross_budget"]
+
+    cand = _env_csp("b", "BAC")
+    open_floor = _gate([cand], sizing=ctx(S, S), positions=_book(310_000), envelope=_over_uew())
+    assert open_floor["b"].verdict == Verdict.REJECT
+    assert open_floor["b"].reasons == ["gross_budget"]  # the floor cleared regime_budget only
+    assert cand.sizing is None or cand.sizing.floor_lot is False  # no floor lot was taken
+
+
+def test_combined_name_cap_survives_the_regime_rewrite(monkeypatch):
+    """C1: combined_name_cap was replaced by regime_budget and then cleared by a floor lot."""
+    import src.engine.risk_engine as risk_engine
+    from src.common.books import ValueExposure
+
+    monkeypatch.setattr(
+        risk_engine,
+        "value_exposure",
+        lambda: ValueExposure(active=True, readable=True, by_name={"BAC": 80_000.0}),
+    )
+    # With an IV the unscaled caps pass (risk units, not the raw-collateral fallback), so the
+    # regime rewrites the scaled-budget refusal to regime_budget and the open floor clears it.
+    cand = _csp("a", "BAC", current_iv=30.0)
+    out = _gate([cand], sizing=ctx(S, S), positions=_book(310_000))
+    assert out["a"].verdict == Verdict.REJECT
+    assert out["a"].reasons == ["combined_name_cap"]
+
+
+def test_gross_budget_runs_without_the_value_book(monkeypatch):
+    import src.engine.risk_engine as risk_engine
+    from src.common.books import ValueExposure
+
+    monkeypatch.setattr(
+        risk_engine, "value_exposure", lambda: ValueExposure(active=False, readable=True)
+    )
+    out = _gate([_env_csp("a", "BAC")], sizing=ctx(N, N), envelope=_over_uew())
+    assert out["a"].reasons == ["gross_budget"]
+    # the same put on a book under its U_ew limit passes
+    calm = _env_inputs(_stock("HOOD", 100_000.0))
+    ok = _gate([_env_csp("b", "BAC")], sizing=ctx(N, N), envelope=(_room(calm), calm))
+    assert ok["b"].verdict == Verdict.PASS
+
+
+def test_gross_budget_counts_leveraged_at_leverage():
+    """A 3x ETF's put counts at three times its strike in U_ew: a lot that would fit at 1x is
+    refused. (No sizing context: the leveraged-sleeve ceiling is not what is under test.)"""
+    inputs = _env_inputs(_stock("BOOK", 500_000.0))  # U_ew 1.00
+    room = _room(inputs, uew_limit=1.05)  # room for $25k: 1x $15k fits, 3x $45k does not
+    one_x = _gate([_env_csp("n", "NVDA")], sizing=None, envelope=(room, inputs))
+    three_x = _gate([_env_csp("t", "TQQQ")], sizing=None, envelope=(room, inputs))
+    assert one_x["n"].verdict == Verdict.PASS
+    assert three_x["t"].reasons == ["gross_budget"]
+
+
+def test_an_accepted_lot_joins_the_book_for_the_next_candidate():
+    inputs = _env_inputs(_stock("BOOK", 500_000.0))
+    room = _room(inputs, uew_limit=1.05)  # room for one $15k lot, not two
+    out = _gate(
+        [_env_csp("a", "BAC"), _env_csp("b", "WFC")], sizing=ctx(N, N), envelope=(room, inputs)
+    )
+    assert out["a"].verdict == Verdict.PASS
+    assert out["b"].reasons == ["gross_budget"]
+
+
+def test_no_envelope_while_enforce_is_on_fails_closed(monkeypatch):
+    import src.storage.envelope_switches as switches
+
+    monkeypatch.setattr(switches, "get_switch", lambda name: "on")
+    out = _gate([_env_csp("a", "BAC")], sizing=ctx(N, N))
+    assert out["a"].reasons == ["envelope_unmeasured"]
+    monkeypatch.setattr(switches, "get_switch", lambda name: "record")
+    assert _gate([_env_csp("b", "BAC")], sizing=ctx(N, N))["b"].verdict == Verdict.PASS
+
+
+def test_an_unmeasured_candidate_line_is_refused():
+    inputs = _env_inputs(_stock("BOOK", 100_000.0))
+    no_iv = _csp("a", "BAC").model_copy(update={"underlying_price": 160.0})  # no quote_iv
+    out = _gate([no_iv], sizing=ctx(N, N), envelope=(_room(inputs), inputs))
+    assert out["a"].reasons == ["envelope_unmeasured"]
+
+
+def test_the_wheel_no_longer_reads_max_gross_notional_pct(monkeypatch):
+    import src.engine.risk_engine as risk_engine
+    from src.common.books import ValueExposure
+
+    set_portfolio(monkeypatch, max_gross_notional_pct=1.0)  # would refuse anything
+    monkeypatch.setattr(
+        risk_engine,
+        "value_exposure",
+        lambda: ValueExposure(active=True, readable=True, by_name={"XYZ": 400_000.0}),
+    )
+    out = _gate([_csp("a", "BAC")], sizing=ctx(N, N))
+    assert out["a"].verdict == Verdict.PASS
+    root = Path(__file__).resolve().parents[1] / "src"
+    for rel in ("engine/risk_engine.py", "strategies/cash_secured_put.py", "engine/capital.py"):
+        assert "max_gross_notional_pct" not in (root / rel).read_text(encoding="utf-8"), rel
+        assert "gross_notional_cap" not in (root / rel).read_text(encoding="utf-8"), rel
+
+
+def test_the_value_book_still_reads_it():
+    """Ruling Q3 / C2: max_gross_notional_pct stays the value book's fundable gate."""
+    from src.value.risk import FUNDABLE, BuyContext, validate
+
+    cfg = get_config()
+    ctx_ = BuyContext(
+        symbol="KO",
+        list_name="core",
+        shares=100,
+        price=60.0,
+        verdict="READY",
+        mos=0.4,
+        required_mos_pct=20.0,
+        mos_review=False,
+        health="pass",
+        data_quality="pass",
+        timing="pass",
+        earnings_in_window=False,
+        net_liq=100_000.0,
+        ceiling=50_000.0,
+        book_cost=0.0,
+        list_cost=0.0,
+        name_cost=0.0,
+        holds_name=False,
+        positions_open=0,
+        wheel_name_exposure=0.0,
+        gross_used=99_000.0,
+        adv_dollar_20=10_000_000.0,
+    )
+    reasons = validate(
+        ctx_, cfg.value.book, max_gross_notional_pct=100.0, max_combined_name_pct=15.0
+    )
+    assert "gross_notional_cap" in reasons
+    roomy = validate(
+        replace(ctx_, gross_used=0.0),
+        cfg.value.book,
+        max_gross_notional_pct=100.0,
+        max_combined_name_pct=15.0,
+    )
+    assert "gross_notional_cap" not in roomy
+    assert FUNDABLE == frozenset({"gross_notional_cap"})
+    root = Path(__file__).resolve().parents[1]
+    assert "max_gross_notional_pct" in (root / "src/value/live.py").read_text(encoding="utf-8")
+    assert "max_gross_notional_pct" in (root / "config/examples/risk_limits.yaml").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_record_mode_records_and_admits(db):
+    from src.storage.db import session_scope
+    from src.storage.models import SizingActionRow
+
+    room, inputs = _over_uew(enforce="record")
+    out = _gate([_env_csp("a", "BAC")], sizing=ctx(N, N), envelope=(room, inputs))
+    assert out["a"].verdict == Verdict.PASS
+    with session_scope() as s:
+        rows = s.query(SizingActionRow).filter_by(kind="envelope_record").all()
+        assert [(r.candidate_id, r.sent_contracts) for r in rows] == [("a", 1)]
+        assert "gross_budget" in rows[0].reason
+    off = _gate([_env_csp("b", "BAC")], sizing=ctx(N, N), envelope=_over_uew(enforce="off"))
+    assert off["b"].verdict == Verdict.PASS
+    with session_scope() as s:
+        assert s.query(SizingActionRow).filter_by(kind="envelope_record").count() == 1

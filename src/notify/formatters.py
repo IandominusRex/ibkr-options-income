@@ -746,6 +746,12 @@ _REJECT_REASON_LABELS: dict[str, str] = {
     "value_book_unreadable": "the value book could not be read, so new puts wait",
     "gross_notional_cap": "would pass the account's gross exposure cap (both books)",
     "combined_name_cap": "this name across the wheel and the value book would pass its cap",
+    # Risk envelope codes (risk-envelope Tasks 18-19): the shock budget S10 and U_ew, gross of
+    # every long option, tested on every opening put at decision and send time.
+    "shock_budget": "would push the loss at SPY -10% (S10) over today's envelope limit",
+    "gross_budget": "would push exposure-weighted gross (U_ew) over today's envelope limit",
+    "t20_budget": "would push the loss in a 20% tech drop (T20) over today's envelope limit",
+    "envelope_unmeasured": "the risk envelope could not be measured (no live IV), so new puts wait",
     "above_value_ceiling": "strike above the value book's price worth paying",
     "release_not_paper": "closing a put to fund a value buy is paper only",
     "release_not_csp": "only a cash-secured put can be closed to free cash",

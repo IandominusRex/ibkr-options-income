@@ -137,12 +137,18 @@ def seed_budgets(
     *,
     caps: Caps | None = None,
     extra_exposure: dict[str, float] | None = None,
+    leverage_of: Callable[[str], int] | None = None,
 ) -> Budgets:
     """Seed running tallies from current positions.
 
     *extra_exposure* (value book spec §9.2, Part 5: ``books.value_exposure().by_name``) adds the
     value book's stock in a name to that name's collateral tally, so exposure is counted once
     across both books though the wheel's positions hold only its own shares.
+
+    *leverage_of* (risk-envelope spec §3.5, Task 18) returns a name's daily leverage (1 for an
+    ordinary name): a leveraged ETF's exposure is counted at leverage in ``ticker_collateral`` and
+    ``csp_collateral``. Its risk units stay unscaled (they already scale through IV) and so does
+    the cash it ties up. ``None`` counts every name at 1x.
 
     A short put contributes its assignment liability (strike x 100 x |contracts|), not the
     option's tiny market value — matching exactly how a *new* CSP candidate is charged, so
@@ -173,6 +179,10 @@ def seed_budgets(
     don't care about slot seeding are unaffected.
     """
     budgets = Budgets()
+
+    def lev(key: str) -> int:
+        return max(1, int(leverage_of(key) or 1)) if leverage_of is not None else 1
+
     for p in positions:
         key = p.underlying or p.symbol
         is_short_put = (
@@ -180,10 +190,12 @@ def seed_budgets(
         )
         if is_short_put:
             exposure = (p.strike or 0.0) * 100.0 * abs(p.position)
-            budgets.csp_collateral += exposure
+            budgets.csp_collateral += exposure * lev(key)
         else:
             exposure = abs(p.market_value or 0.0)
-        budgets.ticker_collateral[key] = budgets.ticker_collateral.get(key, 0.0) + exposure
+        budgets.ticker_collateral[key] = budgets.ticker_collateral.get(key, 0.0) + exposure * lev(
+            key
+        )
 
         if iv_of is None or p.sec_type != "OPT" or p.expiry is None:
             continue
@@ -199,7 +211,9 @@ def seed_budgets(
             budgets.sector_risk[sector] = budgets.sector_risk.get(sector, 0.0) + units
 
     for key, exposure in (extra_exposure or {}).items():
-        budgets.ticker_collateral[key] = budgets.ticker_collateral.get(key, 0.0) + exposure
+        budgets.ticker_collateral[key] = budgets.ticker_collateral.get(key, 0.0) + exposure * lev(
+            key
+        )
     if caps is not None:
         for key, collateral in budgets.ticker_collateral.items():
             if collateral > caps.max_ticker_collateral:
@@ -216,17 +230,22 @@ def _fits(
     sector: str | None,
     caps: Caps,
     budgets: Budgets,
+    leverage: int = 1,
 ) -> str:
-    """Return the name of the first constraint ``n`` contracts would breach, or ""."""
+    """Return the name of the first constraint ``n`` contracts would breach, or "".
+
+    *leverage* (risk-envelope §3.5) weights the lot's exposure in the CSP budget and the
+    per-ticker collateral tally; the cash it ties up and its risk units are not scaled."""
     collateral = unit_collateral * n
+    weighted = collateral * max(1, leverage)
     # Per-ticker collateral is CUMULATIVE: this lot on top of whatever the account already
     # holds in the same name. Comparing the marginal lot alone made both ticker-level brakes
     # blind to the book — a name already at the ceiling looked empty to every new candidate.
-    cum_collateral = budgets.ticker_collateral.get(symbol, 0.0) + collateral
+    cum_collateral = budgets.ticker_collateral.get(symbol, 0.0) + weighted
 
     if budgets.cash_used + collateral > caps.deployable_cash:
         return "cash"
-    if budgets.csp_collateral + collateral > caps.max_csp_collateral:
+    if budgets.csp_collateral + weighted > caps.max_csp_collateral:
         return "csp_budget"
 
     units = risk_units(collateral, current_iv, dte)
@@ -270,6 +289,7 @@ def max_contracts(
     caps: Caps,
     budgets: Budgets,
     hard_max: int,
+    leverage: int = 1,
 ) -> tuple[int, str]:
     """Largest contract count that fits every constraint, and what bound it.
 
@@ -287,7 +307,7 @@ def max_contracts(
     best = 0
     binding = ""
     for n in range(1, hard_max + 1):
-        breach = _fits(n, unit_collateral, current_iv, dte, symbol, sector, caps, budgets)
+        breach = _fits(n, unit_collateral, current_iv, dte, symbol, sector, caps, budgets, leverage)
         if breach:
             binding = breach
             break
@@ -307,6 +327,7 @@ def charge(
     sector: str | None,
     caps: Caps,
     budgets: Budgets,
+    leverage: int = 1,
 ) -> None:
     """Consume budget for an accepted candidate so later ones see reduced headroom.
 
@@ -324,15 +345,16 @@ def charge(
     """
     cum_before = budgets.ticker_collateral.get(symbol, 0.0)
     collateral = unit_collateral * contracts
+    weighted = collateral * max(1, leverage)  # §3.5: exposure at leverage, cash at face
     budgets.cash_used += collateral
-    budgets.csp_collateral += collateral
-    budgets.ticker_collateral[symbol] = cum_before + collateral
+    budgets.csp_collateral += weighted
+    budgets.ticker_collateral[symbol] = cum_before + weighted
     units = risk_units(collateral, current_iv, dte)
     if units is not None:
         budgets.ticker_risk[symbol] = budgets.ticker_risk.get(symbol, 0.0) + units
         if sector:
             budgets.sector_risk[sector] = budgets.sector_risk.get(sector, 0.0) + units
-    if cum_before + collateral > caps.max_ticker_collateral:
+    if cum_before + weighted > caps.max_ticker_collateral:
         budgets.large_tickers.add(symbol)
 
 

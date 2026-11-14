@@ -548,7 +548,13 @@ def scaled_budget_fit(
         else scale_caps(caps, ticker=ticker, book=book)
     )
     sector_of = (cfg.universe.get("sectors") or {}).get
-    budgets = seed_budgets(positions, sector_of, caps=caps, extra_exposure=vx.by_name)
+
+    def leverage_of(name: str) -> int:
+        return leverage_factor(ctx, name) or 1
+
+    budgets = seed_budgets(
+        positions, sector_of, caps=caps, extra_exposure=vx.by_name, leverage_of=leverage_of
+    )
     fit, _ = max_contracts(
         unit_collateral=cand.strike * 100.0,
         current_iv=cand.current_iv,
@@ -558,6 +564,7 @@ def scaled_budget_fit(
         caps=use,
         budgets=budgets,
         hard_max=cand.contracts,
+        leverage=leverage_of(cand.underlying),
     )
     return fit
 

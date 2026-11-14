@@ -204,8 +204,11 @@ portfolio:
 
   # 4. Both books (value book spec §9.2-§9.3, revision 4). Stock (wheel and value) + CSP collateral
   #    + cash earmarked for an approved value buy may not exceed this share of net liq: the value
-  #    book's cash-only rule and the wheel's CSPs meet here. And one name's exposure across both
+  #    book's cash-only rule and its funding requests read it. And one name's exposure across both
   #    books (CSP collateral + stock of both) may not exceed max_combined_name_pct of net liq.
+  #    Since the risk envelope (2026-11-15, Task 18) the WHEEL no longer reads
+  #    max_gross_notional_pct: its new CSPs are held to U_ew (envelope.uew_target, gross_budget)
+  #    instead. Only the value book's gate (src/value/risk.py) and its funding arithmetic read it.
   max_gross_notional_pct: 100.0
   max_combined_name_pct: 15.0
   # The maintenance rate m of value stock: the wheel's excess liquidity is reduced by the value

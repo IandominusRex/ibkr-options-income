@@ -46,8 +46,11 @@ def test_every_release_and_value_code_has_words_in_both_maps() -> None:
     literals = _engine_literals()
     codes = _codes()
     assert {"release_not_paper", "release_at_loss", "release_daily_cap"} <= codes
-    # the engine still raises each value code it is supposed to (a rename must not hide here)
-    assert (VALUE_CODES - {"above_value_ceiling"}) <= literals
+    # the engine still raises each value code it is supposed to (a rename must not hide here).
+    # gross_notional_cap left the wheel's gate in risk-envelope Task 18 (U_ew's gross_budget
+    # replaced it); the value book's own gate still raises it, and its words stay in both maps.
+    assert (VALUE_CODES - {"above_value_ceiling", "gross_notional_cap"}) <= literals
+    assert "gross_notional_cap" not in literals
     missing_telegram = sorted(c for c in codes if c not in _REJECT_REASON_LABELS)
     missing_web = sorted(c for c in codes if c not in _REASON_LABELS)
     assert missing_telegram == [] and missing_web == []

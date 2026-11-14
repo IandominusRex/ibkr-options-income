@@ -368,12 +368,15 @@ async def test_leveraged_tier_never_loosens_at_send_time(monkeypatch):
     # no bars to recompute the trigger, so the snapshot's tier holds: a 5-lot that cannot be a
     # calm-tier size in the first place is cut to the stressed ceiling (3), never left at 5.
     seed_regime(N, N)
+    # A $2M account (risk-envelope Task 18): a $185 lot of a 3x ETF counts at leverage in the
+    # per-ticker collateral, so five of them need room the $500k default account lacks.
+    big = account(excess=900_000.0, net_liq=2_000_000.0)
     _, order_id = queue("c-1", "TQQQ", 5, sizing=note(pre=10, leverage=3, tier="stressed"))
-    executed, _ = await run_poll(monkeypatch)
+    executed, _ = await run_poll(monkeypatch, acct=big)
     assert [(oid, c.contracts) for oid, c in executed] == [(order_id, 3)]  # type: ignore[attr-defined]
     # control: the same 5-lot on a calm-tier snapshot is within the calm ceiling (6) and stays
     _, order2 = queue("c-2", "UPRO", 5, sizing=note(pre=10, leverage=3, tier="calm"))
-    executed2, _ = await run_poll(monkeypatch)
+    executed2, _ = await run_poll(monkeypatch, acct=big)
     assert [(oid, c.contracts) for oid, c in executed2] == [(order2, 5)]  # type: ignore[attr-defined]
 
 
