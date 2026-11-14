@@ -14,9 +14,9 @@ the cumulative budgets are consumed greedily in that order.
 
 from __future__ import annotations
 
-from src.common.books import ValueExposure, is_spreads_underlying, value_exposure
+from src.common.books import Attribution, ValueExposure, is_spreads_underlying, value_exposure
 from src.common.config import RollCfg, get_config, get_envelope_cfg
-from src.common.envelope_types import EnvelopeRoom, ShockInputs
+from src.common.envelope_types import BookLine, EnvelopeRoom, ShockInputs
 from src.common.market_hours import today_et
 from src.common.schemas import (
     AccountSnapshot,
@@ -25,6 +25,7 @@ from src.common.schemas import (
     PositionSnapshot,
     RiskVerdict,
     SizingContext,
+    StockOrderIntent,
     Strategy,
     TradeCandidate,
     Verdict,
@@ -949,6 +950,95 @@ def validate_live_quote(
 
     return RiskVerdict(
         candidate_id=candidate.candidate_id,
+        verdict=Verdict.PASS if not reasons else Verdict.REJECT,
+        reasons=reasons,
+    )
+
+
+def _short_calls(positions: list[PositionSnapshot], symbol: str) -> int:
+    """The wheel's open short call contracts on *symbol* (each needs 100 shares under it)."""
+    return sum(
+        int(abs(p.position))
+        for p in positions
+        if p.sec_type == "OPT"
+        and p.right == OptionRight.CALL
+        and p.position < 0
+        and (p.underlying or p.symbol).upper() == symbol.upper()
+    )
+
+
+def validate_stock_order(
+    order: StockOrderIntent,
+    account: AccountSnapshot,
+    positions: list[PositionSnapshot],
+    *,
+    envelope: tuple[EnvelopeRoom, ShockInputs] | None,
+    mid: float | None,
+    attribution: Attribution | None,
+    les_shares: float = 0.0,
+) -> RiskVerdict:
+    """The Rules Engine's gate for a stock order (risk-envelope Tasks 31, 32a; rulings P10, L5-L7).
+
+    Deterministic, no LLM, no I/O but config. Run at decision time and again at send time on a
+    fresh quote (*mid*), by ``src/execution/stock_orders.py`` and ``src/execution/les.py``.
+
+    * ``les_paper_only``: an LES order in live, tapped or not (L7). ``stock_not_tapped``: a repair
+      order without a human tap, at any autonomy level (P10).
+    * ``no_shares``, ``reserved_for_spreads_book``, ``stock_no_quote`` (no positive *mid*).
+    * A **sell** never crosses books. *attribution* is the name's ``books.attribute`` (broker, the
+      wheel's ledger count W, the value book, the LES book): none means ``stock_book_unknown``
+      (fail closed). A repair sell may take at most the wheel's own view less 100 shares per open
+      short call (``stock_sell_not_wheel_shares`` above the view, so never a value or LES share;
+      ``stock_sell_uncovers_call`` into the shares under a call). An LES sell may take at most the
+      LES shares held (``stock_sell_not_les_shares``) and never the broker's shares that back the
+      wheel's calls once the value book's are set aside (``stock_sell_uncovers_call``). A sell
+      lowers risk, so the envelope never blocks one.
+    * A **buy** must pass the envelope after it: *envelope* (the room and the book on live IV)
+      ``admits`` the shares (``shock_budget``, ``gross_budget``, ``t20_budget``), whatever
+      ``envelope_enforce`` reads; no envelope, or an unmeasured one, is ``envelope_unmeasured``.
+
+    *account* is the account snapshot the order is gated against (a buy with no net liquidation
+    is unmeasured through the envelope). An empty reason list passes.
+    """
+    from src.engine.envelope import UNMEASURED, admits
+
+    sym = order.symbol.upper()
+    reasons: list[str] = []
+    if order.source == "les" and get_config().is_live:
+        reasons.append("les_paper_only")
+    if order.source == "repair" and not order.tapped:
+        reasons.append("stock_not_tapped")
+    if order.qty < 1:
+        reasons.append("no_shares")
+    if is_spreads_underlying(sym):
+        reasons.append("reserved_for_spreads_book")
+    if mid is None or not mid > 0:
+        reasons.append("stock_no_quote")
+    if order.side == "SELL":
+        calls = _short_calls(positions, sym)
+        if attribution is None:
+            reasons.append("stock_book_unknown")
+        elif order.source == "repair":
+            if order.qty > attribution.wheel_view + 1e-9:
+                reasons.append("stock_sell_not_wheel_shares")
+            elif order.qty > attribution.wheel_view - 100.0 * calls + 1e-9:
+                reasons.append("stock_sell_uncovers_call")
+        else:
+            if order.qty > les_shares + 1e-9:
+                reasons.append("stock_sell_not_les_shares")
+            elif order.qty > attribution.broker - attribution.value_filled - 100.0 * calls + 1e-9:
+                reasons.append("stock_sell_uncovers_call")
+    else:
+        if envelope is None or not account.net_liquidation > 0 or mid is None or not mid > 0:
+            reasons.append(UNMEASURED)
+        else:
+            room, inputs = envelope
+            line = BookLine(
+                symbol=sym, kind="stock", qty=float(order.qty), spot=mid, book=order.source
+            )
+            reasons.extend(admits(room, inputs, [line]))
+    return RiskVerdict(
+        candidate_id=f"{order.source}:{order.ref_id or sym}",
         verdict=Verdict.PASS if not reasons else Verdict.REJECT,
         reasons=reasons,
     )

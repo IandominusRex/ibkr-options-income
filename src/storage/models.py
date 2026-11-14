@@ -147,6 +147,9 @@ class OrderRow(Base):
     # A CloseReason value on buy-to-close orders (position_manager); None on entries/rolls.
     # `detail` is overwritten on cancel/error, so the reason lives in its own column.
     close_reason: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # The IBKR orderRef of a stock order (risk-envelope Task 31): "repair:<id>" or "les:<id>",
+    # written before placeOrder so the ledger can tag its fills. None on option orders.
+    order_ref: Mapped[str | None] = mapped_column(String(48), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 

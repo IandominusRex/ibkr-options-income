@@ -2406,6 +2406,7 @@ fresh quote, when it is sent.
 |---|---|
 | Covered-call overlay | Queues the call like any approved card. It is the best call the day's scans found on shares that are still uncovered, at the strike floor the `cc_basis_floor` switch allows (never above `covered_call.min_strike_vs_basis`). On TQQQ/SOXL a call below your cost basis is allowed only at delta 0.25 or less and stays tap-only until the `leveraged_cc_auto` switch is on |
 | Stop adding | Removes the name from `would_own` (no new cash-secured put on it). Shown while S10 is above L(t), for the names that carry most of it. Undo it on the web Universe page |
+| Trim | Sells the whole shares that take `envelope.trim_points` (default 1) points off S10, as a limit order at the mid of a fresh quote. Shown while S10 is above L(t). It only ever sells the wheel's own shares that are not under a covered call: never a value-book share, never an LES share. The order is refused (and the card says why) if the shares are no longer there, the quote is missing, or the account has changed |
 
 Every proposal, tapped or not, is re-valued each evening from stored closes (`repair_proposals.shadow_value`),
 so you can read later what acting on it would have earned.

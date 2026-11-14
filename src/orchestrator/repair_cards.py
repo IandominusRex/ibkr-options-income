@@ -64,6 +64,26 @@ def addable_names() -> list[str]:
     return sorted(names)
 
 
+def sellable_shares(positions: list[PositionSnapshot]) -> dict[str, float]:
+    """The wheel's own long shares per name less 100 per open short call on it (*positions* is
+    the wheel's view, ``get_positions``: no value-book or LES share is in it)."""
+    shares: dict[str, float] = {}
+    calls: dict[str, float] = {}
+    for p in positions:
+        name = (p.underlying or p.symbol).upper()
+        if p.sec_type == "STK" and p.position > 0:
+            shares[name] = shares.get(name, 0.0) + p.position
+        elif (
+            p.sec_type == "OPT" and p.right is not None and p.right.value == "C" and p.position < 0
+        ):
+            calls[name] = calls.get(name, 0.0) + abs(p.position)
+    return {
+        n: q - 100.0 * calls.get(n, 0.0)
+        for n, q in shares.items()
+        if q - 100.0 * calls.get(n, 0.0) >= 1
+    }
+
+
 def latest_close(symbol: str) -> float | None:
     from src.storage.price_history import load_bars
 
@@ -78,11 +98,18 @@ def build_and_store(
     value. Returns the proposals stored today (with ids). Never raises."""
     from src.analytics.shock_inputs import build_inputs, stored_ivs
     from src.common.books import value_exposure
+    from src.common.config import get_envelope_cfg
     from src.engine.envelope import room as envelope_room
     from src.engine.repair import build_proposals, shadow_value
     from src.storage.repair_proposals import mark_shadow_values, save_proposals
 
     saved: list[RepairProposal] = []
+    try:
+        from src.execution.stock_orders import resolve_stale_stock_orders
+
+        resolve_stale_stock_orders(today)  # a DAY stock order cannot still work from a past day
+    except Exception:
+        log.exception("repair: stale stock orders not resolved")
     try:
         exposure = value_exposure()
         value_by_name = dict(exposure.by_name) if exposure.active and exposure.readable else {}
@@ -102,6 +129,8 @@ def build_and_store(
             cc_candidates=todays_cc_candidates(today, positions),
             addable=addable_names(),
             now=datetime.now(UTC),
+            sellable=sellable_shares(positions),
+            trim_points=get_envelope_cfg().trim_points,
         )
         saved = save_proposals(proposals, today)
     except Exception:

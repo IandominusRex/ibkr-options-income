@@ -79,6 +79,13 @@ async def _req_executions_bounded(ib: IB, context: str) -> list[Any] | None:
         return None
 
 
+_STOCK_PREFIXES = ("repair:", "les:")  # = stock_orders.STOCK_REF_PREFIXES
+
+
+def _is_stock_order_id(candidate_id: str | None) -> bool:
+    return bool(candidate_id) and str(candidate_id).startswith(_STOCK_PREFIXES)
+
+
 def recover_orphan_orders() -> None:
     """Reset SUBMITTED orders with no IB order id back to QUEUED (crash before placeOrder)."""
     with session_scope() as s:
@@ -88,6 +95,13 @@ def recover_orphan_orders() -> None:
             .all()
         )
         for o in orphans:
+            if _is_stock_order_id(o.candidate_id):
+                # A stock order is never queued (the option order poll would read it as a
+                # TradeCandidate); one that died before placeOrder sent nothing.
+                o.state = OrderState.REJECTED
+                o.detail = "crashed before placeOrder; nothing was sent"
+                log.warning("Stock order id=%s never reached IBKR: marked rejected", o.id)
+                continue
             o.state = OrderState.QUEUED
             log.warning("Recovered orphan order id=%s to QUEUED", o.id)
 
@@ -170,7 +184,9 @@ async def reconcile_orphan_fills(ib: IB, bot: object, chat_id: str) -> None:
                 FillRow.order_id.in_([o.id for o in rows] or [-1])
             )
         }
-    orphans = [o for o in orphans if o[0] not in already_filled]
+    # A stock order (risk-envelope Task 31: ``repair:`` / ``les:``) records no option fill: its
+    # executions reach the books through the broker-truth ledger, never ``fills``.
+    orphans = [o for o in orphans if o[0] not in already_filled and not _is_stock_order_id(o[1])]
     if not orphans:
         return
 

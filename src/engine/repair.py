@@ -30,8 +30,10 @@ from src.analytics.black_scholes import bs_price
 from src.analytics.shock import SCENARIOS, line_pnl, measure, name_move
 from src.common.envelope_types import BookLine, EnvelopeRoom, ShockInputs, ShockResult
 from src.common.schemas import RepairProposal, TradeCandidate
+from src.engine.envelope import without_shares
 
 MAX_STOP_ADDING = 3
+MAX_TRIMS = 3
 
 
 def s10_by_name(inputs: ShockInputs) -> dict[str, float]:
@@ -179,6 +181,73 @@ def stop_adding_proposals(
     return out
 
 
+def s10_per_share(inputs: ShockInputs, symbol: str) -> float | None:
+    """One share of *symbol*'s S10 loss in dollars (its spot x the scenario's move), or None."""
+    spot = _spot(inputs, symbol)
+    if spot is None:
+        return None
+    try:
+        move = name_move(symbol, SCENARIOS["S10"]["index"], inputs, scenario="S10")
+    except KeyError:
+        return None
+    loss = -spot * move
+    return loss if loss > 0 else None
+
+
+def trim_shares(inputs: ShockInputs, symbol: str, points: float, sellable: float) -> int:
+    """Whole shares of *symbol* whose sale takes *points* off S10_gross (rounded up, so the
+    trim reaches the stated points), never above *sellable*. 0 when it cannot be sized."""
+    per = s10_per_share(inputs, symbol)
+    if per is None or not inputs.nlv > 0 or sellable < 1:
+        return 0
+    need = math.ceil(points / 100.0 * inputs.nlv / per - 1e-9)
+    return int(min(max(need, 1), math.floor(sellable + 1e-9)))
+
+
+def trim_proposals(
+    inputs: ShockInputs,
+    room: EnvelopeRoom,
+    sellable: dict[str, float],
+    *,
+    now: datetime,
+    points: float = 1.0,
+    before: ShockResult | None = None,
+    limit: int = MAX_TRIMS,
+) -> list[RepairProposal]:
+    """While S10_gross is above L(t): a trim of the names in *sellable* (the wheel's own shares
+    not under a short call, never a value or LES share, never a leveraged ETF: those get a
+    de-lever) with the largest S10 share, each sized to take *points* off S10_gross."""
+    base = before if before is not None else measure(inputs)
+    if not room.measured or not base.measured or base.s10 <= room.s10_limit + 1e-9:
+        return []
+    shares_s10 = s10_by_name(inputs)
+    ranked = sorted(
+        (
+            (v, s)
+            for s, v in shares_s10.items()
+            if v > 0 and sellable.get(s, 0.0) >= 1 and s not in inputs.leverage
+        ),
+        key=lambda t: (-t[0], t[1]),
+    )
+    out: list[RepairProposal] = []
+    for _loss, sym in ranked[: max(0, limit)]:
+        qty = trim_shares(inputs, sym, points, sellable[sym])
+        if qty < 1:
+            continue
+        after = measure(without_shares(inputs, sym, qty))
+        if not after.measured:
+            continue
+        spot = _spot(inputs, sym)
+        detail = (
+            f"Sell {qty:,} {sym} shares (about ${qty * (spot or 0.0):,.0f}): S10 -"
+            f"{base.s10 - after.s10:.1f} pts. Only the wheel's own shares not under a call."
+        )
+        out.append(
+            _proposal("trim", sym, detail, base, after, room, now, shares=float(qty), mark=spot)
+        )
+    return out
+
+
 def build_proposals(
     *,
     inputs: ShockInputs,
@@ -186,16 +255,19 @@ def build_proposals(
     cc_candidates: list[TradeCandidate],
     addable: list[str],
     now: datetime,
+    sellable: dict[str, float] | None = None,
+    trim_points: float = 1.0,
 ) -> list[RepairProposal]:
-    """Every repair proposal for today, from the book (*inputs*), today's room and the day's
-    covered-call candidates. An unmeasured book builds nothing: every card must show its
-    numbers."""
+    """Every repair proposal for today, from the book (*inputs*), today's room, the day's
+    covered-call candidates and the wheel's sellable shares (*sellable*, for trims). An
+    unmeasured book builds nothing: every card must show its numbers."""
     before = measure(inputs)
     if not before.measured:
         return []
     return [
         *cc_overlay_proposals(inputs, room, cc_candidates, now=now, before=before),
         *stop_adding_proposals(inputs, room, addable, now=now, before=before),
+        *trim_proposals(inputs, room, sellable or {}, now=now, points=trim_points, before=before),
     ]
 
 

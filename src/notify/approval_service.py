@@ -492,6 +492,33 @@ async def _handle_repair_button(query: Any, context: ContextTypes.DEFAULT_TYPE, 
     text = await asyncio.to_thread(_process_repair_button, proposal_id, parts[2])
     await query.edit_message_text(text)
     logger.info("Repair button %s for proposal %s processed", parts[2], proposal_id)
+    if parts[2] != "approve":
+        return
+    from src.storage.repair_proposals import load_proposal
+
+    loaded = await asyncio.to_thread(load_proposal, proposal_id)
+    if loaded is None or loaded[1] != "approved" or loaded[0].kind not in ("trim", "delever"):
+        return
+    ib_exec: IB | None = context.bot_data.get("ib_exec")
+    if ib_exec is None or not ib_exec.isConnected():
+        from src.storage.repair_proposals import decide
+
+        await asyncio.to_thread(
+            decide, proposal_id, "failed", by="telegram", result="broker not connected"
+        )
+        await query.edit_message_text(f"{text}\nBroker not connected: nothing was sent.")
+        return
+    from src.execution.repair_orders import execute_repair
+
+    async def _send() -> None:
+        # Its own task: a stock order waits up to the fill timeout, and the bot keeps serving.
+        done = await execute_repair(ib_exec, loaded[0])
+        try:
+            await query.edit_message_text(f"{text}\n{done}")
+        except Exception:
+            logger.warning("repair %s: card not updated", proposal_id, exc_info=True)
+
+    asyncio.create_task(_send())
 
 
 async def handle_live_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

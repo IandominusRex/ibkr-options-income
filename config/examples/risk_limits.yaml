@@ -93,6 +93,7 @@ envelope:
   stacking:
     overlap_days: 7             # halve when an open short put on the name expires within this many days of the new expiry
     same_day_fills: 2           # block when this many cash-secured puts on the name were already sent today
+  trim_points: 1.0              # Task 31: a tap-only trim proposal sells the shares that take this many points off S10_gross
 
 # --- Index-hedge quote capture (risk-envelope Task 16, 2026-11-14) ---
 # Until the buy-to-open build (Task 33) this block only drives the twice-a-session capture of bid, ask and

@@ -27,6 +27,10 @@ class Strategy(StrEnum):
     COVERED_CALL = "covered_call"
     CASH_SECURED_PUT = "cash_secured_put"
     ROLL = "roll"
+    # The stock order path (risk-envelope Task 31): never an income strategy, never an option
+    # monitor's; a tapped trim or de-lever, or an LES share order (Task 32a).
+    STOCK_SELL = "stock_sell"
+    STOCK_BUY = "stock_buy"
 
 
 class OptionRight(StrEnum):
@@ -870,6 +874,29 @@ class RepairProposal(BaseModel):
     candidate: TradeCandidate | None = None
     mark: float | None = None
     twin_mark: float | None = None
+
+
+class StockOrderIntent(BaseModel):
+    """One stock order the stock order path may send (risk-envelope Task 31; rulings P10, L5-L7).
+
+    ``source`` is ``repair`` (a trim or a de-lever leg, which needs ``tapped``: a human tap, at
+    every autonomy level) or ``les`` (the Leveraged Entry Signal's share buys and trend-break
+    sells, paper only). ``ref_id`` names the order: ``orderRef = "<source>:<ref_id>"`` (a repair
+    proposal id and leg); None for an LES order, whose ref is ``les:<order row id>``. Gated by
+    ``risk_engine.validate_stock_order`` at decision time and again at send time.
+    """
+
+    side: Literal["BUY", "SELL"]
+    symbol: str
+    qty: int = Field(ge=0)
+    source: Literal["repair", "les"]
+    ref_id: str | None = None
+    tapped: bool = False
+    reason: str = ""
+
+    @property
+    def strategy(self) -> Strategy:
+        return Strategy.STOCK_BUY if self.side == "BUY" else Strategy.STOCK_SELL
 
 
 class RiskVerdict(BaseModel):

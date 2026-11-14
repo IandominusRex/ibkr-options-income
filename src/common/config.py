@@ -2818,6 +2818,7 @@ class RiskEnvelopeCfg(_KeyedCfg):
         "slow_breaker",
         "tech_cap_pct",
         "stacking",
+        "trim_points",
     )
 
     s10_target_pct: float = Field(default=15.0, gt=0, lt=100)
@@ -2841,6 +2842,8 @@ class RiskEnvelopeCfg(_KeyedCfg):
     stacking: StackingCfg = Field(
         default_factory=StackingCfg
     )  # behind the ``stacking_rule`` switch
+    # Task 31: a trim proposal sells the shares that take this many points off S10_gross.
+    trim_points: float = Field(default=1.0, gt=0, le=20)
 
     @field_validator("semis_names")
     @classmethod

@@ -15127,7 +15127,9 @@
         "enum": [
           "covered_call",
           "cash_secured_put",
-          "roll"
+          "roll",
+          "stock_sell",
+          "stock_buy"
         ],
         "title": "Strategy"
       },

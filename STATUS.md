@@ -361,6 +361,15 @@ unmerged; the daemons run none of it until a merge and `./ibkr restart`.
   autonomy level without a human tap; a `TradeCandidate.tap_only` card (the leveraged below-basis covered call
   while `leveraged_cc_auto` is off) is never auto-queued. The covered-call floor reads the `cc_basis_floor`
   switch under the configured `min_strike_vs_basis` (the ceiling).
+- **The stock order path; trims** (Task 31, `src/execution/stock_orders.py`, `risk_engine.validate_stock_order`,
+  `src/execution/repair_orders.py`): a `LimitOrder` at the mid of a fresh quote, gated at decision time and again
+  at send time, its `orderRef` written to `orders.order_ref` before `placeOrder`; a sell never takes a value-book
+  or LES share or a share under a short call; a buy must pass the envelope. A trim proposal (while S10 > L(t))
+  sells the shares that take `envelope.trim_points` off S10, only on a tap. **Known limits:** stock fills are not
+  written to `fills` (the ledger counts them); an order the broker never confirmed cancelled stays `submitted`
+  until the next ET day (`resolve_stale_stock_orders`); a stock order that crashed before `placeOrder` is marked
+  rejected at the next start. **Needs live-paper verification:** the first tapped trim on the paper account
+  (qualify, quote, fill, the ledger row's `orderRef`).
 
 ## Built (2026-11-15 — risk envelope Section H: replays and the harness)
 

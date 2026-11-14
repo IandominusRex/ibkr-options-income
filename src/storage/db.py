@@ -39,6 +39,7 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
     "orders": {
         "snapshot": "JSON",
         "close_reason": "VARCHAR(16)",  # CloseReason on buy-to-close orders (2026-10-11)
+        "order_ref": "VARCHAR(48)",  # a stock order's orderRef (risk-envelope Task 31)
     },
     # The order's orderRef: "value:<id>" tags a value-book fill (value book Part 5, spec §9.2).
     "broker_executions": {"order_ref": "VARCHAR(48)"},
