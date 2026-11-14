@@ -2374,6 +2374,20 @@ changes nothing. Reverse by hand with `python -m scripts.envelope switch hedge_i
 | `python -m scripts.hedge_capture_report --probe` | One-off: print XND's and QQQ's contract fields from the paper Gateway. |
 | `python -m scripts.spxw_cost_report [--db path] [--dry-run]` | The E3 cost report over the SPXW wing capture (read-only): median all-in round-trip cost per $1,000 of max loss for SPXW 10- and 25-wide and XSP 5-wide beside SPY 5-wide; writes `data/envelope_reports/E3.json`. |
 
+### The replays and the harness (Section H, 2026-11-15)
+
+Each replay below reads the trading database **read-only** (SQLite `mode=ro`; `--db` points it at a copy), prints a
+PASS / FAIL / "no result" with its numbers, and writes a result file plus a `*_report.txt` under
+`data/envelope_reports/`. The EOD run applies every PASSed result file by turning its switch on, in paper only
+(`python -m scripts.envelope apply-reports` does it by hand). **A FAIL, or "no result" (not enough data), never turns a
+switch off**, and a switch you set by hand is never overwritten by a report; only
+`python -m scripts.envelope switch NAME VALUE` changes one back. A replay that cannot read its inputs (no database, no
+snapshot, a price series missing) writes nothing and says why; it never invents data.
+
+| Command | What it does |
+|---|---|
+| `python -m scripts.envelope_harness [--db PATH] [--since DATE] [--attempt-every N] [--dry-run]` | The survivability harness (P1, P2): today's book on the `price_history` panel, the analytic worst case (S10, S20, G10, P20, T20, S-SMH, gross and net, plus the spreads book's 2% month) and the always-most-aggressive path under the envelope against the status-quo path, with the `record` sessions in `envelope_snapshots` and their defects. A PASS needs no admission above L(t) or L_ew(t), a worst 20-session drawdown no worse than the status quo's, **and** at least 10 clean record sessions; writes `harness.json` (switch `envelope_enforce` -> `on`). Run it after the envelope has been in `record` for 10 sessions. |
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

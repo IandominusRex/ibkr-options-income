@@ -347,6 +347,21 @@ Operator to-dos: re-copy `config/examples/value.yaml`'s `telegram:` and `prompt_
 
 ---
 
+## Built (2026-11-15 — risk envelope Section H: replays and the harness)
+
+Plan `docs/superpowers/plans/2026-11-14-risk-envelope.md` Tasks 26-29 and 29a, spec
+`docs/superpowers/specs/2026-11-13-risk-envelope-design.md` §3.4.4, §3.4.6, §3.5, §3.7.1, §2.4, §2.7. On
+`feat/risk-envelope`, unmerged. Every replay reads the trading database read-only and writes only its result file
+and a text report under `data/envelope_reports/`; the EOD run turns a PASS on in paper (a FAIL or "no result" never
+turns anything off, P11). **None of them has been run on the operator's real data**: that needs the operator's
+databases (and, for the LES replay, a network fetch of daily closes), and the section was built and tested on small
+synthetic inputs only. Each one's output is a result file that does not exist until you run it.
+
+- **The survivability harness** (Task 26, `src/reporting/survivability.py`, `scripts/envelope_harness.py`): the
+  analytic worst case, and today's book replayed on the panel two ways (status quo against always-most-aggressive
+  under the envelope). `passed` needs P2 and 10 record sessions with no P1 defect; a P2 pass with too few record
+  sessions is "no result". It needs the envelope to have run in `record` for 10 sessions before it can PASS.
+
 ## Built (2026-11-15 — risk envelope Section G: limits behind switches)
 
 Plan `docs/superpowers/plans/2026-11-14-risk-envelope.md` Tasks 22-25, spec
