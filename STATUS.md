@@ -378,6 +378,15 @@ the daemons run none of it until a merge and `./ibkr restart`.
   per side ($0.04) is unchanged from before and about 4× the measured crossing: conservative by
   design, re-measure before narrowing it. (3) Candidates carry no instrument column, so the report
   attributes every candidate to the configured `trading_class`.
+- **The spreads book counts in the wheel's daily loss leg; the Nov 10 lessons pinned (Task 6).** The
+  circuit breakers' daily mark-to-market leg adds the spreads book's real-mode (paper/live) P&L for
+  the day, realised + open, when it is a loss, read through the new read-only
+  `src/common/spreads_view.py`; the trip card names the loss by book. The late-fill path of `9da9e8a`
+  and the broker/DB-mismatch entry block now each have a regression test that replays Nov 10.
+  **Open:** root `CLAUDE.md`'s spreads fence still says the wheel learns about the spreads book "only
+  through `src/common/books.py`"; `src/common/spreads_view.py` is now a second, read-only window
+  (fenced in `tests/test_web_fence.py`). CLAUDE.md was not edited in this section (left to the
+  operator / Task 38's doc sweep).
 
 ## Bugs fixed (2026-11-12 — spreads late fill, regime flapping, roll noise)
 

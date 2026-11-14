@@ -1204,3 +1204,67 @@ async def test_an_unknown_nlv_blocks_entries(tmp_path, spreads_db) -> None:
     with spreads_db.spreads_session() as s:
         last = s.query(spreads_db.SpreadCandidateRow).first()
         assert "nlv_unknown" in last.reasons
+
+
+# ---------------------------------------------------------------- risk envelope Task 6
+# The Nov 10 lessons, pinned (spec §3.2d): the late-fill path of 9da9e8a, and the broker/DB
+# mismatch entry block that failed safe.
+
+
+class UnconfirmedCancelExecutor(RecordingExecutor):
+    """A 5-lot profit-take close fills 3, its cancel goes unconfirmed, and the other 2 fill
+    afterwards (2026-11-10: 27 s later)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.pending: list = []
+
+    async def close(self, pos, short_q, long_q, *, urgent):
+        from src.spreads.executor import FillResult, LateFill
+
+        self.closes.append(pos.contracts)
+        self.pending = [LateFill(f"CS:{pos.spread_id}:X", 2, 0.30, 2.6, 9, 7, done=True)]
+        return FillResult(3, 0.30, 3.9, 9, 7, "cancel_unconfirmed", f"CS:{pos.spread_id}:X")
+
+    def late_fills(self):
+        out, self.pending = self.pending, []
+        return out
+
+
+async def test_a_late_fill_after_an_unconfirmed_cancel_is_booked(tmp_path, spreads_db) -> None:
+    _paper_spread(spreads_db, contracts=5)
+    clock = [T1100]
+    ex = UnconfirmedCancelExecutor()
+    svc, broker, notifier = _paper(tmp_path, clock, ex)
+    broker.legs = {6790: -5.0, 6740: 5.0}
+    await svc.tick()  # the close fills 3 of 5 and its cancel is not confirmed
+    assert ex.closes == [5]
+    (p,) = spreads_db.open_positions("paper")
+    assert p.contracts == 2
+    assert svc.entries_blocked and "cancel_unconfirmed" in svc.entries_blocked
+    assert any("may still be live" in m for m in notifier.sent)
+    broker.legs = {}  # the last 2 lots filled at IBKR after the executor gave up on them
+    clock[0] = T1100 + timedelta(seconds=30)
+    await svc.tick()
+    assert spreads_db.open_positions("paper") == []  # booked, no phantom left
+    ((_, _, pnl),) = spreads_db.closed_results("paper")
+    assert pnl == pytest.approx((0.6 - 0.30) * 100 * 5 - 2.6 - 3.9 - 2.6)
+    assert svc.entries_blocked is None  # the broker and spreads.db agree again
+    assert any("late fill" in m for m in notifier.sent)
+
+
+async def test_a_broker_db_mismatch_blocks_entries(tmp_path, spreads_db) -> None:
+    _paper_spread(spreads_db, contracts=1)
+    clock = [T0945]
+    ex = RecordingExecutor()
+    svc, broker, notifier = _paper(tmp_path, clock, ex)
+    broker.legs = {}  # spreads.db holds a spread the broker does not
+    await svc.start()
+    assert svc.entries_blocked and "reconcile" in svc.entries_blocked
+    await svc.tick()
+    clock[0] = T1005
+    await svc.tick()
+    assert ex.opens == 0 and ex.closes == []  # no new entry, and no close of what is not held
+    assert svc.entries_blocked and "reconcile" in svc.entries_blocked
+    assert _candidate_count(spreads_db) == 0
+    assert any("disagree" in m for m in notifier.sent)

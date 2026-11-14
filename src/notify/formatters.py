@@ -173,6 +173,17 @@ def format_claude_cut_lines(cuts: list[tuple[TradeCandidate, int, str]]) -> str:
     return "\n".join(lines)
 
 
+def format_breaker_halt(reason: str) -> str:
+    """The circuit-breaker trip card (plain text). *reason* is ``evaluate_breakers``' sentence;
+    a daily-loss trip names the loss by book (risk-envelope Task 6: wheel and spreads)."""
+    return (
+        f"🛑 Circuit breaker: execution HALTED — {reason}. New-entry scans are paused "
+        "until you send /resume (profit-take and loss exits keep running; queued rolls "
+        "still go through; /resume lets it run until the loss grows by another full step). "
+        "The spreads book opens nothing new while halted either."
+    )
+
+
 def format_claude_cut_breaker_alert(zeroed: int, reviewed: int) -> str:
     """The once-a-day alert that Claude's cuts are being recorded but no longer applied."""
     return _md(

@@ -435,11 +435,9 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
     if reason is not None:
         set_halted(True, reason, source="breaker")
         log.critical("Circuit breaker tripped — %s. Execution halted.", reason)
-        text = (
-            f"🛑 Circuit breaker: execution HALTED — {reason}. New-entry scans are paused "
-            "until you send /resume (profit-take and loss exits keep running; queued rolls "
-            "still go through; /resume lets it run until the loss grows by another full step)."
-        )
+        from src.notify.formatters import format_breaker_halt
+
+        text = format_breaker_halt(reason)
         # The main chat, and the scan thread where every skipped cycle now shows (2026-10-12:
         # the main-chat alert alone was missed and the scans stopped for the session).
         scan_thread = cfg.secrets.telegram_thread_scan

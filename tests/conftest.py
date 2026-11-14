@@ -87,6 +87,17 @@ def _value_view_in_tmp(monkeypatch, tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def _spreads_view_in_tmp(monkeypatch, tmp_path_factory):
+    """The wheel's daily loss leg reads the spreads book through src/common/spreads_view.py
+    (risk-envelope Task 6). No test may read the operator's data/spreads.db: by default it points
+    at a file that does not exist (no spreads P&L); a test that needs one patches ``_path``."""
+    monkeypatch.setattr(
+        "src.common.spreads_view._path",
+        lambda: tmp_path_factory.getbasetemp() / "no_spreads_book" / "spreads.db",
+    )
+
+
+@pytest.fixture(autouse=True)
 def _value_api_in_tmp(monkeypatch, tmp_path_factory):
     """The web API reads the value book through src/api/value_db.py (Part 6). No test may read the
     operator's data/value.db: by default it points at a file that does not exist; a test that

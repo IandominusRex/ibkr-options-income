@@ -330,3 +330,78 @@ def test_the_drawdown_window_forgets_a_peak_older_than_three_sessions(tmp_path, 
     assert window_high_net_liq(4) == pytest.approx(800_000.0)
     assert drawdown_breached(665_000.0) is None  # 5% under 700k: inside the 6% line
     assert drawdown_breached(655_000.0) == pytest.approx(45_000.0)  # 6.4%
+
+
+# --------------------------------------------------------------------------- #
+# Risk envelope Task 6 — the spreads book counts in the daily loss leg (spec §3.2c)
+# --------------------------------------------------------------------------- #
+
+
+def _wheel_loss_today(tmp_path, monkeypatch, wheel_pnl: float, spreads_pnl: float | None):
+    """A wheel book down *wheel_pnl* on the day, the spreads book's real-mode P&L patched in, and
+    a 5% daily line on $300k of NLV ($15,000)."""
+    from datetime import date, timedelta
+
+    import src.execution.circuit_breakers as cb
+    from src.common.schemas import PositionSnapshot
+    from src.storage.positions import save_position_snapshot
+
+    _db_setup(tmp_path, monkeypatch)
+    cfg = SimpleNamespace(
+        automation=SimpleNamespace(
+            max_auto_trades_per_day=10,
+            daily_loss_halt_pct=5.0,
+            drawdown_halt_pct=0.0,
+            drawdown_window_days=3,
+        )
+    )
+    monkeypatch.setattr(cb, "get_config", lambda: cfg)
+    monkeypatch.setattr(cb, "spreads_pnl_today", lambda day: spreads_pnl)
+
+    def snap(pnl: float) -> list[PositionSnapshot]:
+        return [
+            PositionSnapshot(
+                symbol="AAPL",
+                sec_type="STK",
+                position=100,
+                avg_cost=200.0,
+                underlying="AAPL",
+                unrealized_pnl=pnl,
+            )
+        ]
+
+    save_position_snapshot(date.today() - timedelta(days=1), snap(0.0))
+    return snap(wheel_pnl)
+
+
+def test_the_daily_leg_adds_spreads_pnl(tmp_path, monkeypatch) -> None:
+    from src.execution.circuit_breakers import evaluate_breakers, mark_based_loss
+
+    today = _wheel_loss_today(tmp_path, monkeypatch, -9_000.0, -7_000.0)
+    # Neither book alone reaches $15,000; together they do.
+    reason = evaluate_breakers(today, net_liquidation=300_000.0)
+    assert reason is not None and "16,000" in reason
+    assert mark_based_loss(today, net_liquidation=300_000.0) == pytest.approx(16_000.0)
+
+
+def test_the_daily_leg_is_the_wheel_alone_without_a_spreads_loss(tmp_path, monkeypatch) -> None:
+    from src.execution.circuit_breakers import evaluate_breakers, mark_based_loss
+
+    for spreads in (None, 0.0, 20_000.0):  # no file, a flat day, a spreads gain
+        today = _wheel_loss_today(tmp_path, monkeypatch, -9_000.0, spreads)
+        assert evaluate_breakers(today, net_liquidation=300_000.0) is None
+        assert mark_based_loss(today, net_liquidation=300_000.0) is None
+    # A spreads gain never hides a wheel loss past the line.
+    today = _wheel_loss_today(tmp_path, monkeypatch, -16_000.0, 20_000.0)
+    assert evaluate_breakers(today, net_liquidation=300_000.0) is not None
+
+
+def test_a_trip_card_shows_the_loss_by_book(tmp_path, monkeypatch) -> None:
+    from src.execution.circuit_breakers import evaluate_breakers
+    from src.notify.formatters import format_breaker_halt
+
+    today = _wheel_loss_today(tmp_path, monkeypatch, -9_000.0, -7_000.0)
+    reason = evaluate_breakers(today, net_liquidation=300_000.0)
+    assert reason == "Daily mark-to-market loss $16,000 (wheel -$9,000, spreads -$7,000)"
+    card = format_breaker_halt(reason)
+    assert "HALTED" in card and "wheel -$9,000, spreads -$7,000" in card and "/resume" in card

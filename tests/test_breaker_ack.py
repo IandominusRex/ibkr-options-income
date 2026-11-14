@@ -73,7 +73,8 @@ def test_a_loss_over_the_line_trips_when_nobody_has_resumed() -> None:
 
     _baseline(_stock(0.0))
     reason = evaluate_breakers([_stock(-12_000.0)], NLV)
-    assert reason == "Daily mark-to-market loss $12,000"
+    # The reason names the loss by book (risk-envelope Task 6); no spreads.db here, so $0.
+    assert reason == "Daily mark-to-market loss $12,000 (wheel -$12,000, spreads $0)"
 
 
 def test_resume_lets_the_loss_that_was_acknowledged_stand() -> None:
@@ -98,7 +99,10 @@ def test_a_further_full_step_of_loss_trips_it_again() -> None:
     _breaker_halt()
     set_halted(False)
     assert evaluate_breakers([_stock(-12_000.0)], NLV) is None
-    assert evaluate_breakers([_stock(-21_000.0)], NLV) == "Daily mark-to-market loss $21,000"
+    assert (
+        evaluate_breakers([_stock(-21_000.0)], NLV)
+        == "Daily mark-to-market loss $21,000 (wheel -$21,000, spreads $0)"
+    )
 
 
 def test_the_ack_lasts_one_et_day(monkeypatch) -> None:

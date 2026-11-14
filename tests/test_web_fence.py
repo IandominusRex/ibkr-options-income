@@ -333,3 +333,23 @@ def test_only_spreads_db_opens_the_spreads_file_in_the_api() -> None:
     users = [p.name for p in api.rglob("*.py") if "spreads_db_url_abs" in p.read_text()]
     assert users == ["spreads_db.py"]
     assert "mode=ro" in (api / "spreads_db.py").read_text()
+
+
+def test_outside_the_api_and_the_book_only_spreads_view_opens_the_spreads_file() -> None:
+    """Risk envelope Task 6: the wheel's daily loss leg reads the spreads book's P&L through one
+    neutral read-only module, ``src/common/spreads_view.py`` (``mode=ro``, plain SQL, the
+    ``value_view`` pattern). It is the one allowance outside ``src/api/`` and ``src/spreads/``,
+    and it imports nothing from ``src.spreads``."""
+    src = ROOT / "src"
+    users = sorted(
+        str(p.relative_to(ROOT))
+        for p in src.rglob("*.py")
+        if "spreads_db_url_abs" in p.read_text()
+        and (src / "api") not in p.parents
+        and (src / "spreads") not in p.parents
+        and p != src / "common" / "config.py"  # where the resolver is defined
+    )
+    assert users == ["src/common/spreads_view.py"]
+    view = (src / "common" / "spreads_view.py").read_text()
+    assert "mode=ro" in view
+    assert "src.spreads" not in view
