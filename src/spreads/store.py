@@ -52,6 +52,7 @@ from src.common.schemas import (
     SpreadVerdict,
 )
 from src.spreads.pricing import ET
+from src.spreads.wings import WingCapture
 
 
 class SpreadsBase(DeclarativeBase):
@@ -227,6 +228,39 @@ class SpreadFlagRow(SpreadsBase):
     updated_at: Mapped[datetime] = mapped_column(DateTime)
 
 
+class SpreadWingQuoteRow(SpreadsBase):
+    """One SPXW/XSP wing spread's leg quotes, captured beside a SPY baseline candidate
+    (risk-envelope Task 17). The SPY candidate's own economics ride along so the E3 cost report
+    (``scripts/spxw_cost_report.py``) compares the two on the same sample without a join. Shadow
+    data: nothing here was ever sent to a broker."""
+
+    __tablename__ = "spread_wing_quotes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    session_date: Mapped[date] = mapped_column(Date, index=True)
+    instrument: Mapped[str] = mapped_column(String(8), index=True)  # SPXW | XSP
+    trading_class: Mapped[str] = mapped_column(String(8))
+    side: Mapped[str] = mapped_column(String(4))
+    width: Mapped[float] = mapped_column(Float)  # wing index points
+    expiry: Mapped[date] = mapped_column(Date)
+    scale: Mapped[float] = mapped_column(Float)  # SPY / SPX at the capture
+    spy_spread_id: Mapped[str] = mapped_column(String(48), index=True)
+    spy_short_strike: Mapped[float] = mapped_column(Float)
+    spy_long_strike: Mapped[float] = mapped_column(Float)
+    spy_width: Mapped[float] = mapped_column(Float)
+    spy_credit_mid: Mapped[float] = mapped_column(Float)  # per share
+    spy_credit_natural: Mapped[float] = mapped_column(Float)
+    short_strike: Mapped[float] = mapped_column(Float)
+    long_strike: Mapped[float] = mapped_column(Float)
+    short_con_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    long_con_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    short_bid: Mapped[float | None] = mapped_column(Float, nullable=True)
+    short_ask: Mapped[float | None] = mapped_column(Float, nullable=True)
+    long_bid: Mapped[float | None] = mapped_column(Float, nullable=True)
+    long_ask: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
 MONTH_STOP_KEY = "month_stop"
 
 _engine: Engine | None = None
@@ -333,6 +367,44 @@ def record_map(levels: GexLevels) -> None:
                 expected_move=levels.expected_move,
             )
         )
+
+
+def record_wing_quotes(
+    now: datetime, cand: SpreadCandidate, scale: float, captures: list[WingCapture]
+) -> int:
+    """Write the wing spreads captured beside the SPY candidate *cand*, in one transaction;
+    the number written."""
+    if not captures:
+        return 0
+    with spreads_session() as s:
+        for c in captures:
+            s.add(
+                SpreadWingQuoteRow(
+                    captured_at=_naive(now),
+                    session_date=now.astimezone(ET).date(),
+                    instrument=c.plan.instrument,
+                    trading_class=c.trading_class,
+                    side=cand.side,
+                    width=c.plan.width,
+                    expiry=c.plan.expiry,
+                    scale=scale,
+                    spy_spread_id=cand.spread_id,
+                    spy_short_strike=cand.short_strike,
+                    spy_long_strike=cand.long_strike,
+                    spy_width=cand.width,
+                    spy_credit_mid=cand.credit_mid,
+                    spy_credit_natural=cand.credit_natural,
+                    short_strike=c.plan.short_strike,
+                    long_strike=c.plan.long_strike,
+                    short_con_id=c.short.con_id if c.short else None,
+                    long_con_id=c.long.con_id if c.long else None,
+                    short_bid=c.short.bid if c.short else None,
+                    short_ask=c.short.ask if c.short else None,
+                    long_bid=c.long.bid if c.long else None,
+                    long_ask=c.long.ask if c.long else None,
+                )
+            )
+    return len(captures)
 
 
 def record_candidate(

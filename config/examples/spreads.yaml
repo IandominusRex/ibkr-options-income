@@ -121,3 +121,10 @@ ai:                           # Claude picks from the gate-approved menu (docs/s
   max_pick_calls_per_day: 4   # pick decisions (a fallback retry is not counted); at the cap the main book takes no new entries that day
   max_headlines: 20
   workdir: ~/.cache/ibkr-spreads-ai  # outside the repo: claude -p walks up from its cwd and would load the project CLAUDE.md
+
+wing_capture:                 # SPXW/XSP wing quotes beside the SPY baseline candidate: shadow only, quotes only, never an order (risk-envelope Task 17; feeds python -m scripts.spxw_cost_report)
+  enabled: true               # false = no wing quotes
+  symbol: SPX                 # the wing index (a CBOE index)
+  trading_class: SPXW         # its daily options
+  widths: [25, 10]            # index points: SPXW 25-wide (1 lot at today's caps) and 10-wide
+  xsp_width: 5                # XSP's wing width in XSP points (XSP trades at SPX / 10); 0 = no XSP wing

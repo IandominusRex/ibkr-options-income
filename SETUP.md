@@ -2273,6 +2273,18 @@ most ten market-data lines at a time (cancelled between chunks), and it waits wh
 `hedge:` block of `config/examples/risk_limits.yaml` is new; your private `risk_limits.yaml` does not need it
 (the code defaults match the example, and a mistyped key is refused at first use).
 
+**SPXW wing capture (Task 17).** While the spreads service runs, every time it builds a SPY baseline candidate
+it also quotes the same vertical on SPXW (25- and 10-wide) and on XSP (5-wide) at the same distance in expected
+moves, into the `spread_wing_quotes` table of `data/spreads.db` (`spreads.wing_capture` in
+`config/examples/spreads.yaml`, on by default; a mistyped or missing block falls back to the defaults). It quotes
+only: nothing is ordered, and it stays inside `spreads.max_market_data_lines`. After at least 15 capture
+sessions run `python -m scripts.spxw_cost_report`. **It needs the SPXW and XSP exchange fees**: set
+`execution.exchange_fees.SPXW` and `.XSP` in your private `spreads.yaml` from IBKR's published schedule (they
+ship `null`, which blocks the comparison). It writes `data/envelope_reports/E3.json`; E3 passes only when the
+spreads paper bar (`spreads_paper.json`) has passed too, and a PASS **only notifies**: the next EOD run sets
+`spxw_ready` and posts "Run Task 39 of the risk-envelope plan at a flat-book cutover". Nothing else changes until
+you run that task.
+
 **Before the first capture, run the one-off probe** against the paper Gateway (it connects with the
 healthcheck clientId and places nothing): `python -m scripts.hedge_capture_report --probe`. It prints what
 IBKR says about XND's contract (the underlying's exchange, the option chains and trading classes). The
@@ -2291,6 +2303,7 @@ changes nothing. Reverse by hand with `python -m scripts.envelope switch hedge_i
 |---|---|
 | `python -m scripts.hedge_capture_report [--dry-run]` | The H4 hedge-instrument report over the captured quotes: median quoted spread of the default item's legs (at most 8% of mid), displayed size against the bridge's contract count (at least 80% of captures), all-in cost per protected point against QQQ's (at most 1.5x); writes `H4.json` (and `H4_fallback.json`). |
 | `python -m scripts.hedge_capture_report --probe` | One-off: print XND's and QQQ's contract fields from the paper Gateway. |
+| `python -m scripts.spxw_cost_report [--db path] [--dry-run]` | The E3 cost report over the SPXW wing capture (read-only): median all-in round-trip cost per $1,000 of max loss for SPXW 10- and 25-wide and XSP 5-wide beside SPY 5-wide; writes `data/envelope_reports/E3.json`. |
 
 ## Troubleshooting
 

@@ -174,6 +174,14 @@ def apply_reports(directory: Path | None = None) -> list[str]:
             source=f"report:{result.id}",
             report=result.id,
         )
+        if result.switch == "spxw_ready":
+            # E3 only notifies: this records the verdict and gates nothing (Task 17, ruling E3).
+            notices.append(
+                f"{result.id} PASS: {result.switch} -> {result.value_on_pass}. Run Task 39 of "
+                f"the risk-envelope plan at a flat-book cutover. Nothing else changes. Reverse: "
+                f"python -m scripts.envelope switch {result.switch} {default}"
+            )
+            continue
         notices.append(
             f"{result.id} PASS: {result.switch} -> {result.value_on_pass} "
             f"(paper; record-only in live). Reverse: "

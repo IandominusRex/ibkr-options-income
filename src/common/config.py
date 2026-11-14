@@ -1078,6 +1078,29 @@ class SpreadsAiCfg(BaseModel):
         return self
 
 
+class SpreadsWingCaptureCfg(BaseModel):
+    """SPXW/XSP wing-quote capture in shadow (risk-envelope Task 17; spec §3.3, ruling E3).
+
+    When the SPY baseline candidate is built, the service quotes the same vertical on ``symbol``'s
+    ``trading_class`` at each of ``widths`` index points (at the SPY candidate's distance in expected
+    moves), and XSP's ``xsp_width``-wide one (0 turns XSP off), into ``spread_wing_quotes``. Quote
+    capture only: it never orders, and it stays inside ``max_market_data_lines``."""
+
+    enabled: bool = True
+    symbol: str = "SPX"
+    trading_class: str = "SPXW"
+    widths: list[float] = [25.0, 10.0]
+    xsp_width: float = 5.0
+
+    @model_validator(mode="after")
+    def _valid(self) -> SpreadsWingCaptureCfg:
+        if not self.widths or any(w <= 0 for w in self.widths):
+            raise ValueError("spreads wing_capture: widths needs at least one positive width")
+        if self.xsp_width < 0:
+            raise ValueError("spreads wing_capture: xsp_width must be >= 0 (0 = off)")
+        return self
+
+
 class SpreadsCfg(BaseModel):
     """Daily credit-spread system (config/spreads.yaml). See the plan's Design section."""
 
@@ -1108,6 +1131,7 @@ class SpreadsCfg(BaseModel):
     execution: SpreadsExecutionCfg = Field(default_factory=SpreadsExecutionCfg)
     backtest: SpreadsBacktestCfg = Field(default_factory=SpreadsBacktestCfg)
     ai: SpreadsAiCfg = Field(default_factory=SpreadsAiCfg)
+    wing_capture: SpreadsWingCaptureCfg = Field(default_factory=SpreadsWingCaptureCfg)
 
     @model_validator(mode="after")
     def _underlying_in_book(self) -> SpreadsCfg:

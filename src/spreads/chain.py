@@ -372,6 +372,44 @@ class IbkrSpreadsBroker:
             log.warning("spreads: %s index %.2f vs parity-implied %.2f", symbol, spot, implied)
         return ChainSnapshot(symbol=symbol, spot=spot, as_of=self.now(), options=options)
 
+    async def wing_strikes(
+        self, *, symbol: str, sec_type: str, exchange: str, trading_class: str, expiry: date
+    ) -> tuple[str, list[float]] | None:
+        """The listed strikes of *symbol*'s option class that lists *expiry*, for the wing capture
+        (risk-envelope Task 17): the configured *trading_class* when it lists the expiry, else
+        another class of the same symbol that does (XSP's dailies may sit under a weekly class).
+        Returns ``(trading class used, sorted strikes)``, or None when nothing lists it."""
+        idx = await self._index(symbol, exchange, sec_type)
+        if not getattr(idx, "conId", 0):
+            return None
+        params = await self.ib.reqSecDefOptParamsAsync(symbol, "", sec_type, idx.conId)
+        exp = f"{expiry:%Y%m%d}"
+        listing = [c for c in params if exp in c.expirations and c.strikes]
+        if not listing:
+            return None
+        preferred = [c for c in listing if c.tradingClass == trading_class] or listing
+        chain = max(preferred, key=lambda c: (c.exchange == "SMART", len(c.strikes)))
+        return str(chain.tradingClass), sorted(float(k) for k in chain.strikes)
+
+    async def wing_quotes(
+        self,
+        *,
+        symbol: str,
+        trading_class: str,
+        expiry: date,
+        right: str,
+        strikes: list[float],
+    ) -> dict[float, ChainOption]:
+        """Bid and ask of *symbol*'s *right* options at *strikes* for *expiry*, by strike: qualified
+        first, then quoted by ``quote`` (``req_fresh_mkt_data``, at most ``max_market_data_lines`` open
+        at once, cancelled between batches). A strike that does not qualify is absent. Reads only."""
+        contracts = [
+            Option(symbol, f"{expiry:%Y%m%d}", k, right, "SMART", tradingClass=trading_class)
+            for k in strikes
+        ]
+        qualified = await qualify_options_async(self.ib, contracts, chunk_size=self.max_lines)
+        return {o.strike: o for o in await self.quote(list(qualified))}
+
     async def requote(self, legs: list[ChainOption]) -> list[ChainOption]:
         contracts = []
         for leg in legs:

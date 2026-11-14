@@ -88,6 +88,14 @@ from src.spreads.report import compute_stats
 from src.spreads.risk import validate
 from src.spreads.selector import refresh_candidate, select_candidates, select_menu, why_nothing
 from src.spreads.tape import SessionTape, trigger
+from src.spreads.wings import (
+    INDEX_EXCHANGE,
+    XSP_DIVISOR,
+    XSP_SYMBOL,
+    XSP_TRADING_CLASS,
+    WingCapture,
+    plan_leg,
+)
 
 log = logging.getLogger(__name__)
 
@@ -96,6 +104,8 @@ _MAP_RETRY = timedelta(minutes=5)
 # system_settings key as JSON {"tripped": true, ...}; until then it is absent.
 SLOW_BREAKER_KEY = "slow_breaker_tripped"
 _CARD_BEAT = timedelta(minutes=5)  # the day card's clock moves at least this often while live
+# One wing capture (both instruments), run after the entry has been decided (risk-envelope Task 17).
+_WING_TIMEOUT_SECONDS = 25.0
 
 
 class Broker(Protocol):
@@ -274,6 +284,10 @@ class SpreadsService:
         # An opening order that may still fill (cancel unconfirmed): what is needed to book it.
         self._late_open: dict[str, tuple[SpreadCandidate, str, Any, int | None, str | None]] = {}
         self._account_unreadable = False  # set by _account_state when its read failed
+        # SPXW/XSP wing capture (risk-envelope Task 17): the SPY baseline candidate(s) the wings
+        # mirror, and the listed strikes per (symbol, expiry) once read.
+        self._wing_refs: list[SpreadCandidate] = []
+        self._wing_strikes: dict[tuple[str, date], tuple[str, list[float]]] = {}
 
     def effective_mode(self) -> str:
         """The traded book: ``paper`` only when configured paper and ``spreads_paper`` is on."""
@@ -853,8 +867,10 @@ class SpreadsService:
         nlv = await self.broker.net_liquidation()
         await self._check_month_stop(now, nlv)
         gex_chain = self.gex_chain
+        self._wing_refs = []
         if self.picker is not None:
             await self._decide(now, chain, levels, excess, allowed, nlv)
+            await self._capture_wings(now, levels, self._wing_refs)
             return
         cands = select_candidates(chain, levels, self.cfg, now, sides=allowed.sides)
         await self._nothing_to_sell(now, chain, levels, allowed, {c.side for c in cands})
@@ -876,7 +892,87 @@ class SpreadsService:
                 nlv=nlv,
             )
             if self.entries_blocked:
-                return
+                break
+        # Wings after the decision, so a slow quote never delays an entry (Task 17).
+        await self._capture_wings(now, levels, list({c.side: c for c in reversed(cands)}.values()))
+
+    async def _capture_wings(
+        self, now: datetime, levels: GexLevels, refs: list[SpreadCandidate]
+    ) -> None:
+        """SPXW (and XSP) wing quotes beside the SPY baseline candidate(s): the same vertical at the
+        same distance in expected moves, at each configured width, quoted and stored. **Quotes only:**
+        nothing here builds, prices or sends an order, and the quote batch is capped at
+        ``max_market_data_lines`` by the broker. Never raises: a failed capture costs a sample, never
+        an entry (the entry was already decided). A broker without the wing hooks is left alone."""
+        wc = self.cfg.wing_capture
+        if not wc.enabled or not refs:
+            return
+        if not (hasattr(self.broker, "wing_strikes") and hasattr(self.broker, "wing_quotes")):
+            return
+        try:
+            await asyncio.wait_for(self._wing_capture(now, levels, refs), _WING_TIMEOUT_SECONDS)
+        except Exception:
+            log.warning("spreads: wing capture failed", exc_info=True)
+
+    async def _wing_capture(
+        self, now: datetime, levels: GexLevels, refs: list[SpreadCandidate]
+    ) -> None:
+        wc = self.cfg.wing_capture
+        scale = levels.scale
+        # (instrument label, symbol, trading class, widths, SPY / index level ratio)
+        specs: list[tuple[str, str, str, list[float], float]] = [
+            (wc.trading_class, wc.symbol, wc.trading_class, list(wc.widths), scale)
+        ]
+        if wc.xsp_width > 0:
+            specs.append(
+                ("XSP", XSP_SYMBOL, XSP_TRADING_CLASS, [wc.xsp_width], scale * XSP_DIVISOR)
+            )
+        broker: Any = self.broker
+        for cand in refs:
+            right = _right(cand.side)
+            for label, symbol, trading_class, widths, ratio in specs:
+                key = (symbol, cand.expiry)
+                listing = self._wing_strikes.get(key)
+                if listing is None:
+                    listing = await broker.wing_strikes(
+                        symbol=symbol,
+                        sec_type="IND",
+                        exchange=INDEX_EXCHANGE,
+                        trading_class=trading_class,
+                        expiry=cand.expiry,
+                    )
+                    if listing is None:
+                        continue
+                    self._wing_strikes[key] = listing
+                used_class, strikes = listing
+                plans = [
+                    p
+                    for w in widths
+                    if (
+                        p := plan_leg(cand, ratio=ratio, strikes=strikes, width=w, instrument=label)
+                    )
+                ]
+                if not plans:
+                    continue
+                wanted = sorted({k for p in plans for k in (p.short_strike, p.long_strike)})
+                quoted = await broker.wing_quotes(
+                    symbol=symbol,
+                    trading_class=used_class,
+                    expiry=cand.expiry,
+                    right=right,
+                    strikes=wanted,
+                )
+                store.record_wing_quotes(
+                    now,
+                    cand,
+                    scale,
+                    [
+                        WingCapture(
+                            p, used_class, quoted.get(p.short_strike), quoted.get(p.long_strike)
+                        )
+                        for p in plans
+                    ],
+                )
 
     async def _nothing_to_sell(
         self,
@@ -1130,6 +1226,8 @@ class SpreadsService:
                 baseline_item = cand
             if verdict.approved:
                 approved.append((cand, position, verdict.contracts))
+        if baseline_item is not None:
+            self._wing_refs = [baseline_item]  # the wings mirror it (Task 17)
         if baseline_item is not None and store.episode_trade(episode, "baseline") is None:
             bl = baseline_item.model_copy(
                 update={"spread_id": baseline_item.spread_id + BASELINE_SUFFIX}

@@ -410,8 +410,17 @@ unmerged; the daemons capture nothing until a merge and `./ibkr restart`. Captur
   quoted spread is at most 8% of mid, its size covers the bridge on 80% of captures and its cost per protected
   point is at most 1.5x QQQ's, over at least 20 sessions; else QQQ) into `data/envelope_reports/H4.json` and
   `H4_fallback.json`. `src/hedge/` is on the regime fence's deterministic list and has `tests/test_hedge_fence.py`.
+- **SPXW wing capture** (`src/spreads/wings.py`, `chain.py`, `service.py`, Task 17): with the SPY baseline
+  candidate, the same vertical on SPXW (25- and 10-wide) and XSP (5-wide) is quoted at the same distance in
+  expected moves into `spread_wing_quotes` (shadow data, quotes only, never an order, inside
+  `max_market_data_lines`, after the entry decision, a failure costs only the sample).
+  `python -m scripts.spxw_cost_report` compares all-in round-trip cost per $1,000 of max loss against SPY's
+  over at least 15 sessions and writes `E3.json`; it needs the SPXW and XSP exchange fees (shipped `null`,
+  which blocks it), and a PASS needs the spreads paper bar too and only notifies (`spxw_ready`; Task 39 is the
+  cutover).
 - **Not yet:** the hedge's book, its orders, `validate_hedge` and the bridge (Tasks 33-37). `needed_contracts` is
   recorded as 0 until Task 36's size rule exists (the report reads it as "at least one contract").
+- **Known limitations (wings):** the wing's distance is the SPY short strike over the GEX `scale`, snapped to a listed strike at or beyond it (within one strike step of the same expected-move distance); XSP's trading class (`XSP`) is a guess that falls back to any class of the symbol that lists the expiry; the cost model charges the full mid-to-natural crossing in and out for every instrument alike (the measured crossing, not the shadow haircut), so it is conservative for all and compares like with like.
 - **Known limitations:** XND's contract fields (`IND` on `NASDAQ`, class `XND`) come from the plan and have not
   been checked against IBKR: run `python -m scripts.hedge_capture_report --probe` on the paper Gateway first. The
   default item is ranked by intrinsic payoff at the scenarios' index moves (a proxy; Task 36 replaces it). The

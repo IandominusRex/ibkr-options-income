@@ -306,6 +306,19 @@ async def test_a_failing_capture_never_raises_and_is_not_retried_every_cycle(
     assert n == 1  # the slot was marked attempted
 
 
+def test_the_intraday_loop_calls_the_capture_after_the_capital_release_and_before_the_scan() -> (
+    None
+):
+    """The wiring: step 1a'' of `_intraday_scan_loop`, passing whether a scan is running."""
+    text = Path("src/notify/approval_service.py").read_text()
+    loop = text[text.index("async def _intraday_scan_loop") :]
+    release = loop.index("run_capital_release(ib_scan")
+    cap = loop.index("run_due_capture(ib_scan")
+    spawn = loop.index("asyncio.create_task(\n                _run_intraday_scan(")
+    assert release < cap < spawn
+    assert 'scan_running=bool(bot_data.get("scan_running"))' in loop[cap : cap + 120]
+
+
 # ----------------------------------------------------------------------------- the config
 
 
