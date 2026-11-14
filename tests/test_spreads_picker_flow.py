@@ -13,6 +13,7 @@ from src.common.schemas import (
     SpreadPick,
 )
 from src.spreads.executor import SpreadExecutor
+from src.spreads.menu import slippage_per_leg
 from tests.test_spreads_service import (  # noqa: F401 — spreads_db is a fixture
     CFG,
     MOVE,
@@ -323,7 +324,7 @@ async def test_a_halt_during_the_pick_records_it_without_trading(tmp_path, sprea
 
 # ------------------------------------------------------------ checkpoint B: pin the invariants
 
-SLIP = AI.execution.shadow_slippage_per_leg
+SLIP = slippage_per_leg(AI)  # the cost standard: measured crossing + margin, per leg
 
 
 def _reprice_outer(broker, bid, ask) -> None:

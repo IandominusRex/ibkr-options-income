@@ -3,8 +3,9 @@
 Paper opens are re-gated: the spread is repriced from fresh leg quotes and run through the
 caller's ``recheck`` — the same ``risk.validate`` — immediately before the order is sent (the
 core invariant's second gate run). An unfilled order is cancelled; a partial fill is reported
-as what it is. Shadow fills charge ``shadow_slippage_per_leg`` per leg and the configured
-commission so shadow P&L is not flattered by mid-price fills.
+as what it is. Shadow fills pay the cost standard on each leg (``menu.slippage_per_leg``: the
+measured crossing plus its margin, and ``menu.cost_per_contract``: commission plus exchange fee)
+so shadow P&L is not flattered by mid-price fills.
 
 An order this module could not see to the end — the socket dropped while working it, or the
 cancel was not confirmed — is reported with an ``UNRESOLVED`` reason: it may still be live at
@@ -26,6 +27,7 @@ from typing import Any, Protocol
 from src.common.config import SpreadsCfg
 from src.common.schemas import ChainOption, SpreadCandidate, SpreadPosition, SpreadVerdict
 from src.spreads.manager import debit_to_close
+from src.spreads.menu import cost_per_contract, slippage_per_leg
 from src.spreads.orders import (
     build_close_order,
     build_open_order,
@@ -158,7 +160,7 @@ class SpreadExecutor:
                         order_ref=ref,
                         filled_qty=max(0, extra),
                         price=price,
-                        commission=2 * max(0, extra) * self.cfg.execution.commission_per_contract,
+                        commission=2 * max(0, extra) * cost_per_contract(self.cfg),
                         perm_id=int(getattr(w.trade.order, "permId", 0) or 0) or None,
                         ib_order_id=int(getattr(w.trade.order, "orderId", 0) or 0) or None,
                         done=done,
@@ -177,11 +179,11 @@ class SpreadExecutor:
         x = self.cfg.execution
         ref = open_ref(self.cfg, c.spread_id)
         if self.cfg.mode == "shadow":
-            credit = round(c.credit_mid - 2 * x.shadow_slippage_per_leg, 4)
+            credit = round(c.credit_mid - 2 * slippage_per_leg(self.cfg), 4)
             if credit <= 0:
                 return FillResult(0, None, 0.0, reason="shadow_credit_nonpositive", order_ref=ref)
             return FillResult(
-                contracts, credit, 2 * contracts * x.commission_per_contract, order_ref=ref
+                contracts, credit, 2 * contracts * cost_per_contract(self.cfg), order_ref=ref
             )
 
         right = _right(c.side)
@@ -245,12 +247,12 @@ class SpreadExecutor:
             # Width (a full max loss) only when the short leg has no ask at all.
             base = mid if mid is not None else nat if nat is not None else pos.width
             debit = (
-                min(pos.width, round(base + 2 * x.shadow_slippage_per_leg, 4))
+                min(pos.width, round(base + 2 * slippage_per_leg(self.cfg), 4))
                 if base < pos.width
                 else pos.width
             )
             return FillResult(
-                pos.contracts, debit, 2 * pos.contracts * x.commission_per_contract, order_ref=ref
+                pos.contracts, debit, 2 * pos.contracts * cost_per_contract(self.cfg), order_ref=ref
             )
         start = mid if mid is not None else nat
         if start is None:
@@ -291,7 +293,7 @@ class SpreadExecutor:
             if asyncio.get_running_loop().time() >= deadline:
                 break
             await asyncio.sleep(self.poll)
-        estimate = 2 * filled * self.cfg.execution.commission_per_contract
+        estimate = 2 * filled * cost_per_contract(self.cfg)
         log.warning(
             "spreads: commission report missing for %s; charging the configured %.2f",
             getattr(trade.order, "orderRef", ""),

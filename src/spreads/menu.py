@@ -1,9 +1,11 @@
 """The pick menu's economics — what Claude is shown about each gate-approved spread.
 
 Pure and deterministic: no IBKR, no I/O, no LLM. Every number on the menu comes from here; the
-prompt (src/spreads_ai/prompts.py) only formats them. Costs are per share and round trip: two
-legs opened and two closed, each paying ``shadow_slippage_per_leg`` and the per-contract
-commission (SPY settles in shares, so every spread is closed, never left to expire).
+prompt (src/spreads_ai/prompts.py) only formats them. Costs follow the cost standard
+(risk-envelope Task 5) and are per share and round trip: two legs opened and two closed, each
+paying the measured crossing plus its margin and the per-contract commission plus exchange fee
+(SPY settles in shares, so every spread is closed, never left to expire). The executor's
+simulated fills pay the same per-leg amounts (``slippage_per_leg``, ``cost_per_contract``).
 """
 
 from __future__ import annotations
@@ -16,9 +18,30 @@ from src.common.schemas import GexLevels, SpreadCandidate, SpreadMenuItem, Sprea
 LETTERS = string.ascii_uppercase  # 2 sides x menu_size stays well under 26
 
 
-def round_trip_cost(cfg: SpreadsCfg) -> float:
+def slippage_per_leg(cfg: SpreadsCfg) -> float:
+    """Per share, per leg: the measured median crossing plus the stated margin."""
     x = cfg.execution
-    return round(4 * x.shadow_slippage_per_leg + 4 * x.commission_per_contract / 100.0, 4)
+    return x.shadow_slippage_per_leg + x.slippage_margin_per_leg
+
+
+def fee_per_contract(cfg: SpreadsCfg, instrument: str | None = None) -> float | None:
+    """The exchange fee per contract per leg of *instrument* (default: the traded class), or
+    None while it has not been filled from IBKR's schedule."""
+    return cfg.execution.exchange_fees.get(instrument or cfg.trading_class)
+
+
+def cost_per_contract(cfg: SpreadsCfg) -> float:
+    """USD per contract per leg: IBKR's commission plus the exchange fee. Raises ValueError when
+    the fee is unknown (config load refuses an enabled book in that state)."""
+    fee = fee_per_contract(cfg)
+    if fee is None:
+        raise ValueError(f"no exchange fee for {cfg.trading_class}: the cost standard is unknown")
+    return cfg.execution.commission_per_contract + fee
+
+
+def round_trip_cost(cfg: SpreadsCfg) -> float:
+    """Per share: 4 × (crossing + margin) + 4 × (commission + fee) / 100."""
+    return round(4 * slippage_per_leg(cfg) + 4 * cost_per_contract(cfg) / 100.0, 4)
 
 
 def breakeven(win: float, loss: float) -> float | None:

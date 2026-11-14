@@ -74,7 +74,9 @@ def main() -> None:
             store.picks(), store.trade_log(a.mode), store.trade_log("baseline"), a.mode
         )
         decisions = build_decisions(picks, main_log, base_log)
-        slip = get_config().spreads.execution.shadow_slippage_per_leg
+        from src.spreads.menu import slippage_per_leg
+
+        slip = slippage_per_leg(get_config().spreads)  # the cost standard's per-leg slippage
         print(
             f"scope: --mode {a.mode} picks only, trades opened "
             + (f"since the first pick ({since:%Y-%m-%d %H:%M} UTC)" if since else "(no picks yet)")

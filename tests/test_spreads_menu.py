@@ -13,7 +13,11 @@ _BASE = get_config().spreads
 CFG = _BASE.model_copy(
     update={
         "execution": _BASE.execution.model_copy(
-            update={"shadow_slippage_per_leg": 0.02, "commission_per_contract": 0.65}
+            update={
+                "shadow_slippage_per_leg": 0.02,
+                "slippage_margin_per_leg": 0.0,  # 0.02 a leg all told: the mechanics, pinned
+                "commission_per_contract": 0.65,
+            }
         ),
         "exits": _BASE.exits.model_copy(
             update={"profit_take_pct": 50.0, "stop_debit_multiple": 2.0}

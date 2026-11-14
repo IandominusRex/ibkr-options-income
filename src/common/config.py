@@ -999,8 +999,27 @@ class SpreadsExecutionCfg(BaseModel):
     reprice_tick: float = 0.01
     close_ttl_seconds: float = 30.0
     close_max_concession: float = 0.10
-    shadow_slippage_per_leg: float = 0.02
-    commission_per_contract: float = 0.65
+    # The cost standard (risk-envelope Task 5, spec §3.2f): every simulated fill and every cost
+    # Claude reads pays, per leg, the measured median crossing plus a stated margin, and IBKR's
+    # commission plus the exchange fee per contract. Re-measure with python -m scripts.spreads_costs.
+    shadow_slippage_per_leg: float = (
+        0.01  # measured: credit_mid − credit_natural, $0.01 on 165 candidates
+    )
+    slippage_margin_per_leg: float = 0.01
+    commission_per_contract: float = 0.65  # IBKR's schedule, per leg
+    # Per traded class (trading_class), USD per contract per leg; None = not yet taken from IBKR's
+    # published schedule, which blocks trading and the cost report for that class.
+    exchange_fees: dict[str, float | None] = {"SPY": 0.0, "SPXW": None, "XSP": None}
+
+    @model_validator(mode="after")
+    def _costs(self) -> SpreadsExecutionCfg:
+        if self.shadow_slippage_per_leg < 0 or self.slippage_margin_per_leg < 0:
+            raise ValueError("spreads execution: slippage and its margin must be >= 0")
+        if self.commission_per_contract < 0:
+            raise ValueError("spreads execution: commission_per_contract must be >= 0")
+        if any(v is not None and v < 0 for v in self.exchange_fees.values()):
+            raise ValueError("spreads execution: exchange_fees must be >= 0 (or null)")
+        return self
 
 
 class SpreadsBacktestCfg(BaseModel):
@@ -1087,6 +1106,17 @@ class SpreadsCfg(BaseModel):
         if self.underlying.upper() not in book:
             raise ValueError(
                 f"spreads.underlying {self.underlying!r} must be listed in book_underlyings {sorted(book)}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _fee_known(self) -> SpreadsCfg:
+        """An enabled book must know the exchange fee of the class it trades (risk-envelope
+        Task 5): a cost standard with an unknown fee would flatter every simulated fill."""
+        if self.enabled and self.execution.exchange_fees.get(self.trading_class) is None:
+            raise ValueError(
+                f"spreads execution.exchange_fees has no fee for trading_class "
+                f"{self.trading_class!r}: fill it from IBKR's published schedule"
             )
         return self
 

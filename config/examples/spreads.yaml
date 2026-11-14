@@ -93,8 +93,11 @@ execution:
   reprice_tick: 0.01
   close_ttl_seconds: 30
   close_max_concession: 0.10
-  shadow_slippage_per_leg: 0.02
-  commission_per_contract: 0.65   # per leg; shadow + backtest P&L only (paper uses real commissions)
+  # The cost standard (every simulated fill and every cost Claude reads); re-measure with python -m scripts.spreads_costs
+  shadow_slippage_per_leg: 0.01   # measured median entry crossing (credit_mid - credit_natural): $0.01 on 165 candidates, Nov 2026
+  slippage_margin_per_leg: 0.01   # the stated margin added on top of the measured crossing, per leg
+  commission_per_contract: 0.65   # IBKR's schedule, per leg; shadow + backtest P&L only (paper uses real commissions)
+  exchange_fees: {SPY: 0.0, SPXW: null, XSP: null}  # USD per contract per leg by trading_class; null = not yet taken from IBKR's fee page (blocks trading that class and its cost report)
 
 backtest:
   thetadata_url: "http://127.0.0.1:25503"

@@ -20,6 +20,7 @@ FAST = _BASE.execution.model_copy(
         "reprice_tick": 0.01,
         "close_max_concession": 0.10,
         "shadow_slippage_per_leg": 0.02,
+        "slippage_margin_per_leg": 0.0,  # 0.02 a leg all told: the mechanics, pinned
         "commission_per_contract": 0.65,
     }
 )

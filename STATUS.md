@@ -367,6 +367,17 @@ the daemons run none of it until a merge and `./ibkr restart`.
   excess-liquidity floor is 40% of NLV. An unknown NLV blocks entries. `starting_capital_usd` only feeds
   the P&L report; the old capital keys load and are ignored. **Known limitation:** the backtest still
   sizes off its replayed capital as a stand-in for NLV until Task 7's `--nlv`.
+- **The cost standard (Task 5).** Per leg: the measured median crossing ($0.01) plus a stated margin
+  ($0.01), and IBKR's commission ($0.65) plus the class's exchange fee; the executor's shadow fills,
+  the menu's break-evens (`be_nominal_exits`) and the picker's round-trip cost all read
+  `src/spreads/menu.py`. `python -m scripts.spreads_costs` measures it against the record (read-only).
+  **Known limitations:** (1) the SPXW and XSP exchange fees ship `null` (not taken from IBKR's fee page
+  in this build): that blocks their cost report and refuses an enabled book trading either class at
+  config load; fill them before the E3 cutover (Task 39). (2) The measured $0.01 is the crossing per
+  spread side, and the standard charges $0.01 + $0.01 on each of two legs, so the modelled entry cost
+  per side ($0.04) is unchanged from before and about 4× the measured crossing: conservative by
+  design, re-measure before narrowing it. (3) Candidates carry no instrument column, so the report
+  attributes every candidate to the configured `trading_class`.
 
 ## Bugs fixed (2026-11-12 — spreads late fill, regime flapping, roll noise)
 
