@@ -208,6 +208,9 @@ class IVHistoryRow(Base):
     obs_date: Mapped[date] = mapped_column(Date, index=True)
     iv: Mapped[float] = mapped_column(Float)
     source: Mapped[str] = mapped_column(String(16), default="ibkr")
+    # Set by the write path's sanity check (risk-envelope Task 10): an implausible observation is
+    # kept, so the (symbol, date) uniqueness holds, and every reader skips it (`flagged IS NOT 1`).
+    flagged: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
 
 class PriceHistoryRow(Base):

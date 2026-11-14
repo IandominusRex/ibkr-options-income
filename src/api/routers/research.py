@@ -224,7 +224,7 @@ def sectors(
             (
                 trading.execute(
                     select(IVHistoryRow.iv)
-                    .where(IVHistoryRow.symbol == symbol)
+                    .where(IVHistoryRow.symbol == symbol, IVHistoryRow.flagged.is_not(True))
                     .order_by(IVHistoryRow.obs_date.desc())
                     .limit(365)
                 )
@@ -465,7 +465,7 @@ def _iv_stats_for(trading: TradingDb, symbol: str) -> IVStats:
         (
             trading.execute(
                 select(IVHistoryRow.iv)
-                .where(IVHistoryRow.symbol == symbol)
+                .where(IVHistoryRow.symbol == symbol, IVHistoryRow.flagged.is_not(True))
                 .order_by(IVHistoryRow.obs_date.desc())
                 .limit(365)
             )

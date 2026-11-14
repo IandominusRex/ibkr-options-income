@@ -42,6 +42,8 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
     },
     # The order's orderRef: "value:<id>" tags a value-book fill (value book Part 5, spec §9.2).
     "broker_executions": {"order_ref": "VARCHAR(48)"},
+    # The IV sanity flag (risk-envelope Task 10): 1 = implausible, skipped by every reader.
+    "iv_history": {"flagged": "INTEGER DEFAULT 0"},
     # risk_verdicts existed as an empty, unwired table long before anything wrote to it, so
     # deployed databases already have the original three-column shape. These are the columns
     # added when the assessment audit trail was turned on.

@@ -56,6 +56,15 @@ iv:
   # Lookback window (trading days) for the realized-vol computation used in the IV/RV ratio.
   realized_vol_window: 20
 
+# --- IV sanity check on iv_history writes (risk-envelope Task 10, 2026-11-14) ---
+# An implausible daily IV observation is stored but flagged, and every reader skips flagged rows
+# (QQQ's stored IV once read 14.6 against a VXN of 38.3). Typed in src/common/config.py (IvSanityCfg).
+iv_sanity:
+  index_ratio_band: [0.6, 1.4]   # an index ETF's IV / its vol index, as a multiple of its own 60-session median ratio
+  single_band: [0.5, 2.0]        # every other symbol's IV as a multiple of its own 20-session median
+  vol_index: {SPY: "^VIX", QQQ: "^VXN", TQQQ: "^VXN"}   # which vol index each index ETF is compared with
+  min_history: 10                # fewer prior unflagged rows than this: never flagged
+
 # --- Ideal-price zone (analytics/fair_value.py) ---
 # TWO KINDS OF KNOB IN THIS BLOCK — do not assume it is all inert.
 #   * The strike-band and action-level knobs (em_lo_mult_call, em_lo_mult_put, em_hi_mult,

@@ -421,6 +421,16 @@ Plan `docs/superpowers/plans/2026-11-14-risk-envelope.md` Tasks 8-10 and 10a, sp
   appears for UPRO or DPST, and the private `universe.yaml`, `risk_limits.yaml` and `settings.yaml` are not
   touched by an update (Operator to-dos 2 and 3); `UNIVERSE_RESEARCH.md` is now `docs/archive/UNIVERSE_RESEARCH.md`
   and was edited there.
+- **The IV sanity flag; every reader skips flagged rows (Task 10).** `append_observation` flags an implausible
+  daily IV (index ETFs by their ratio to ^VIX/^VXN against their own median ratio, every other name against its
+  own 20-session median; fewer than 10 prior rows never flags) and sends one data alert per symbol per day. A
+  flagged row is kept and **excluded everywhere** (IV rank, the strike band, the API, the backtest, the
+  staleness checks); on 2026-11-05 QQQ's IV read 14.6 against a VXN of 38.3 and every reader took it at face
+  value. **Known limitations:** the EOD run appends the VIX-family closes just before the IV capture, but the
+  check falls back to the last close within five days when yfinance has no bar yet; the first sessions after
+  the merge have no ^VXN/^VIX history until `python -m scripts.backfill_prices` has run (so index ETFs are not
+  flagged until then); `scripts/backfill_iv.py` writes without flagging; the API reads `iv_history.flagged`,
+  so the trading service must restart (it adds the column) before the API.
 
 ## Bugs fixed (2026-11-12 — spreads late fill, regime flapping, roll noise)
 

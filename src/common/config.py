@@ -2541,6 +2541,46 @@ class LeveragedSizingCfg(_KeyedCfg):
         return out
 
 
+_DEFAULT_IV_VOL_INDEX: dict[str, str] = {"SPY": "^VIX", "QQQ": "^VXN", "TQQQ": "^VXN"}
+
+
+class IvSanityCfg(_KeyedCfg):
+    """The IV sanity check on ``iv_history`` writes (risk-envelope Task 10, ruling P7).
+
+    An index ETF in ``vol_index`` (symbol -> the volatility index it is compared with) is flagged
+    when its ratio to that index leaves ``index_ratio_band`` times the median ratio of its prior 60
+    sessions; every other symbol when its IV leaves ``single_band`` times its own prior 20-session
+    median. Fewer than ``min_history`` prior unflagged rows means never flagged. Flagged rows are
+    kept (the daily append stays idempotent) and skipped by every reader. Lives in
+    ``config/risk_limits.yaml -> iv_sanity:``; a missing block means these defaults.
+    """
+
+    KEYS: ClassVar[tuple[str, ...]] = (
+        "index_ratio_band",
+        "single_band",
+        "vol_index",
+        "min_history",
+    )
+
+    index_ratio_band: tuple[float, float] = (0.6, 1.4)
+    single_band: tuple[float, float] = (0.5, 2.0)
+    vol_index: dict[str, str] = Field(default_factory=lambda: dict(_DEFAULT_IV_VOL_INDEX))
+    min_history: int = Field(default=10, ge=1)
+
+    @field_validator("index_ratio_band", "single_band")
+    @classmethod
+    def _band_valid(cls, v: tuple[float, float]) -> tuple[float, float]:
+        lo, hi = v
+        if not (0.0 < lo < 1.0 < hi):
+            raise ValueError(f"iv_sanity band {list(v)} must satisfy 0 < low < 1 < high")
+        return v
+
+    @field_validator("vol_index")
+    @classmethod
+    def _upper(cls, v: dict[str, str]) -> dict[str, str]:
+        return {str(k).upper(): str(s) for k, s in v.items()}
+
+
 class ClaudeCutCfg(_KeyedCfg):
     """Claude's reduce-only size cut on auto-opened cash-secured puts (spec section 9).
 
@@ -2846,6 +2886,11 @@ def get_regime_cfg() -> RegimeCfg:
             f"cash_secured_put.delta_min ({delta_min}): otherwise no signal lot could ever pass"
         )
     return cfg
+
+
+def get_iv_sanity_cfg() -> IvSanityCfg:
+    """The typed ``iv_sanity:`` block of ``config/risk_limits.yaml`` (shipped defaults when absent)."""
+    return IvSanityCfg(**(get_config().risk.get("iv_sanity") or {}))
 
 
 def get_claude_cut_cfg() -> ClaudeCutCfg:

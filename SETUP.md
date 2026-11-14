@@ -315,7 +315,7 @@ touched by an update: make the same edits by hand, add `SOXX` to `regime.tech_li
 `risk_limits.yaml`, add `market_data.reference_iv_symbols: [SPY]` and
 `market_data.reference_price_symbols: [SPY, "^VIX", "^VXN"]` to your private `settings.yaml` (the code
 defaults match, so this only makes them visible), then run `python -m scripts.backfill_prices` once so SOXX,
-SPY, `^VIX` and `^VXN` have price history (SPY's IV restarts with the next EOD run; `python -m
+SPY, `^VIX` and `^VXN` have price history (the IV sanity check needs the last two: until they exist, index ETFs are never flagged) (SPY's IV restarts with the next EOD run; `python -m
 scripts.backfill_iv --symbols SPY,SOXX` fills the past year if you want rank history immediately).
 
 Tickers you've decided you'll never trade don't need to stay in `universe.yaml` at all — move them
@@ -2234,6 +2234,7 @@ set by hand, and a FAIL never turns anything off: only you do.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| Telegram says *"IV data alert: QQQ <date> flagged as implausible and excluded from IV rank…"*; or a symbol's IV rank or `/health` IV age stops moving | The EOD IV capture stored an observation the sanity check judged implausible (its ratio to ^VIX/^VXN, or its own 20-session median, was outside the band in `risk_limits.yaml → iv_sanity`). The row is kept but every reader skips it, so rank and staleness read from the last good row | Usually nothing: the next good observation resumes it. If a real regime change keeps getting flagged, widen the band in `iv_sanity` (restart the trading service). With no `^VIX`/`^VXN` history in `price_history`, index ETFs are never flagged: run `python -m scripts.backfill_prices` |
 | The logs show `usage limit reached — not retrying` / `You've hit your session limit`, and reviews, news cards or summaries come from the local model | The Claude plan's 5-hour (or weekly) limit was reached. The call is not retried; Ollama answers instead | Wait for the reset time in the message. `python -m scripts.claude_usage` shows which call kinds spend the most; the slim call (`claude.slim_context`) and Haiku routing (`claude.review_model`, `news.llm.model`) are what keep this rare |
 | Roll / delta-drift / assignment-risk info alerts carry no Claude paragraph | By design since 2026-10-15: `claude.review_info_alerts` is false (they carry no buttons; the roll decision card still gets a review) | Set `claude.review_info_alerts: true` to restore the paragraph at ~1K tokens a call |
 | `claude usage:` lines are missing from the logs, or per-call context is ~40K tokens again | The daemons are running pre-2026-10-15 code, or `claude.slim_context` is false, or `claude.workdir` was pointed somewhere that has a `CLAUDE.md` above it | Restart `./ibkr`; check `claude.slim_context`; keep `claude.workdir` outside the repo (config load refuses a path inside it) |

@@ -96,7 +96,7 @@ def _load_iv_history(symbol: str) -> list[float]:
             rows = (
                 sess.execute(
                     select(IVHistoryRow.iv)
-                    .where(IVHistoryRow.symbol == symbol)
+                    .where(IVHistoryRow.symbol == symbol, IVHistoryRow.flagged.is_not(True))
                     .order_by(IVHistoryRow.obs_date.desc())
                     .limit(365)
                 )

@@ -86,7 +86,7 @@ def load_iv_series(symbol: str, dates: list[date]) -> list[float | None]:
         with session_scope() as sess:
             rows = sess.execute(
                 select(IVHistoryRow.obs_date, IVHistoryRow.iv)
-                .where(IVHistoryRow.symbol == symbol)
+                .where(IVHistoryRow.symbol == symbol, IVHistoryRow.flagged.is_not(True))
                 .order_by(IVHistoryRow.obs_date)
             ).all()
     except Exception as exc:

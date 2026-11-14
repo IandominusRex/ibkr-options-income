@@ -526,6 +526,12 @@ async def run() -> None:
         # staleness so a mid-run abort starves the freshest names, not the same
         # alphabetical tail every night.
         try:
+            # The IV sanity check (Task 10) judges QQQ/SPY/TQQQ IV against the VIX family's close:
+            # append the reference closes first so today's IV meets today's index close.
+            await _append_daily_prices([])
+        except Exception:
+            logger.exception("EOD: reference price append failed — IV sanity may use older closes")
+        try:
             held = [p.symbol for p in positions if p.sec_type == "STK"]
             await _append_daily_iv(ib, _iv_symbols(held=held))
         except Exception:
