@@ -198,6 +198,12 @@ portfolio:
   # of net liq combined across both names, not a change to either one's own ceiling.
   max_large_positions: 2
   max_pct_per_ticker_large: 25.0
+  # The index class (risk-envelope Task 21, spec §3.6, ruling E9): ONE lot of a broad-index ETF
+  # listed here may reach broad_index_etf_collateral_pct of net liq without a large-position slot
+  # (further lots need a slot). It still counts in the sector, CSP, cash, U_ew and S10 tests.
+  # SMH and SOXX stay out (sector funds); SPY joins at the E3 cutover (plan Task 39).
+  broad_index_etfs: [QQQ]               # default [] when the key is absent
+  broad_index_etf_collateral_pct: 15.0  # default 15.0
 
   max_margin_usage_pct: 50.0
   max_new_positions_per_run: 10

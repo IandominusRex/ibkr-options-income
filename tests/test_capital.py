@@ -449,3 +449,107 @@ def test_leveraged_collateral_counts_at_leverage_in_ticker_and_csp_budgets():
     assert fresh.cash_used == pytest.approx(4_000.0)
     assert fresh.csp_collateral == pytest.approx(12_000.0)
     assert fresh.ticker_collateral["SOXL"] == pytest.approx(12_000.0)
+
+
+# --- risk-envelope Task 21: the index collateral class (spec §3.6, ruling E9) ------------------
+
+INDEX_RISK = {
+    "portfolio": {
+        **RISK["portfolio"],
+        "broad_index_etfs": ["QQQ"],
+        "broad_index_etf_collateral_pct": 15.0,
+    }
+}
+# net liq 300k: standard ticker cap 30k (10%), index cap 45k (15%), large ceiling 75k; one slot.
+QQQ_LOT = 33_000.0  # 11% of net liq
+
+
+def _slots_full() -> object:
+    budgets = seed_budgets([], lambda s: "tech")
+    budgets.large_tickers.add("META")  # the one large slot is taken by another name
+    return budgets
+
+
+def _fit(symbol: str, budgets, unit: float = QQQ_LOT, hard_max: int = 1):
+    return max_contracts(
+        unit_collateral=unit,
+        current_iv=20.0,
+        dte=30,
+        symbol=symbol,
+        sector="index",
+        caps=resolve_caps(_account(cash=200_000.0), INDEX_RISK),
+        budgets=budgets,
+        hard_max=hard_max,
+    )
+
+
+def test_one_qqq_lot_at_eleven_percent_needs_no_slot():
+    caps = resolve_caps(_account(cash=200_000.0), INDEX_RISK)
+    assert caps.index_names == frozenset({"QQQ"})
+    assert caps.index_ticker_collateral == pytest.approx(45_000.0)
+    budgets = _slots_full()
+    assert _fit("QQQ", budgets) == (1, "")
+    charge(
+        contracts=1,
+        unit_collateral=QQQ_LOT,
+        current_iv=20.0,
+        dte=30,
+        symbol="QQQ",
+        sector="index",
+        caps=caps,
+        budgets=budgets,
+    )
+    assert "QQQ" not in budgets.large_tickers  # the index lot took no slot
+    # past 15% of net liq even the first lot needs a slot
+    assert _fit("QQQ", _slots_full(), unit=46_000.0) == (0, "large_slot")
+
+
+def test_a_second_lot_needs_a_slot():
+    held = _short_put("QQQ", strike=330.0, contracts=1)  # $33,000 already held (11%)
+    caps = resolve_caps(_account(cash=200_000.0), INDEX_RISK)
+    budgets = seed_budgets([held], lambda s: "index", caps=caps)
+    assert "QQQ" not in budgets.large_tickers  # the held index lot occupies no slot
+    budgets.large_tickers.add("META")
+    assert _fit("QQQ", budgets, unit=5_000.0) == (0, "large_slot")
+    free = seed_budgets([held], lambda s: "index", caps=caps)
+    assert _fit("QQQ", free, unit=5_000.0)[0] >= 1  # with a slot free it may grow, into the slot
+
+
+def test_the_index_lot_still_counts_in_sector_and_envelope():
+    from src.analytics.shock import uew
+    from src.common.envelope_types import BookLine, ShockInputs
+
+    caps = resolve_caps(_account(cash=200_000.0), INDEX_RISK)
+    budgets = seed_budgets([], lambda s: "index")
+    charge(
+        contracts=1,
+        unit_collateral=QQQ_LOT,
+        current_iv=20.0,
+        dte=30,
+        symbol="QQQ",
+        sector="index",
+        caps=caps,
+        budgets=budgets,
+    )
+    assert budgets.ticker_collateral["QQQ"] == pytest.approx(QQQ_LOT)
+    assert budgets.csp_collateral == pytest.approx(QQQ_LOT)
+    assert budgets.sector_risk["index"] > 0
+    put = BookLine(
+        symbol="QQQ", kind="short_put", qty=1.0, spot=340.0, strike=330.0, dte=30, iv=0.2
+    )
+    inputs = ShockInputs(
+        lines=(put,),
+        betas={"QQQ": 1.1},
+        betas_smh={"QQQ": 1.0},
+        leverage={},
+        governing={},
+        tech_linked=frozenset({"QQQ"}),
+        semis=frozenset(),
+        nlv=300_000.0,
+    )
+    assert uew(inputs) == pytest.approx(0.11)  # U_ew counts the index put at its strike
+
+
+def test_smh_is_not_in_the_class():
+    assert _fit("SMH", _slots_full()) == (0, "large_slot")
+    assert _fit("SPY", _slots_full()) == (0, "large_slot")  # SPY joins only at E3

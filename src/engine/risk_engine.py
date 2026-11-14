@@ -34,6 +34,7 @@ from src.engine.capital import (
     Caps,
     ReleaseCandidate,
     charge,
+    index_lot,
     release_reasons,
     resolve_caps,
     risk_units,
@@ -126,6 +127,7 @@ def _cumulative_reasons(
     """
     reasons: list[str] = []
     weighted = cand.collateral * max(1, leverage)
+    held = budgets.ticker_collateral.get(cand.underlying, 0.0)
     # --- Cumulative concentration, measured in RISK UNITS. Raw collateral encodes share
     # price, which is not a risk measure: a 10-for-1 split would make a name tradeable
     # overnight with identical risk. Risk units (collateral x IV x sqrt(DTE/365)) put a
@@ -133,10 +135,12 @@ def _cumulative_reasons(
     # to a stricter raw-collateral cap.
     #
     # CUMULATIVE per-ticker collateral: this candidate on top of what is already held.
-    cum_collateral = budgets.ticker_collateral.get(cand.underlying, 0.0) + weighted
+    cum_collateral = held + weighted
+    # The index class's one slot-free lot (Task 21), exactly as `_fits` grants it.
+    first_index_lot = index_lot(cand.underlying, held, cum_collateral, caps)
     units = risk_units(cand.collateral, cand.current_iv, cand.dte)
     if units is None:
-        if cum_collateral > caps.max_ticker_collateral:
+        if cum_collateral > caps.max_ticker_collateral and not first_index_lot:
             reasons.append("concentration_limit")
     else:
         if budgets.ticker_risk.get(cand.underlying, 0.0) + units > caps.max_ticker_risk:
@@ -151,7 +155,7 @@ def _cumulative_reasons(
     # `max_pct_per_ticker_large`, whatever the candidate's own IV says. A ticker already
     # holding a slot (seeded from the book, or claimed by an earlier representative this
     # cycle via `capital.charge`) needs no NEW free slot for another lot on the same name.
-    if cum_collateral > caps.max_ticker_collateral:
+    if cum_collateral > caps.max_ticker_collateral and not first_index_lot:
         if (
             cand.underlying not in budgets.large_tickers
             and len(budgets.large_tickers) >= caps.max_large_positions

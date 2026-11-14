@@ -762,3 +762,20 @@ def test_record_mode_records_and_admits(db):
     assert off["b"].verdict == Verdict.PASS and off["b"].envelope_would == []
     with session_scope() as s:
         assert s.query(SizingActionRow).filter_by(kind="envelope_record").count() == 1
+
+
+def test_the_gate_grants_the_index_lot_as_the_sizer_does(monkeypatch):
+    """Task 21: with both large slots taken, one QQQ lot at 11% of net liq passes the gate (the
+    index class), and the same lot on SMH (not in the class) needs a slot."""
+    set_portfolio(
+        monkeypatch,
+        broad_index_etfs=["QQQ"],
+        broad_index_etf_collateral_pct=15.0,
+        max_large_positions=2,
+    )
+    big = _book(60_000, "BIGA") + _book(60_000, "BIGB")
+    qqq = _csp("q", "QQQ", collateral=55_000.0, current_iv=20.0)
+    smh = _csp("s", "SMH", collateral=55_000.0, current_iv=20.0)
+    out = _gate([qqq, smh], sizing=ctx(N, N), positions=big)
+    assert out["q"].verdict == Verdict.PASS, out["q"].reasons
+    assert "large_position_slot_full" in out["s"].reasons

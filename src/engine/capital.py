@@ -58,6 +58,23 @@ class Caps:
     max_ticker_collateral: float
     max_large_positions: int
     large_ticker_collateral: float
+    # The index class (risk-envelope Task 21, spec §3.6, E9): one lot of a broad-index ETF
+    # (``portfolio.broad_index_etfs``) may reach ``index_ticker_collateral`` without a large slot.
+    index_ticker_collateral: float = 0.0
+    index_names: frozenset[str] = frozenset()
+
+
+def index_lot(symbol: str, cum_before: float, cum_after: float, caps: Caps) -> bool:
+    """True for the index class's one slot-free lot: a listed broad-index ETF that holds no
+    position yet (*cum_before* is 0) and whose cumulative collateral after the lot is within
+    ``index_ticker_collateral``. Further lots, and SMH, SOXX or any other name, meet the standard
+    cap and the large-position slot. It still counts in every other budget (sector, CSP, cash,
+    risk units) and in the envelope's U_ew and S10."""
+    return (
+        symbol.upper() in caps.index_names
+        and cum_before <= 0.0
+        and cum_after <= caps.index_ticker_collateral
+    )
 
 
 @dataclass
@@ -109,6 +126,10 @@ def resolve_caps(account: AccountSnapshot, risk: dict, *, value_claim: float = 0
         max_ticker_collateral=net_liq * float(p.get("max_collateral_per_ticker_pct", 10.0)) / 100.0,
         max_large_positions=int(p.get("max_large_positions", 1)),
         large_ticker_collateral=net_liq * float(p.get("max_pct_per_ticker_large", 25.0)) / 100.0,
+        index_ticker_collateral=net_liq
+        * float(p.get("broad_index_etf_collateral_pct", 15.0))
+        / 100.0,
+        index_names=frozenset(str(s).upper() for s in (p.get("broad_index_etfs") or [])),
     )
 
 
@@ -216,7 +237,10 @@ def seed_budgets(
         )
     if caps is not None:
         for key, collateral in budgets.ticker_collateral.items():
-            if collateral > caps.max_ticker_collateral:
+            # a held index-class lot within its cap occupies no slot (Task 21)
+            if collateral > caps.max_ticker_collateral and not index_lot(
+                key, 0.0, collateral, caps
+            ):
                 budgets.large_tickers.add(key)
     return budgets
 
@@ -241,7 +265,9 @@ def _fits(
     # Per-ticker collateral is CUMULATIVE: this lot on top of whatever the account already
     # holds in the same name. Comparing the marginal lot alone made both ticker-level brakes
     # blind to the book — a name already at the ceiling looked empty to every new candidate.
-    cum_collateral = budgets.ticker_collateral.get(symbol, 0.0) + weighted
+    cum_before = budgets.ticker_collateral.get(symbol, 0.0)
+    cum_collateral = cum_before + weighted
+    first_index_lot = index_lot(symbol, cum_before, cum_collateral, caps)
 
     if budgets.cash_used + collateral > caps.deployable_cash:
         return "cash"
@@ -250,8 +276,9 @@ def _fits(
 
     units = risk_units(collateral, current_iv, dte)
     if units is None:
-        # No IV: fall back to the stricter raw-collateral cap.
-        if cum_collateral > caps.max_ticker_collateral:
+        # No IV: fall back to the stricter raw-collateral cap (the index class's first lot is
+        # held to its own, larger cap instead, as in the slot test below).
+        if cum_collateral > caps.max_ticker_collateral and not first_index_lot:
             return "ticker_collateral"
     else:
         if budgets.ticker_risk.get(symbol, 0.0) + units > caps.max_ticker_risk:
@@ -268,7 +295,7 @@ def _fits(
     # `max_pct_per_ticker_large`. A ticker that already occupies a slot (seeded from the
     # existing book, or claimed by an earlier candidate this cycle — see `charge`) needs no
     # NEW free slot to add another lot; only a ticker not yet counted as large does.
-    if cum_collateral > caps.max_ticker_collateral:
+    if cum_collateral > caps.max_ticker_collateral and not first_index_lot:
         if (
             symbol not in budgets.large_tickers
             and len(budgets.large_tickers) >= caps.max_large_positions
@@ -354,7 +381,9 @@ def charge(
         budgets.ticker_risk[symbol] = budgets.ticker_risk.get(symbol, 0.0) + units
         if sector:
             budgets.sector_risk[sector] = budgets.sector_risk.get(sector, 0.0) + units
-    if cum_before + weighted > caps.max_ticker_collateral:
+    if cum_before + weighted > caps.max_ticker_collateral and not index_lot(
+        symbol, cum_before, cum_before + weighted, caps
+    ):
         budgets.large_tickers.add(symbol)
 
 
