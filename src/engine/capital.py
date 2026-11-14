@@ -94,7 +94,13 @@ class Budgets:
     large_tickers: set[str] = field(default_factory=set)
 
 
-def resolve_caps(account: AccountSnapshot, risk: dict, *, value_claim: float = 0.0) -> Caps:
+def resolve_caps(
+    account: AccountSnapshot,
+    risk: dict,
+    *,
+    value_claim: float = 0.0,
+    csp_fraction: float = 1.0,
+) -> Caps:
     """Resolve config percentages into absolute dollar limits for this account.
 
     Order of application is fixed and deliberately not configurable: the cash reserve comes
@@ -105,6 +111,11 @@ def resolve_caps(account: AccountSnapshot, risk: dict, *, value_claim: float = 0
     comes off excess liquidity before the reserve: the value book's whole contribution to it
     (its stock at (1 - maintenance) plus approved buys not yet filled), so the wheel is never
     handed the liquidity value stock bought with cash still appears to leave.
+
+    *csp_fraction* multiplies ``max_csp_collateral`` only (risk-envelope Task 22: the slow drawdown
+    breaker's ``csp_budget_fraction`` while it is tripped, ``storage.slow_breaker``); every caller
+    that sizes or gates a put passes the same number, so the generator, the gate and the send-time
+    re-fit cannot disagree. It is a hard cap (it sits in the unscaled caps), not a regime scale.
     """
     p = risk.get("portfolio", {})
     net_liq = max(0.0, account.net_liquidation)
@@ -120,7 +131,8 @@ def resolve_caps(account: AccountSnapshot, risk: dict, *, value_claim: float = 0
         deployable_cash=deployable,
         max_csp_collateral=deployable
         * float(p.get("max_csp_allocation_pct_of_deployable", 100.0))
-        / 100.0,
+        / 100.0
+        * max(0.0, csp_fraction),
         max_ticker_risk=net_liq * float(p.get("max_risk_units_per_ticker_pct", 5.0)) / 100.0,
         max_sector_risk=net_liq * float(p.get("max_risk_units_per_sector_pct", 25.0)) / 100.0,
         max_ticker_collateral=net_liq * float(p.get("max_collateral_per_ticker_pct", 10.0)) / 100.0,

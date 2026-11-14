@@ -49,7 +49,11 @@ from src.engine.regime_limits import (
     trim_for_send,
 )
 from src.engine.risk_engine import validate_candidates
-from src.execution.circuit_breakers import evaluate_breakers, remaining_entry_allowance
+from src.execution.circuit_breakers import (
+    evaluate_breakers,
+    evaluate_slow_breaker,
+    remaining_entry_allowance,
+)
 from src.execution.executor import execute_candidate
 from src.ibkr.portfolio import get_account_snapshot_async, get_positions
 from src.regime.actions import link_order, record_action, record_envelope_verdicts
@@ -486,6 +490,19 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
         cap_remaining = remaining_entry_allowance(_s)
     # Already halted (rolls-only pass): the breaker has nothing left to trip.
     reason = None if rolls_only else evaluate_breakers(positions, account_snap.net_liquidation)
+    # The slow drawdown breaker (Task 22) is not a halt: a trip shrinks the CSP budget and stops
+    # the spreads book, and this pass goes on. It notifies once, on the call that trips it.
+    slow_notice = evaluate_slow_breaker(account_snap.net_liquidation)
+    if slow_notice is not None:
+        log.critical("%s", slow_notice)
+        for thread in [
+            None,
+            *([int(cfg.secrets.telegram_thread_scan)] if cfg.secrets.telegram_thread_scan else []),
+        ]:
+            try:
+                await bot.send_message(chat_id=chat_id, message_thread_id=thread, text=slow_notice)
+            except Exception:
+                log.exception("Failed to send the slow-breaker notification")
     if reason is not None:
         set_halted(True, reason, source="breaker")
         log.critical("Circuit breaker tripped — %s. Execution halted.", reason)

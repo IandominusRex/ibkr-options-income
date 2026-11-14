@@ -2279,6 +2279,19 @@ the new `envelope_snapshots` table, so restart the trading service before the AP
 | `python -m scripts.envelope stabilisation` | Spec §3.8's three conditions for raising a limit after the glide: the market-level bottoming signal (from the regime record), the latest survivability-harness result file, and your ruling. Reads only; it never raises a limit. |
 | `python -m scripts.envelope switch NAME VALUE` | Set one by hand (refused if the value is outside the switch's set); sends a Telegram notice. Reverse a report's change with the default it prints, e.g. `python -m scripts.envelope switch slow_breaker off`. |
 | `python -m scripts.envelope apply-reports` | Apply the PASSed result files in `data/envelope_reports/` now. The EOD run does this every evening. |
+| `python -m scripts.envelope reset-slow-breaker` | The human reset of the slow drawdown breaker (below): clears the trip, sends a notice, and restarts the drawdown window from today's high. Nothing else clears it. |
+
+### The slow drawdown breaker (Task 22, 2026-11-15)
+
+A second drawdown leg beside the 3-session one: net liquidation against its highest level of the last 20 sessions
+(`envelope.slow_breaker.window_sessions`). Its threshold is the `slow_breaker` switch: `off` (the shipped value, and
+always in live), or 8, 10, 12 or 15 percent; a PASSed E14 replay turns it on in paper, or you do
+(`python -m scripts.envelope switch slow_breaker 10`). **A trip is not a halt**: orders, rolls and closes keep
+running. The wheel's total CSP allocation is halved (`envelope.slow_breaker.csp_budget_fraction`, 0.5), the spreads
+book opens nothing, and you get one Telegram notice. It stays tripped when the drawdown recovers; only
+`python -m scripts.envelope reset-slow-breaker` clears it, and the window then restarts from the reset (so a book still
+under its old high is not tripped again at once). `python -m scripts.envelope show` prints its state. It is
+evaluated on each scan and on each order poll.
 
 ### Quote capture (Section E, 2026-11-14)
 

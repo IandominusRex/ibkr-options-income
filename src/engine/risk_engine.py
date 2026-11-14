@@ -62,6 +62,7 @@ from src.engine.regime_limits import (
     sizing_note,
     vrp_waiver,
 )
+from src.storage.slow_breaker import csp_budget_fraction as slow_breaker_fraction
 
 _INCOME_STRATEGIES = (Strategy.COVERED_CALL, Strategy.CASH_SECURED_PUT)
 
@@ -282,7 +283,7 @@ def validate_candidates(
 
     # The value book (spec §9.2-§9.3, revision 4): off -> nothing below changes the wheel.
     vx: ValueExposure = value_exposure()
-    caps = resolve_caps(account, risk, value_claim=vx.claim)
+    caps = resolve_caps(account, risk, value_claim=vx.claim, csp_fraction=slow_breaker_fraction())
     sector_of_fn = get_config().universe.get("sectors", {}).get
 
     def leverage_of(name: str) -> int:

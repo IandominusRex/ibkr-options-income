@@ -46,6 +46,7 @@ from src.engine.regime_limits import (
     sizing_note,
     vrp_waiver,
 )
+from src.storage.slow_breaker import csp_budget_fraction as slow_breaker_fraction
 from src.strategies._evaluation import (
     REASON_BELOW_FAIR_VALUE,
     REASON_DELTA_MISSING,
@@ -160,7 +161,7 @@ def screen_csp_candidates(
     # The value book's holdings and approved buys (value book spec §9.3, revision 4), exactly as
     # the gate counts them, so the sizer and the gate cannot disagree; off -> no change.
     vx = value_exposure()
-    caps = resolve_caps(account, risk, value_claim=vx.claim)
+    caps = resolve_caps(account, risk, value_claim=vx.claim, csp_fraction=slow_breaker_fraction())
     sector_of = cfg.universe.get("sectors", {}).get
 
     # Budgets are seeded with the UNSCALED caps (so the large-position slots never move with the

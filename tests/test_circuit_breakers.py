@@ -405,3 +405,162 @@ def test_a_trip_card_shows_the_loss_by_book(tmp_path, monkeypatch) -> None:
     assert reason == "Daily mark-to-market loss $16,000 (wheel -$9,000, spreads -$7,000)"
     card = format_breaker_halt(reason)
     assert "HALTED" in card and "wheel -$9,000, spreads -$7,000" in card and "/resume" in card
+
+
+# --------------------------------------------------------------------------- #
+# The slow drawdown breaker spanning books (risk-envelope Task 22; spec §3.4.5, ruling E14)
+# --------------------------------------------------------------------------- #
+
+
+def _slow_history() -> None:
+    """A 20-session high of 1,000k ten days back; the 3-session window sits at 950k."""
+    from tests.conftest import seed_net_liq_high
+
+    seed_net_liq_high(1_000_000.0, days_ago=10)
+    seed_net_liq_high(950_000.0, days_ago=2)
+    seed_net_liq_high(950_000.0, days_ago=1)
+    seed_net_liq_high(900_000.0, days_ago=0)
+
+
+def _slow_on(threshold: str = "10") -> None:
+    from src.storage.envelope_switches import set_switch
+
+    set_switch("slow_breaker", threshold, source="cli")
+
+
+def test_slow_leg_trips_at_the_switch_threshold(tmp_path, monkeypatch) -> None:
+    import json
+
+    from src.execution.circuit_breakers import evaluate_slow_breaker, slow_drawdown
+    from src.storage.system_settings import get_setting_strict
+
+    _db_setup(tmp_path, monkeypatch)
+    _slow_history()
+    _slow_on("10")
+    assert slow_drawdown(900_000.0) == pytest.approx(10.0)
+    assert evaluate_slow_breaker(901_000.0) is None  # 9.9%: under the line
+    assert get_setting_strict("slow_breaker_tripped") is None
+    notice = evaluate_slow_breaker(900_000.0)  # exactly 10%
+    assert notice is not None and "TRIPPED" in notice and "reset-slow-breaker" in notice
+    state = json.loads(get_setting_strict("slow_breaker_tripped") or "{}")
+    assert state["tripped"] is True and state["drawdown_pct"] == pytest.approx(10.0)
+    assert state["threshold_pct"] == 10.0
+    assert evaluate_slow_breaker(850_000.0) is None  # notifies once, on the call that trips it
+
+
+def test_slow_leg_off_never_trips(tmp_path, monkeypatch) -> None:
+    from src.common.config import Config
+    from src.execution.circuit_breakers import evaluate_slow_breaker
+    from src.storage.system_settings import get_setting_strict
+
+    _db_setup(tmp_path, monkeypatch)
+    _slow_history()
+    assert evaluate_slow_breaker(500_000.0) is None  # the default: off
+    assert get_setting_strict("slow_breaker_tripped") is None
+    _slow_on("15")
+    assert evaluate_slow_breaker(900_000.0) is None  # 10% is under a 15% threshold
+    _slow_on("8")
+    # live reads every switch as its default (off) whatever is stored
+    monkeypatch.setattr(Config, "is_live", property(lambda self: True))
+    assert evaluate_slow_breaker(500_000.0) is None
+    assert get_setting_strict("slow_breaker_tripped") is None
+
+
+def test_a_trip_scales_the_csp_budget(tmp_path, monkeypatch) -> None:
+    from src.common.config import Config, get_config
+    from src.common.schemas import Verdict
+    from src.engine.capital import resolve_caps
+    from src.engine.risk_engine import validate_candidates
+    from src.execution.circuit_breakers import evaluate_slow_breaker
+    from src.storage import slow_breaker
+    from src.storage.envelope_switches import set_switch
+    from tests.test_engine import _account, _candidate
+
+    _db_setup(tmp_path, monkeypatch)
+    account = _account(net_liq=500_000.0, cash=100_000.0)  # deployable 80k after the 20% reserve
+    cand = _candidate(candidate_id="big", collateral=50_000.0)
+
+    def verdict() -> list[str]:
+        v = validate_candidates([cand], account, [])[0]
+        return [] if v.verdict == Verdict.PASS else list(v.reasons)
+
+    risk = get_config().risk
+    assert resolve_caps(account, risk).max_csp_collateral == pytest.approx(80_000.0)
+    half = resolve_caps(account, risk, csp_fraction=0.5)
+    assert half.max_csp_collateral == pytest.approx(40_000.0)
+    assert verdict() == []
+    _slow_history()
+    _slow_on("10")
+    assert slow_breaker.csp_budget_fraction() == 1.0  # on, but not tripped
+    assert evaluate_slow_breaker(900_000.0) is not None
+    assert slow_breaker.csp_budget_fraction() == 0.5
+    assert "csp_allocation_limit" in verdict()  # 50k fits 80k, not 40k
+    # switched off, an old trip does not throttle the wheel; in live the same
+    set_switch("slow_breaker", "off", source="cli")
+    assert slow_breaker.csp_budget_fraction() == 1.0 and verdict() == []
+    set_switch("slow_breaker", "10", source="cli")
+    assert slow_breaker.csp_budget_fraction() == 0.5
+    monkeypatch.setattr(Config, "is_live", property(lambda self: True))
+    assert slow_breaker.csp_budget_fraction() == 1.0 and verdict() == []
+
+
+def test_a_trip_stops_spreads_entries(tmp_path, monkeypatch) -> None:
+    """The setting Task 3's spreads gate reads: the service's own reader sees the trip."""
+    from types import SimpleNamespace
+
+    from src.execution.circuit_breakers import evaluate_slow_breaker
+    from src.spreads.service import SpreadsService
+
+    _db_setup(tmp_path, monkeypatch)
+    _slow_history()
+    _slow_on("10")
+    stub = SimpleNamespace(_account_unreadable=False)
+    assert SpreadsService._account_state(stub) == (False, False)  # type: ignore[arg-type]
+    assert evaluate_slow_breaker(900_000.0) is not None
+    assert SpreadsService._account_state(stub) == (False, True)  # type: ignore[arg-type]
+
+
+def test_only_a_human_resets_it(tmp_path, monkeypatch, capsys) -> None:
+    from unittest.mock import AsyncMock
+
+    from scripts import envelope as cli
+    from src.execution.circuit_breakers import evaluate_slow_breaker
+    from src.storage import slow_breaker
+    from tests.conftest import seed_net_liq_high
+
+    _db_setup(tmp_path, monkeypatch)
+    _slow_history()
+    _slow_on("10")
+    assert evaluate_slow_breaker(900_000.0) is not None
+    assert evaluate_slow_breaker(1_100_000.0) is None  # a recovery does not clear it
+    assert slow_breaker.is_tripped()
+    notice = AsyncMock(return_value=True)
+    monkeypatch.setattr(cli, "send_notice", notice)
+    assert cli.main(["show"]) == 0 and "TRIPPED" in capsys.readouterr().out
+    assert cli.main(["reset-slow-breaker"]) == 0
+    notice.assert_awaited_once()
+    assert not slow_breaker.is_tripped()
+    assert cli.main(["reset-slow-breaker"]) == 0  # nothing left to reset
+    assert "nothing to reset" in capsys.readouterr().out
+    # the window restarts at the reset: still 10% under the OLD high, but not tripped again at once
+    assert evaluate_slow_breaker(900_000.0) is None
+    assert not slow_breaker.is_tripped()
+    # ...and a fresh 10% fall from the post-reset high trips it
+    seed_net_liq_high(900_000.0, days_ago=0)
+    assert evaluate_slow_breaker(810_000.0) is not None
+
+
+def test_a_trip_is_not_a_halt(tmp_path, monkeypatch) -> None:
+    from src.execution.circuit_breakers import evaluate_breakers, evaluate_slow_breaker
+    from src.storage import slow_breaker
+    from src.storage.system_settings import is_halted
+
+    _db_setup(tmp_path, monkeypatch)
+    _slow_history()
+    _slow_on("10")
+    # 5.3% under the 3-session high (950k): the 6% fast leg stays quiet
+    assert evaluate_breakers([], net_liquidation=900_000.0) is None
+    assert evaluate_slow_breaker(900_000.0) is not None
+    assert slow_breaker.is_tripped()
+    assert is_halted() is False
+    assert evaluate_breakers([], net_liquidation=900_000.0) is None

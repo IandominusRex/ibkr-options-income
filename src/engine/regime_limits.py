@@ -72,6 +72,7 @@ from src.common.schemas import (
     TradeCandidate,
 )
 from src.engine.capital import max_contracts, resolve_caps, scale_caps, seed_budgets
+from src.storage.slow_breaker import csp_budget_fraction as slow_breaker_fraction
 
 IndexName = Literal["SPY", "QQQ"]
 Tier = Literal["calm", "stressed"]
@@ -541,7 +542,9 @@ def scaled_budget_fit(
         return None
     cfg = get_config()
     vx = value_exposure()  # the value book, counted as the gate counts it (Part 5)
-    caps = resolve_caps(account, cfg.risk, value_claim=vx.claim)
+    caps = resolve_caps(
+        account, cfg.risk, value_claim=vx.claim, csp_fraction=slow_breaker_fraction()
+    )
     use = (
         caps
         if floor_lot and floor_left(ctx, cand.underlying, {}) > 0

@@ -1464,6 +1464,16 @@ async def _run_scan_body(
         await tracker.error("account", "fetch failed — aborting")
         return result
     await tracker.tick("account", "✅")
+    # The slow drawdown breaker (risk-envelope Task 22): evaluated here as well as where the order
+    # poll runs the circuit breakers, so a trip reaches the spreads book without waiting for a
+    # queued wheel order. It notifies once, on the call that trips it; not a halt.
+    from src.execution.circuit_breakers import evaluate_slow_breaker
+
+    slow_notice = evaluate_slow_breaker(account.net_liquidation)
+    if slow_notice is not None:
+        from src.notify.notices import send_notice
+
+        await send_notice(slow_notice)
 
     # --- 2. Symbol universe ---
     would_own: list[str] = effective_universe()["would_own"]

@@ -347,6 +347,21 @@ Operator to-dos: re-copy `config/examples/value.yaml`'s `telegram:` and `prompt_
 
 ---
 
+## Built (2026-11-15 — risk envelope Section G: limits behind switches)
+
+Plan `docs/superpowers/plans/2026-11-14-risk-envelope.md` Tasks 22-25, spec
+`docs/superpowers/specs/2026-11-13-risk-envelope-design.md` §3.4.3-3.4.5, §3.5, §3.8. On `feat/risk-envelope`,
+unmerged. Every limit is a deterministic reason in the Rules Engine or the sizer behind a data-gated switch
+(`src/storage/envelope_switches.py`); in live every switch reads its default, so nothing here applies in live.
+
+- **The slow drawdown breaker spanning books (Task 22, E14).** A 20-session net-liquidation drawdown leg
+  (`circuit_breakers.evaluate_slow_breaker`) at the `slow_breaker` switch's threshold (off, 8, 10, 12 or 15
+  percent; ships off). A trip writes `slow_breaker_tripped`: the spreads service opens nothing (Task 3's reader)
+  and the wheel's total CSP allocation is multiplied by `csp_budget_fraction` (0.5) in the generator, the gate
+  and the send-time re-fit. It is not a halt, and only a human resets it (`scripts.envelope reset-slow-breaker`,
+  which restarts the window). Evaluated on every scan and every order poll. Not built: demoting Claude's
+  risk-changing rungs to record-only (the Mastermind rungs do not exist yet).
+
 ## Built (2026-11-15 — risk envelope Section F: the envelope gate)
 
 Plan `docs/superpowers/plans/2026-11-14-risk-envelope.md` Tasks 18-21, spec
@@ -393,7 +408,7 @@ the daemons run none of it until a merge and `./ibkr restart`.
   wheel's master halt and the slow drawdown breaker (`system_settings`, read strictly each cycle) stop
   new entries too (`account_halted`, `slow_breaker`); an unreadable state blocks and alerts; exits keep
   running. Before this, the only spreads halt was `data/spreads.halt` and the Oct 28 FOMC day traded.
-  The slow breaker itself is Task 22: until then its key is absent and reads as not tripped.
+  The slow breaker itself is Task 22 (Section G, below): its key is absent until it first trips.
 - **Spreads risk in shares of net liquidation; the month stop (Task 4).** The spreads caps moved from
   the book's notional `starting_capital_usd` ($100k, 10% a trade: ~$10k, 1.5% of NLV) to the account's
   NetLiquidation: 0.5% of NLV per trade and in total, today's realised + open loss at 1% stops the day,

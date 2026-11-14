@@ -2667,6 +2667,20 @@ class IvSanityCfg(_KeyedCfg):
         return {str(k).upper(): str(s) for k, s in v.items()}
 
 
+class SlowBreakerCfg(_KeyedCfg):
+    """The slow drawdown breaker spanning books (risk-envelope Task 22; spec §3.4.5, ruling E14).
+
+    ``window_sessions`` is the rolling high the account's net liquidation is measured against;
+    ``csp_budget_fraction`` multiplies the total CSP allocation while the breaker is tripped. The
+    drawdown threshold itself is the ``slow_breaker`` switch's value (off, 8, 10, 12 or 15 percent).
+    """
+
+    KEYS: ClassVar[tuple[str, ...]] = ("window_sessions", "csp_budget_fraction")
+
+    window_sessions: int = Field(default=20, ge=2)
+    csp_budget_fraction: float = Field(default=0.5, gt=0, le=1)
+
+
 class RiskEnvelopeCfg(_KeyedCfg):
     """The risk envelope (risk-envelope plan Tasks 12-13; spec §3.4, rulings E4, E5, P5, H7, H8).
 
@@ -2678,7 +2692,8 @@ class RiskEnvelopeCfg(_KeyedCfg):
     until SOXX has its own history. Live IV is read in chunks of ``live_iv_batch`` lines (at most
     10), each waited on for ``live_iv_timeout_seconds``. ``t20_trigger_points`` is H8's trigger:
     the first measured session on which T20_gross - S10_gross exceeds it turns the ``t20_limit``
-    switch on (paper), once (Task 13). Lives in ``config/risk_limits.yaml -> envelope:``; a missing block means these defaults.
+    switch on (paper), once (Task 13). ``slow_breaker`` is Task 22's. Lives in
+    ``config/risk_limits.yaml -> envelope:``; a missing block means these defaults.
     """
 
     KEYS: ClassVar[tuple[str, ...]] = (
@@ -2694,6 +2709,7 @@ class RiskEnvelopeCfg(_KeyedCfg):
         "live_iv_batch",
         "live_iv_timeout_seconds",
         "t20_trigger_points",
+        "slow_breaker",
     )
 
     s10_target_pct: float = Field(default=15.0, gt=0, lt=100)
@@ -2710,6 +2726,7 @@ class RiskEnvelopeCfg(_KeyedCfg):
     live_iv_batch: int = Field(default=10, ge=1, le=10)
     live_iv_timeout_seconds: float = Field(default=8.0, gt=0)
     t20_trigger_points: float = Field(default=3.0, gt=0)
+    slow_breaker: SlowBreakerCfg = Field(default_factory=SlowBreakerCfg)
 
     @field_validator("semis_names")
     @classmethod

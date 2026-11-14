@@ -20,8 +20,16 @@ Breakers, all configured under `automation:` in settings.yaml:
     all-time peak, which left a standing drawdown halting every morning).
     Catches the slow bleed that no single day's loss trips.
 
+  * the **slow drawdown breaker** (risk-envelope Task 22, spec §3.4.5, ruling E14) — a rolling
+    ``envelope.slow_breaker.window_sessions`` (20) leg on the account's net liquidation beside the
+    3-session one. It is not a halt: on a trip it writes ``slow_breaker_tripped`` (the spreads
+    service stops its entries; the wheel's total CSP allocation is multiplied by
+    ``csp_budget_fraction``, ``storage.slow_breaker.csp_budget_fraction``) and a human resets it.
+    Its threshold is the ``slow_breaker`` switch (off, 8, 10, 12 or 15 percent; off in live).
+
 Nothing here feeds the risk engine, scoring, or sizing — it only gates whether the
 order machinery runs, so it stays clear of "the fence" around the deterministic layer.
+(The slow breaker's state is read by the sizer through ``storage.slow_breaker``, not from here.)
 """
 
 from __future__ import annotations
@@ -33,11 +41,13 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from src.common.config import get_config
-from src.common.market_hours import today_et
+from src.common.config import get_config, get_envelope_cfg
+from src.common.market_hours import is_trading_day, today_et
 from src.common.schemas import OrderState, PositionSnapshot
 from src.common.spreads_view import pnl_today as spreads_pnl_today
+from src.storage import slow_breaker
 from src.storage.db import session_scope
+from src.storage.envelope_switches import get_switch
 from src.storage.models import FillRow, OrderRow
 from src.storage.portfolio_snapshots import window_high_net_liq
 from src.storage.positions import load_latest_position_snapshot
@@ -337,3 +347,73 @@ def evaluate_breakers(positions: list[PositionSnapshot], net_liquidation: float)
     if ack is not None and (new_loss, new_dd) != (ack["loss"], ack["drawdown"]):
         record_breaker_ack(today, loss=new_loss, drawdown=new_dd)
     return reason
+
+
+def _sessions_since(day: date, today: date) -> int:
+    """Trading days from *day* to *today*, both ends counted (at least 1)."""
+    n, d = 0, day
+    while d <= today:
+        if is_trading_day(d):
+            n += 1
+        d += timedelta(days=1)
+    return max(n, 1)
+
+
+def _slow_raw(net_liquidation: float) -> tuple[float, float] | None:
+    """``(drawdown percent, window high)`` against the slow breaker's rolling high, or None when
+    net liq or the history is unknown. After a human reset the window restarts: the high is taken
+    over the sessions since the reset (at least the current one), never the whole old window."""
+    if net_liquidation <= 0:
+        return None
+    sessions = get_envelope_cfg().slow_breaker.window_sessions
+    reset = slow_breaker.reset_date()
+    if reset is not None:
+        sessions = min(sessions, _sessions_since(reset, today_et()))
+    hwm = window_high_net_liq(sessions)
+    if hwm <= 0:
+        return None
+    return max(0.0, (hwm - net_liquidation) / hwm * 100.0), hwm
+
+
+def slow_drawdown(net_liquidation: float) -> float | None:
+    """Percent drawdown of *net_liquidation* from the slow breaker's rolling high; None when the
+    high or net liq is unknown. Measures only: the trip is ``evaluate_slow_breaker``."""
+    raw = _slow_raw(net_liquidation)
+    return None if raw is None else raw[0]
+
+
+def evaluate_slow_breaker(net_liquidation: float) -> str | None:
+    """Trip the slow breaker when the drawdown reaches the ``slow_breaker`` switch's threshold.
+
+    Returns the one-time notice text on the call that trips it (the caller sends it), else None.
+    ``off`` (the default, and always in live) never trips; a trip that already stands is left as it
+    is, and a recovered drawdown never clears it: only a human does. It is **not a halt**: orders
+    still run (rolls, closes, covered calls); the wheel's CSP budget shrinks and the spreads
+    service stops entering (see ``storage.slow_breaker``). Never raises.
+    """
+    try:
+        threshold = get_switch("slow_breaker")
+        if threshold == "off":
+            return None
+        raw = _slow_raw(net_liquidation)
+        if raw is None or raw[0] < float(threshold):
+            return None
+        drawdown, hwm = raw
+        window = get_envelope_cfg().slow_breaker
+        if not slow_breaker.trip(
+            drawdown_pct=drawdown,
+            threshold_pct=float(threshold),
+            nlv=net_liquidation,
+            high=hwm,
+        ):
+            return None
+        return (
+            f"Slow breaker TRIPPED: net liquidation ${net_liquidation:,.0f} is {drawdown:.1f}% "
+            f"under its {window.window_sessions}-session high ${hwm:,.0f} (threshold "
+            f"{float(threshold):g}%). The CSP budget is now x{window.csp_budget_fraction:g} and the "
+            "spreads book opens nothing; orders, rolls and closes still run. It stays tripped "
+            "until you reset it: python -m scripts.envelope reset-slow-breaker"
+        )
+    except Exception:
+        log.warning("slow breaker evaluation failed", exc_info=True)
+        return None

@@ -9,6 +9,7 @@ Usage:
     python -m scripts.envelope stabilisation         # the three conditions for raising a limit (spec §3.8)
     python -m scripts.envelope switch NAME VALUE     # set one (source "cli"), with a Telegram notice
     python -m scripts.envelope apply-reports         # apply the PASSed files in data/envelope_reports/
+    python -m scripts.envelope reset-slow-breaker    # the human reset of the 20-session drawdown breaker
 
 In live every switch reads its default whatever is stored (``spxw_ready`` excepted), so a value
 set here takes effect in paper only.
@@ -26,6 +27,7 @@ from src.common.logging import setup_logging
 from src.common.market_hours import today_et
 from src.common.schemas import EnvelopeReportResult
 from src.notify.notices import send_notice
+from src.storage import slow_breaker
 from src.storage.db import init_db
 from src.storage.envelope_state import glide_span, latest_snapshot, limits_on, load_glide
 from src.storage.envelope_switches import (
@@ -52,7 +54,22 @@ def _show() -> int:
     for source in ("live", "stored"):
         print(_snapshot_text(latest_snapshot(source), source))
     print(_glide_text())
+    print(_slow_breaker_text())
     return 0
+
+
+def _slow_breaker_text() -> str:
+    try:
+        state = slow_breaker.read_state()
+    except Exception as exc:
+        return f"slow breaker: UNREADABLE ({exc})"
+    if not state or not state.get("tripped"):
+        return "slow breaker: not tripped"
+    return (
+        f"slow breaker: TRIPPED {state.get('at')} at {state.get('drawdown_pct')}% (threshold "
+        f"{state.get('threshold_pct')}%, high ${state.get('high'):,.0f}); reset it with "
+        "python -m scripts.envelope reset-slow-breaker"
+    )
 
 
 def _pct(v: float | None) -> str:
@@ -155,6 +172,26 @@ def _switch(name: str, value: str) -> int:
     return 0
 
 
+def _reset_slow_breaker() -> int:
+    """The human reset (spec §3.4.5): clears the trip and restarts the drawdown window."""
+    try:
+        cleared = slow_breaker.reset()
+    except Exception as exc:
+        print(f"error: the slow breaker state could not be read ({exc})", file=sys.stderr)
+        return 1
+    if cleared is None:
+        print("the slow breaker is not tripped: nothing to reset")
+        return 0
+    text = (
+        f"Slow breaker reset by hand (it tripped {cleared.get('at')} at {cleared.get('drawdown_pct')}%). "
+        "The CSP budget is back to normal and the spreads book may enter again; the drawdown window "
+        "restarts from today's high."
+    )
+    print(text)
+    asyncio.run(send_notice(text))
+    return 0
+
+
 def _apply_reports() -> int:
     messages = apply_reports()
     if not messages:
@@ -174,6 +211,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("name")
     s.add_argument("value")
     sub.add_parser("apply-reports", help="apply the PASSed result files now")
+    sub.add_parser(
+        "reset-slow-breaker", help="clear a tripped slow drawdown breaker (a human reset)"
+    )
     a = p.parse_args(argv)
 
     init_db()
@@ -183,6 +223,8 @@ def main(argv: list[str] | None = None) -> int:
         return _stabilisation()
     if a.cmd == "switch":
         return _switch(a.name, a.value)
+    if a.cmd == "reset-slow-breaker":
+        return _reset_slow_breaker()
     return _apply_reports()
 
 
