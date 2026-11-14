@@ -371,6 +371,12 @@ unmerged. Every limit is a deterministic reason in the Rules Engine or the sizer
   empty until then); the below-trend path at send time trusts the card's frozen tag (no bars there); an LES signal's
   bottoming condition uses the name's ladder signal or its bucket's market flag (the governing index has no signal
   of its own).
+- **The index class's multipliers and the T20 limit (Task 24, E10, H8).** `regime.csp.budget_multiplier_by_class.index_1x`
+  ({normal 1.0, cautious 1.0, stressed 0.8, crisis 0.5}) replaces the {1.0, 0.7, 0.4, 0.1} budget multipliers for
+  `portfolio.broad_index_etfs` (QQQ) while the `index_1x` switch is on (ships off, so recorded as `index_1x_record`
+  while off; off in live). It eases both the name's budget and the total CSP allocation. The research report that
+  turns it on (Task 29's replay) is not built yet. The T20 limit was already wired in Task 13; Task 24 adds its
+  end-to-end tests (`t20_limit` off: T20 is displayed only; on: `t20_budget` at the generator and the gate).
 
 ## Built (2026-11-15 — risk envelope Section F: the envelope gate)
 

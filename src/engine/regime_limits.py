@@ -140,14 +140,39 @@ def switch_on(ctx: SizingContext | None, name: str) -> bool:
     return ctx is not None and ctx.switches.get(name) == "on"
 
 
+def index_class(symbol: str) -> bool:
+    """True for a broad-index ETF (``portfolio.broad_index_etfs``): the ``index_1x`` tail class."""
+    listed = get_config().risk.get("portfolio", {}).get("broad_index_etfs") or []
+    return symbol.upper() in {str(s).upper() for s in listed}
+
+
+def class_multipliers(ctx: SizingContext | None, symbol: str) -> tuple[float, float] | None:
+    """``(ticker, book)`` multipliers from ``regime.csp.budget_multiplier_by_class.index_1x`` for an
+    index-class name (the same regimes pick them as for any name), or None for any other name and
+    when the regime limits are off. Both follow the class table: the index put's own budget and the
+    total CSP allocation it draws on are eased together, or the book budget would still throttle it
+    exactly when the evidence says leaning in pays (spec §3.8)."""
+    if ctx is None or not active(ctx) or not index_class(symbol):
+        return None
+    table = get_regime_cfg().csp.budget_multiplier_by_class["index_1x"]
+    spy = ctx.regimes.get("SPY", MarketRegime.NORMAL)
+    return table[name_regime(ctx, symbol)[0]], table[spy]
+
+
 def multipliers(ctx: SizingContext | None, symbol: str) -> tuple[float, float]:
     """``(ticker, book)`` budget multipliers for *symbol*; ``(1.0, 1.0)`` when inactive.
 
     ``book`` follows the SPY regime (the total CSP allocation); ``ticker`` follows the name's
-    regime (per-ticker and per-sector risk). Pass both to `capital.scale_caps`.
+    regime (per-ticker and per-sector risk). Pass both to `capital.scale_caps`. An index-class name
+    takes the ``index_1x`` class table instead while the ``index_1x`` switch is on
+    (`class_multipliers`); with it off the old table applies and the difference is recorded.
     """
     if ctx is None or not active(ctx):
         return 1.0, 1.0
+    if switch_on(ctx, "index_1x"):
+        by_class = class_multipliers(ctx, symbol)
+        if by_class is not None:
+            return by_class
     cfg = get_regime_cfg().csp.budget_multiplier
     spy = ctx.regimes.get("SPY", MarketRegime.NORMAL)
     return cfg[name_regime(ctx, symbol)[0]], cfg[spy]

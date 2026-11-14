@@ -242,6 +242,12 @@ regime:
                 HACK, IGV, CRWD, NBIS, IONQ, RGTI, BABA, TSLL, MARA]
   csp:
     budget_multiplier:  {normal: 1.0, cautious: 0.7, stressed: 0.4, crisis: 0.1}
+    # The index class's budget multipliers (Task 24, spec §3.8, E10): the broad-index ETFs in portfolio.broad_index_etfs
+    # take this table, both for the name's own budget and the total CSP allocation, in place of the one above, while the
+    # `index_1x` switch is on (ships off, off in live). With it off the difference is recorded in sizing_actions as
+    # `index_1x_record`. The only class is index_1x; every other name keeps the table above.
+    budget_multiplier_by_class:
+      index_1x: {normal: 1.0, cautious: 1.0, stressed: 0.8, crisis: 0.5}
     per_trade_fraction: {normal: 1.0, cautious: 0.6, stressed: 0.3, crisis: 0.1}
     max_new_per_day:    {normal: null, cautious: 6, stressed: 3, crisis: 1}
     # The guaranteed floor: new CSP lots per governing index per ET day that may exceed the

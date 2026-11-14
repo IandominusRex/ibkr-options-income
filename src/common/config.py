@@ -2102,6 +2102,12 @@ _DEFAULT_REGIME_BUDGET: dict[MarketRegime, float] = {
     MarketRegime.STRESSED: 0.4,
     MarketRegime.CRISIS: 0.1,
 }
+_DEFAULT_INDEX_1X_BUDGET: dict[MarketRegime, float] = {
+    MarketRegime.NORMAL: 1.0,
+    MarketRegime.CAUTIOUS: 1.0,
+    MarketRegime.STRESSED: 0.8,
+    MarketRegime.CRISIS: 0.5,
+}
 _DEFAULT_REGIME_PER_TRADE: dict[MarketRegime, float] = {
     MarketRegime.NORMAL: 1.0,
     MarketRegime.CAUTIOUS: 0.6,
@@ -2139,6 +2145,7 @@ class RegimeCspCfg(_KeyedCfg):
 
     KEYS: ClassVar[tuple[str, ...]] = (
         "budget_multiplier",
+        "budget_multiplier_by_class",
         "per_trade_fraction",
         "max_new_per_day",
         "floor_new_per_day",
@@ -2146,6 +2153,12 @@ class RegimeCspCfg(_KeyedCfg):
 
     budget_multiplier: dict[MarketRegime, float] = Field(
         default_factory=lambda: dict(_DEFAULT_REGIME_BUDGET)
+    )
+    # Budget multipliers by tail class (risk-envelope Task 24, spec §3.8, ruling E10): the one class
+    # is ``index_1x`` (``portfolio.broad_index_etfs``), whose puts are cut less in stress. Applied
+    # only while the ``index_1x`` switch is on; recorded as ``index_1x_record`` while it is off.
+    budget_multiplier_by_class: dict[str, dict[MarketRegime, float]] = Field(
+        default_factory=lambda: {"index_1x": dict(_DEFAULT_INDEX_1X_BUDGET)}
     )
     per_trade_fraction: dict[MarketRegime, float] = Field(
         default_factory=lambda: dict(_DEFAULT_REGIME_PER_TRADE)
@@ -2174,6 +2187,34 @@ class RegimeCspCfg(_KeyedCfg):
     @classmethod
     def _fill_budget(cls, v: Any) -> Any:
         return _fill_regimes(v, _DEFAULT_REGIME_BUDGET)
+
+    @field_validator("budget_multiplier_by_class", mode="before")
+    @classmethod
+    def _fill_classes(cls, v: Any) -> Any:
+        out: dict[str, Any] = {"index_1x": dict(_DEFAULT_INDEX_1X_BUDGET)}
+        if isinstance(v, dict):
+            for name, mapping in v.items():
+                if name != "index_1x":
+                    raise ValueError(
+                        f"regime.csp.budget_multiplier_by_class: unknown class {name!r} "
+                        "(the only class is index_1x)"
+                    )
+                out[name] = _fill_regimes(mapping, _DEFAULT_INDEX_1X_BUDGET)
+        return out
+
+    @field_validator("budget_multiplier_by_class")
+    @classmethod
+    def _class_fraction_valid(
+        cls, v: dict[str, dict[MarketRegime, float]]
+    ) -> dict[str, dict[MarketRegime, float]]:
+        for name, mapping in v.items():
+            for regime, value in mapping.items():
+                if not (0.0 <= value <= 1.0):
+                    raise ValueError(
+                        f"regime.csp.budget_multiplier_by_class.{name}[{regime.value}] must be "
+                        f"between 0 and 1; it is {value}"
+                    )
+        return v
 
     @field_validator("per_trade_fraction", mode="before")
     @classmethod

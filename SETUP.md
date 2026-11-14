@@ -2307,6 +2307,18 @@ leverage) fits only the 3% tier, never the 1.5% one: lots round down and are nev
 `leveraged_sizing.sleeve:` of `config/examples/risk_limits.yaml`; your private copy needs the block added by hand (the
 code defaults match). The signal must be recent (the EOD run records it); a missing or stale one keeps the sleeve shut.
 
+### The index class and the T20 limit (Task 24, 2026-11-15)
+
+`regime.csp.budget_multiplier_by_class.index_1x` (in the `regime.csp:` block of `config/examples/risk_limits.yaml`; copy it into
+your private file, the code defaults match) eases the CSP budget cuts for the broad-index ETFs in
+`portfolio.broad_index_etfs` (QQQ): cautious 1.0 instead of 0.7, stressed 0.8 instead of 0.4, crisis 0.5 instead of 0.1,
+for the name's own budget and the total CSP allocation. It applies only while the `index_1x` switch is `on` (it ships
+`off`; a PASSed research report turns it on in paper, or you do:
+`python -m scripts.envelope switch index_1x on`; always off in live). While off, `sizing_actions` rows of kind
+`index_1x_record` show what it would have sized (`python -m scripts.sizing_report`). The `t20_limit` switch (H8) turns on by
+itself the first session T20 exceeds S10 by 3 points; once on, a put that would raise T20_gross above L(t) is refused
+`t20_budget`.
+
 ### Quote capture (Section E, 2026-11-14)
 
 **Hedge-menu quotes (Task 16).** From the first restart on this code, the trading service quotes the index

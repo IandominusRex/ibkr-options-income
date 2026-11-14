@@ -30,12 +30,13 @@ from src.common.schemas import (
     TradeCandidate,
 )
 from src.common.universe import effective_universe
-from src.engine.capital import Budgets, max_contracts, resolve_caps, scale_caps, seed_budgets
+from src.engine.capital import Budgets, Caps, max_contracts, resolve_caps, scale_caps, seed_budgets
 from src.engine.envelope import candidate_line, max_contracts_under
 from src.engine.regime_limits import (
     active,
     bottoming_guard,
     bottoming_tag,
+    class_multipliers,
     floor_left,
     leverage_factor,
     loss_exit_reason,
@@ -49,6 +50,7 @@ from src.engine.regime_limits import (
     sleeve_path,
     sleeve_room_usd,
     sleeve_window_reason,
+    switch_on,
     vrp_waiver,
 )
 from src.storage.slow_breaker import csp_budget_fraction as slow_breaker_fraction
@@ -188,9 +190,13 @@ def screen_csp_candidates(
     leverage = leverage_of(symbol)
     regime_on = active(sizing)
     scaled_caps = caps
+    class_caps = None  # the index_1x table's caps while its switch is off (recorded, Task 24)
     if regime_on:
         ticker_mult, book_mult = multipliers(sizing, symbol)
         scaled_caps = scale_caps(caps, ticker=ticker_mult, book=book_mult)
+        by_class = None if switch_on(sizing, "index_1x") else class_multipliers(sizing, symbol)
+        if by_class is not None and by_class != (ticker_mult, book_mult):
+            class_caps = scale_caps(caps, ticker=by_class[0], book=by_class[1])
     ceiling = per_trade_cap(sizing, symbol, hard_max)
     # The leveraged sleeve (Task 23): a leveraged ETF's only way to a put. Its DTE and delta windows
     # replace the put's own, its size is the LES tier's room rounded down, and the pace holds.
@@ -425,6 +431,10 @@ def screen_csp_candidates(
         if reasons:
             rejected.append((candidate, reasons))
         else:
+            if class_caps is not None:
+                _record_index_1x(
+                    candidate, class_caps, budgets, symbol, sector, leverage, hard_max, ceiling
+                )
             result.passed.append(candidate)
 
     if not result.passed:
@@ -492,4 +502,47 @@ def _envelope_trim(
             update={"contracts": n, "collateral": cand.strike * 100.0 * n, "sizing": note}
         ),
         None,
+    )
+
+
+def _record_index_1x(
+    cand: TradeCandidate,
+    class_caps: Caps,
+    budgets: Budgets,
+    symbol: str,
+    sector: str | None,
+    leverage: int,
+    hard_max: int,
+    ceiling: int,
+) -> None:
+    """Task 24, ``index_1x`` off: write to ``sizing_actions`` (kind ``index_1x_record``) what the
+    class multipliers would have sized this index put to when that is more than was proposed. The
+    row's ``deterministic_contracts`` is the size proposed, ``sent_contracts`` the would-be size.
+    Nothing changes; a human reads the record before the research report turns the class on."""
+    would, _ = max_contracts(
+        unit_collateral=cand.strike * 100.0,
+        current_iv=cand.current_iv,
+        dte=cand.dte,
+        symbol=symbol,
+        sector=sector,
+        caps=class_caps,
+        budgets=budgets,
+        hard_max=hard_max,
+        leverage=leverage,
+    )
+    would = min(would, ceiling)
+    if would <= cand.contracts:
+        return
+    from src.regime.actions import record_action
+
+    record_action(
+        cand=cand,
+        kind="index_1x_record",
+        deterministic=cand.contracts,
+        sent=would,
+        reason=(
+            f"index_1x multipliers would size {cand.contracts} -> {would} "
+            f"({cand.sizing.regime.value if cand.sizing else 'normal'} regime)"
+        ),
+        key=f"{cand.candidate_id}:generator",
     )
