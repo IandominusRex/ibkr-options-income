@@ -32,6 +32,13 @@ function serve() {
         },
       };
     }
+    if (path === "/envelope") {
+      return {
+        as_of: now(), snapshot: null, live: null, stored: null, enforce: "record", glide: null, switches: [],
+        limits: { s10: null, uew: null, t20: null, s10_target: 15, uew_target: 1.25 },
+        cash_after_itm_assignment: null, les: [],
+      };
+    }
     if (path === "/portfolio/positions") return { as_of: now(), source: "monitor", degraded: false, groups: [] };
     if (path.startsWith("/spreads/positions")) return { as_of: "", available: true, underlying: "SPY", mode: "paper", positions: [] };
     if (path === "/options/shorts") return { as_of: "", shorts: [] };
@@ -76,6 +83,15 @@ describe("PortfolioPage", () => {
     expect(within(views).getByRole("button", { name: "Campaigns" })).toHaveAttribute("aria-pressed", "false");
     expect(within(views).getByRole("button", { name: "Calendar" })).toHaveAttribute("aria-pressed", "false");
     expect(await screen.findByTestId("account-donut")).toHaveTextContent("$125,000.00");
+  });
+
+  it("puts the risk envelope card right after the Account card, above the view chips", async () => {
+    mount();
+    const envelope = await screen.findByRole("region", { name: "Risk envelope" });
+    const account = await screen.findByRole("region", { name: "Account" });
+    const views = screen.getByRole("group", { name: "View" });
+    expect(account.compareDocumentPosition(envelope) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(envelope.compareDocumentPosition(views) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("opens the view the URL asks for, and Positions for one it does not know", async () => {

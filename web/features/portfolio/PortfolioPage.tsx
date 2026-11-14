@@ -5,6 +5,7 @@ import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { useViewParam } from "@/lib/useViewParam";
 import { CalendarView } from "./CalendarView";
 import { CampaignsView } from "./CampaignsView";
+import { EnvelopeCard } from "./EnvelopeCard";
 import { PositionsView } from "./PositionsView";
 import { SummaryCard } from "./SummaryCard";
 import { PORTFOLIO_VIEWS, VIEW_LABEL } from "./views";
@@ -12,8 +13,9 @@ import { PORTFOLIO_VIEWS, VIEW_LABEL } from "./views";
 const SHELL = "mx-auto max-w-[1200px] px-4 py-5 md:px-7 md:py-6";
 
 /**
- * Portfolio: the Account card, then Positions, Campaigns or Calendar, the view kept in the URL.
- * The Account card sits outside the switched view, so changing view never refetches it. Refresh is
+ * Portfolio: the Account card, the risk envelope card, then Positions, Campaigns or Calendar, the
+ * view kept in the URL. Both cards sit outside the switched view, so changing view never refetches
+ * them. Refresh is
  * the page's one write (the `refresh` command), through the unchanged RefreshControl.
  */
 export function PortfolioPage() {
@@ -27,6 +29,9 @@ export function PortfolioPage() {
       </div>
       <div className="mt-4">
         <SummaryCard />
+      </div>
+      <div className="mt-4">
+        <EnvelopeCard />
       </div>
       <div className="mt-4">
         <SegmentedControl label="View" appearance="chips" options={options} value={view} onChange={setView} />

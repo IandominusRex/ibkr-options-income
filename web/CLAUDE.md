@@ -200,7 +200,7 @@ app/                App Router pages and the root layout
   portfolio/        Portfolio (web overhaul Part 3). `page.tsx` mounts <PortfolioPage/>
                     (features/portfolio/) inside a Suspense boundary: the title with <RefreshControl/>
                     at its right (the page's one write: `POST /commands` kind "refresh", one click,
-                    no dialog), the Account card, the view chips and the view in
+                    no dialog), the Account card, the risk envelope card (`GET /envelope`, display only), the view chips and the view in
                     `?view=positions|campaigns|calendar` (default Positions; a junk value is
                     Positions). Positions groups the book by name over Home's rows, Campaigns keeps
                     its Status and Symbol filters in the request, Calendar its horizon. The old
@@ -902,8 +902,13 @@ features/market/    The market picture where the work happens (2026-10-23), read
                     rules, including `eventBefore`: the verified event date, if any, that falls
                     before an expiry, for Portfolio's Calendar). All share `useClaudeContext` (features/claude-context/), one query key.
 features/portfolio/ Web overhaul Part 3: the Portfolio page. PortfolioPage (the title, <RefreshControl/>,
-                    the Account card, the view chips, then the view; the Account card sits outside the
-                    switched view, so a view change never refetches it), views.ts (PORTFOLIO_VIEWS and
+                    the Account card, the EnvelopeCard, the view chips, then the view; both cards sit outside the
+                    switched view, so a view change never refetches them), EnvelopeCard (risk-envelope plan
+                    Task 15: `GET /envelope`, key ["envelope"], every 60 s: S10 gross and U_ew each beside
+                    their limit today and target, "Over limit" in words, the other scenarios gross / net, the
+                    glide week, "Not enforced yet" while the switch is `record`, "Stored IV" or "Live IV"
+                    with the age, a hatched n/a for anything unknown, and every switch's state in words in a
+                    closed disclosure; reads only, never reaches `submitCommand`), views.ts (PORTFOLIO_VIEWS and
                     labels), SummaryCard (the Account card: `GET /portfolio/summary`, the age in words,
                     "Delayed" at 30 minutes or when degraded, the API's note verbatim, then
                     AccountDonut + donut.ts: net liquidation at the centre of a two-ring donut, the

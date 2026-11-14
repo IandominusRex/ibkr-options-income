@@ -614,6 +614,15 @@ lines under perforations (margin and risk; the book), side by side from 640px. O
 under the donut. A figure we do not have is a hatched n/a and its ring an empty track, never a zero; a ring
 never animates in.
 
+**Envelope card** (Portfolio): the title and one neutral status word for what the limits do today ("Not enforced
+yet", "Enforced" or "Off"; flag tone only for "Unmeasured"), the volatility label and the age of the measurement at
+the right ("Stored IV · Measured 3h ago"), then three short lines: what the status means, which volatility the
+options used, the glide week. The two headline measures are blocks of a 13px label, the reading at 26px/800
+(tabular, hatched n/a when unknown) and a caption, with figure lines under a perforation in the stub face (limit
+today, target, net of long options). The other scenarios are one FigureLines list, each value "gross / net" in the
+mono face, a row we cannot value one hatched n/a. A closed Disclosure holds every switch's state in words. A word
+("Over limit"), never a colour, says a reading is past its limit.
+
 **Name card** (Portfolio, Positions): one card per underlying. The header holds the ticker bold with its
 flag words ("Weak health", "Event <date>") and a muted line of what the name is made of ("100 shares · avg
 $182.40 · 1 cash-secured put"), with the price at its right at 20px/800 and where it came from beneath it
@@ -930,6 +939,19 @@ Operate. Dials as the project default. Built in web overhaul Part 3
   page's value block. The wheel's own share row on the same name stays a separate row on its own card. An unreadable
   book says "The value book could not be read, so its shares are not listed."; a readable empty one, "The value book
   holds no shares." Campaigns and Calendar have no Value tab. Home's value rows link to the same place.
+- **Risk envelope on Portfolio (2026-11-14):** one card after the Account card and before the view chips, outside
+  the switched view like the Account card (`GET /envelope`, one read, every 60 seconds). It says what the limits do
+  today in a word beside the title ("Not enforced yet" while the switch is `record`, "Enforced", "Off"), the glide
+  week as "Glide week 3 of 13 · ends Feb 16, 2027" ("Glide not started" without a record) and which volatility the
+  option values used ("Stored IV" or "Live IV", with the age), the stored one with a sentence that it is the last
+  end-of-day volatility and not live quotes. Two measures side by side from 640px: S10 gross and U_ew, each the
+  reading large with an "Over limit" word when it is past its limit, then figure lines for the limit today, the
+  target the glide ends at and, for S10, the reading net of long options. Under them one compact list of the other
+  scenarios (S10 at +10 vol points, S20, G10, P20, T20, S-SMH) with gross beside net, then cash after every ITM put is
+  assigned and the T20 limit when one is set, then a closed disclosure of every switch's state in words ("Recording
+  only", "Trips at 10% drawdown", "Down to 95% of cost basis") with where a changed one came from. A measure we do not
+  have is a hatched n/a, never a zero; a partly measured book says "Unmeasured" in a flag word and names the symbols.
+  Display only: the card sends nothing and reaches no command. No new token, colour, font, radius or elevation.
 
 ### Activity
 Operate. Dials as the project default. Built in web overhaul Part 3. Ledger and stub figures use
@@ -1239,6 +1261,13 @@ sibling keys; re-run the check after edits.
   legacy pages that Parts 2-4 have yet to restyle.
 
 ## Decision Log
+
+- 2026-11-14: **The risk envelope card on Portfolio** (risk-envelope plan, Task 15). Added the Envelope card
+  (Components) and its Surfaces bullet. The rules that shaped it: unknown is a hatched n/a and never a zero; an
+  over-limit reading is said in a word, not a colour; "Not enforced yet" is a neutral word because a measurement
+  that blocks nothing is not an alarm; the switches sit behind a closed disclosure because they are reference, not
+  the reading. The hero figures use the Account card's display face (Hanken 800, tabular) and the figure lines the
+  mono face. No new token, colour, font, radius or elevation.
 
 - 2026-11-07: **The Open Decisions closed** (web overhaul Part 7, Task 9; the operator took all six defaults on
   2026-11-07). "IBKR Income" as a text wordmark, a text-mark favicon, lucide icons, the immediate sheet close, the
