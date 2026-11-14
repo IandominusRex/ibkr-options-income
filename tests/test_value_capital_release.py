@@ -409,3 +409,81 @@ def test_the_release_is_paper_only(value_book_db, book_on, monkeypatch, db) -> N
     assert "release_not_paper" in validate_release(win, **args)
     h = _Harness(cr, monkeypatch, credits={"AAA": 2.0}, quote_of={"AAA": (0.95, 1.05)})
     assert h.run([_put("AAA", 100.0)]) == 0 and h.closes == []
+
+
+# --- risk-envelope Task 20: an envelope-blocked buy opens no funding request (ruling Q2) ---------
+
+
+def _value_env(enforce: str, *, s10: float):
+    from src.common.envelope_types import EnvelopeRoom
+    from src.value.risk import ValueEnvelope
+
+    room = EnvelopeRoom(
+        s10_gross=s10,
+        s10_limit=25.0,
+        uew=1.0,
+        uew_limit=1.30,
+        t20_gross=0.0,
+        t20_limit=None,
+        enforce=enforce,
+        measured=True,
+    )
+    rate = 1.2 * 0.10 / 100_000.0
+    return ValueEnvelope(room=room, s10_per_dollar={"STDY": rate}, uew_per_dollar={"STDY": 1e-5})
+
+
+def test_envelope_reasons_are_not_fundable(value_book_db) -> None:
+    """A buy short of cash AND above L(t) is refused outright: released capital frees cash, not
+    envelope room, so no funding request opens (and no wheel put is closed for it)."""
+    import json
+
+    from sqlalchemy import select
+
+    from src.value.risk import FUNDABLE
+    from src.value.store import ValueFundingRow, ValueProposalRow
+    from tests.test_value_live import FULL, FakeBroker, _cycle, _effective, _proposal
+
+    assert FUNDABLE == frozenset({"gross_notional_cap"})
+    _effective()
+    pid = _proposal()
+    broker = FakeBroker()
+    msgs = _cycle(broker, FULL, envelope=_value_env("on", s10=24.99))
+    assert broker.placed == [] and "refused" in msgs[-1]
+    with value_session() as s:
+        prop = s.get(ValueProposalRow, pid)
+        assert prop is not None and prop.status == "refused"
+        assert set(json.loads(prop.gate_json)) == {"gross_notional_cap", "envelope_shock_budget"}
+        assert s.scalars(select(ValueFundingRow)).all() == []
+
+
+def test_an_envelope_in_record_mode_funds_and_records(value_book_db) -> None:
+    """`record`: the same buy opens its funding request as before; what `on` would have refused is
+    kept on the proposal's gate record, prefixed, and refuses nothing."""
+    import json
+
+    from sqlalchemy import select
+
+    from src.value.store import ValueFundingRow, ValueProposalRow
+    from tests.test_value_live import FULL, FakeBroker, _cycle, _effective, _proposal
+
+    _effective()
+    pid = _proposal()
+    _cycle(FakeBroker(), FULL, envelope=_value_env("record", s10=24.99))
+    with value_session() as s:
+        prop = s.get(ValueProposalRow, pid)
+        assert prop is not None and prop.status == "funding"
+        assert json.loads(prop.gate_json) == [
+            "gross_notional_cap",
+            "envelope_record:envelope_shock_budget",
+        ]
+        assert len(s.scalars(select(ValueFundingRow)).all()) == 1
+
+
+def test_a_buy_inside_the_envelope_is_sent(value_book_db) -> None:
+    from tests.test_value_live import FakeBroker, _cycle, _effective, _proposal
+
+    _effective()
+    _proposal()
+    broker = FakeBroker()
+    _cycle(broker, envelope=_value_env("on", s10=10.0))
+    assert [p[1] for p in broker.placed] == ["buy"]

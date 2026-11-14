@@ -6,15 +6,57 @@ stock and CSP collateral leave no room for a cash buy). What an LLM produced rea
 the effective verdict and fair value (``value_effective``), which Python computed from bounded
 drivers and clamped, and in live only once ``value.claude.apply_live`` is on (the effective
 verdict is then Python's baseline); the gate reads no other Claude table.
+
+**The risk envelope (risk-envelope Task 20, ruling Q2).** A buy is stock, so its S10 and U_ew are
+linear: the context carries the room (``envelope``) and the buy's rates per dollar
+(``s10_per_dollar``: the fraction of NLV a dollar of the name loses at SPY -10%, beta x 0.10 / NLV,
+leverage-capped as the shock engine moves it; ``uew_per_dollar``: leverage / NLV), built by
+``stage3`` from the pure shock engine. ``envelope_shock_budget`` (S10_gross after the buy above
+L(t)), ``envelope_gross_budget`` (U_ew above its limit) and ``envelope_unmeasured`` refuse only
+while the room's ``enforce`` is ``on``; in ``record`` they are returned by ``envelope_reasons`` for
+the record and refuse nothing. They are never ``FUNDABLE``: released capital frees cash, not
+envelope room, so an envelope-blocked buy opens no funding request.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 
 from src.common.config import ValueBookCfg
+from src.common.envelope_types import EnvelopeRoom
 
 FUNDABLE = frozenset({"gross_notional_cap"})
+ENVELOPE_SHOCK = "envelope_shock_budget"
+ENVELOPE_GROSS = "envelope_gross_budget"
+ENVELOPE_UNMEASURED = "envelope_unmeasured"
+_EPS = 1e-9
+
+
+@dataclass(frozen=True, slots=True)
+class ValueEnvelope:
+    """The risk envelope as the value book reads it in one RTH cycle: the room (S10_gross, U_ew
+    and their limits) and each buy symbol's linear rates (see the module docstring). A symbol with
+    no rate is unmeasured."""
+
+    room: EnvelopeRoom
+    s10_per_dollar: Mapping[str, float] = field(default_factory=dict)
+    uew_per_dollar: Mapping[str, float] = field(default_factory=dict)
+
+    def after_buy(self, symbol: str, cost: float) -> ValueEnvelope:
+        """The envelope with *cost* dollars of *symbol* bought (later buys this cycle see it)."""
+        s10 = self.s10_per_dollar.get(symbol)
+        uew = self.uew_per_dollar.get(symbol)
+        if s10 is None or uew is None or cost <= 0:
+            return self
+        return replace(
+            self,
+            room=replace(
+                self.room,
+                s10_gross=self.room.s10_gross + cost * s10 * 100.0,
+                uew=self.room.uew + cost * uew,
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,10 +91,33 @@ class BuyContext:
     halted: bool = False
     spreads_underlying: bool = False
     quote_age_seconds: float | None = None  # None at decision time
+    # The risk envelope at send time (Task 20); None at decision time and while it is off.
+    envelope: EnvelopeRoom | None = None
+    s10_per_dollar: float | None = None
+    uew_per_dollar: float | None = None
 
     @property
     def cost(self) -> float:
         return self.shares * self.price
+
+
+def envelope_reasons(ctx: BuyContext) -> list[str]:
+    """What the risk envelope says of the buy, whatever the mode (empty with no envelope or while
+    it is ``off``). S10 and U_ew after the buy are compared with their limits as ``admits`` does
+    for a put: refused only when the measure ends above its limit **and** the buy raises it."""
+    room = ctx.envelope
+    if room is None or room.enforce == "off":
+        return []
+    if not room.measured or ctx.s10_per_dollar is None or ctx.uew_per_dollar is None:
+        return [ENVELOPE_UNMEASURED]
+    out: list[str] = []
+    s10_add = ctx.cost * ctx.s10_per_dollar * 100.0
+    if room.s10_gross + s10_add > room.s10_limit + _EPS and s10_add > _EPS:
+        out.append(ENVELOPE_SHOCK)
+    uew_add = ctx.cost * ctx.uew_per_dollar
+    if room.uew + uew_add > room.uew_limit + _EPS and uew_add > _EPS:
+        out.append(ENVELOPE_GROSS)
+    return out
 
 
 def validate(
@@ -110,6 +175,8 @@ def validate(
         reasons.append("illiquid")
     if ctx.quote_age_seconds is not None and ctx.quote_age_seconds > book.quote_max_age_seconds:
         reasons.append("price_stale_at_send")
+    if ctx.envelope is not None and ctx.envelope.enforce == "on":
+        reasons.extend(envelope_reasons(ctx))  # never FUNDABLE (ruling Q2)
     return reasons
 
 

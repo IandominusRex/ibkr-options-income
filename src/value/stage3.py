@@ -6,18 +6,31 @@ reads, takes the wheel's own share count W from the ledger, runs ``live.cycle`` 
 buys with their funding) and, once an hour, ``live.hourly_check``; then disconnects. Paper only:
 the caller never runs it with ``LIVE_TRADING=true``. ib_async and ``src.ibkr`` are imported inside
 the function, so importing ``src.value`` loads neither.
+
+**The risk envelope (risk-envelope Task 20, C8).** Each cycle measures the whole book (both books'
+stock as the broker holds it, every option at its live IBKR model IV) and hands ``live.cycle`` a
+``risk.ValueEnvelope``: the room and each pending buy's linear S10 / U_ew rates. The value fence
+forbids ``src.engine``, so it is built from the pure shock engine (``src.analytics.shock``), its
+inputs (``src.analytics.shock_inputs``), the shared room arithmetic and the glide
+(``src.storage.envelope_state``), the switches (``src.storage.envelope_switches``) and the live
+IV reader (``src.ibkr.live_iv``), all imported inside the function. The value book never starts the
+glide (the wheel's live measurement does); while the switch is ``on`` a failed measurement is an
+unmeasured room, so every buy is refused ``envelope_unmeasured`` (fail closed).
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 
 from src.common.config import Config
-from src.common.schemas import OptionRight, PositionSnapshot
+from src.common.envelope_types import EnvelopeRoom
+from src.common.schemas import AccountSnapshot, OptionRight, PositionSnapshot
 from src.value import live
 from src.value.book import get_state, totals
-from src.value.store import value_session
+from src.value.risk import ValueEnvelope
+from src.value.store import ValueProposalRow, value_session
 
 log = logging.getLogger(__name__)
 
@@ -96,6 +109,7 @@ async def run_cycle(cfg: Config, *, now: datetime, hourly: bool) -> list[str]:
             names = set(snap.shares) | set(totals(vs).names)
             trend = bool((get_state(vs, "trend") or {}).get("brake", False))
         w = {s: x.shares for s, x in wheel_shares(sorted(names)).items()}
+        envelope = await value_envelope(ib, positions, account, pending_buy_symbols(), now=now)
         msgs = await live.cycle(
             value_session,
             _broker(ib),
@@ -108,6 +122,7 @@ async def run_cycle(cfg: Config, *, now: datetime, hourly: bool) -> list[str]:
             is_live=cfg.is_live,
             trend_brake=trend,
             ledger_fill=ledger_fill,
+            envelope=envelope,
         )
         if hourly:
             with value_session() as vs:
@@ -140,6 +155,91 @@ async def run_cycle(cfg: Config, *, now: datetime, hourly: bool) -> list[str]:
         return msgs
     finally:
         ib.disconnect()
+
+
+def pending_buy_symbols() -> list[str]:
+    """The names of the buys this cycle may send (approved or waiting for funding)."""
+    from sqlalchemy import select
+
+    with value_session() as vs:
+        return sorted(
+            {
+                p.symbol.upper()
+                for p in vs.scalars(
+                    select(ValueProposalRow).where(
+                        ValueProposalRow.kind == "buy",
+                        ValueProposalRow.status.in_(("approved", "funding")),
+                    )
+                )
+            }
+        )
+
+
+def _unmeasured(enforce: str, why: str) -> ValueEnvelope:
+    return ValueEnvelope(
+        room=EnvelopeRoom(
+            s10_gross=0.0,
+            s10_limit=0.0,
+            uew=0.0,
+            uew_limit=0.0,
+            t20_gross=0.0,
+            t20_limit=None,
+            enforce=enforce,
+            measured=False,
+            reasons_if_unmeasured=(why,),
+        )
+    )
+
+
+async def value_envelope(
+    ib: object,
+    positions: list[PositionSnapshot],
+    account: AccountSnapshot,
+    symbols: list[str],
+    *,
+    now: datetime,
+) -> ValueEnvelope | None:
+    """The risk envelope for this cycle's buys (Task 20): None while the switch is ``off`` (and
+    when there is nothing to buy); an unmeasured room when the measurement fails (refuses while
+    ``on``, recorded while ``record``). *positions* is the broker's whole book (both books'
+    stock), so no value line is added a second time."""
+    from src.analytics.shock import SCENARIOS, measure, name_move
+    from src.analytics.shock_inputs import betas, build_inputs
+    from src.ibkr.live_iv import live_option_ivs
+    from src.storage.envelope_state import room_for
+    from src.storage.envelope_switches import enforce_mode, get_switch
+
+    enforce = enforce_mode()
+    if enforce == "off" or not symbols:
+        return None
+    try:
+        nlv = float(account.net_liquidation)
+        live_ivs = await live_option_ivs(ib, positions)  # type: ignore[arg-type]
+        inputs = build_inputs(positions, nlv=nlv, value_by_name={}, ivs=live_ivs)
+        extra, _flagged = betas([s for s in symbols if s not in inputs.betas])
+        inputs = replace(inputs, betas={**inputs.betas, **extra})
+        room = room_for(
+            measure(inputs),
+            enforce=enforce,
+            t20_on=get_switch("t20_limit") == "on",
+            today=now.date(),
+            may_start=False,  # only the wheel's live measurement starts the glide
+        )
+        s10: dict[str, float] = {}
+        uew: dict[str, float] = {}
+        for sym in symbols:
+            try:
+                move = name_move(sym, SCENARIOS["S10"]["index"], inputs, scenario="S10")
+            except KeyError:
+                continue  # no beta: the buy is unmeasured
+            s10[sym] = max(0.0, -move) / nlv
+            uew[sym] = float(inputs.leverage.get(sym, 1)) / nlv
+        return ValueEnvelope(room=room, s10_per_dollar=s10, uew_per_dollar=uew)
+    except Exception:
+        log.warning(
+            "value: the risk envelope could not be measured; buys fail closed", exc_info=True
+        )
+        return _unmeasured(enforce, "measurement_failed")
 
 
 def _broker(ib: object) -> live.ValueBroker:

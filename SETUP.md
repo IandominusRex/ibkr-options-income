@@ -2256,6 +2256,10 @@ writes what it would have done to `sizing_actions`, kind `envelope_record` (keys
 `:scan`, `:ticker_scan`, `:send_gate`, `:send`), which `python -m scripts.sizing_report` lists with the
 regime's rows. The wheel no longer reads `portfolio.max_gross_notional_pct` (U_ew replaced it; the value
 book still does).
+The value book (Stage 3, paper) tests each buy at send time the same way on its own cycle's live-IV
+measurement: a buy that would take S10 above L(t) or U_ew above its limit is refused and asks the wheel
+for no released capital; in `record` its would-be refusals are kept on the proposal (`gate_json`, prefixed
+`envelope_record:`). While `on`, value buys wait until the wheel's scan has started the glide.
 
 **Where you see it (Task 14).** The EOD report ends with a **Risk envelope** block: S10 gross and net beside
 L(t), S10 at +10 vol points, S20, G10, P20, T20 and S-SMH (gross / net), U_ew beside its limit, *cash after

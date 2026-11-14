@@ -53,6 +53,10 @@ VALUE_REASON_LABELS: dict[str, str] = {
     "gross_notional_cap": "the account's gross exposure cap is reached",
     "illiquid": "the position would be too large against daily volume",
     "price_stale_at_send": "the quote was too old to send on",
+    # the risk envelope (risk-envelope Task 20): refuses while envelope_enforce is on; never funded
+    "envelope_shock_budget": "the account's loss at SPY -10% (S10) would pass today's limit",
+    "envelope_gross_budget": "the account's exposure-weighted gross (U_ew) would pass today's limit",
+    "envelope_unmeasured": "the risk envelope could not be measured, so buys wait",
     # command reasons
     "no_such_proposal": "that proposal no longer exists",
     "stale_proposal": "the card is out of date (it changed, is too old, or the drawdown has eased)",

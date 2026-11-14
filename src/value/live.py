@@ -53,7 +53,7 @@ from src.value.claude_reads import queue_read
 from src.value.executor import ValueBroker, send_order
 from src.value.exits import DayFacts
 from src.value.residuals import Move
-from src.value.risk import BuyContext, fundable_only, validate
+from src.value.risk import BuyContext, ValueEnvelope, envelope_reasons, fundable_only, validate
 from src.value.schemas import ValueScorecard
 from src.value.store import (
     ValueAttributionRow,
@@ -147,6 +147,7 @@ def buy_context(
     drawdown_stop: bool,
     exclude_proposal: int | None = None,
     quote_age_seconds: float | None = None,
+    envelope: ValueEnvelope | None = None,
 ) -> BuyContext | None:
     """Everything the gate reads for one buy; None when the name has no ticker file or no
     effective verdict (the gate then never runs: nothing is proposed).
@@ -208,6 +209,9 @@ def buy_context(
         halted=halted,
         spreads_underlying=is_spreads_underlying(symbol),
         quote_age_seconds=quote_age_seconds,
+        envelope=envelope.room if envelope is not None else None,
+        s10_per_dollar=envelope.s10_per_dollar.get(symbol) if envelope is not None else None,
+        uew_per_dollar=envelope.uew_per_dollar.get(symbol) if envelope is not None else None,
     )
 
 
@@ -401,10 +405,14 @@ async def cycle(
     is_live: bool,
     trend_brake: bool,
     ledger_fill: LedgerFill | None = None,
+    envelope: ValueEnvelope | None = None,
 ) -> list[str]:
     """One RTH cycle. Returns the messages to send (fills, freezes, funding). It starts by
     resolving any order a restart or an unconfirmed cancel left working (spec §9.2: V is rebuilt
-    from the broker and the ledger, never from this process's memory)."""
+    from the broker and the ledger, never from this process's memory).
+
+    *envelope* is the risk envelope ``stage3`` measured on live IV for this cycle (Task 20): every
+    buy is gated against it at send time, and a filled buy joins it for the next one."""
     msgs: list[str] = await resolve_working_orders(
         session, broker, now=now, cfg=cfg, ledger_fill=ledger_fill
     )
@@ -456,7 +464,16 @@ async def cycle(
             halted=halted,
             is_live=is_live,
             trend_brake=trend_brake,
+            envelope=envelope,
         )
+        if envelope is not None:
+            with session() as vs:
+                prop = vs.get(ValueProposalRow, pid)
+                order = vs.get(ValueOrderRow, prop.order_id) if prop and prop.order_id else None
+                if prop is not None and order is not None and order.filled > 0:
+                    envelope = envelope.after_buy(
+                        prop.symbol, order.filled * float(order.avg_price or 0.0)
+                    )
     return msgs
 
 
@@ -672,6 +689,7 @@ async def _buy(
     halted: bool,
     is_live: bool,
     trend_brake: bool,
+    envelope: ValueEnvelope | None = None,
 ) -> list[str]:
     with session() as vs:
         prop = vs.get(ValueProposalRow, pid)
@@ -700,8 +718,18 @@ async def _buy(
             drawdown_stop=bool(peak.get("stop")),
             exclude_proposal=pid,
             quote_age_seconds=quote.age_seconds,
+            envelope=envelope,
         )
         reasons = ["no_effective_verdict"] if ctx is None else _gate(ctx, cfg, portfolio)
+        # The envelope in `record` (Task 20, P1): what `on` would refuse is kept beside the gate's
+        # reasons, prefixed, in this book's own record; it refuses nothing.
+        would = (
+            envelope_reasons(ctx)
+            if ctx is not None and ctx.envelope is not None and ctx.envelope.enforce == "record"
+            else []
+        )
+        if would:
+            log.info("value book: the envelope would refuse the %s buy: %s", symbol, would)
         if (
             ctx is not None
             and "data_unreliable" in reasons
@@ -713,7 +741,7 @@ async def _buy(
             # above the review line (data quality itself passes); a human has tapped it, so the
             # send-time gate may not refuse it for the reason the tap was asked for (ruling 10).
             reasons = [r for r in reasons if r != "data_unreliable"]
-        prop.gate_json = json.dumps(reasons)
+        prop.gate_json = json.dumps(reasons + [f"envelope_record:{r}" for r in would])
         if reasons and ctx is not None and fundable_only(reasons) and cfg.book.release.enabled:
             msg = _fund(vs, prop, ctx, cfg, portfolio, now)
             return [msg] if msg else []

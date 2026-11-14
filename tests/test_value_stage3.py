@@ -166,3 +166,63 @@ def test_the_ledger_fill_of_a_value_order_is_read_by_its_order_ref(db) -> None:
     )
     assert ledger_fill("value:7") == (20.0, (12 * 30.0 + 8 * 31.0) / 20.0)
     assert ledger_fill("value:8") == (0.0, None)
+
+
+# --- risk-envelope Task 20: the cycle's envelope -------------------------------------------------
+
+
+def _acct():
+    from src.common.schemas import AccountSnapshot
+
+    return AccountSnapshot(
+        account="DU1",
+        net_liquidation=100_000.0,
+        total_cash=50_000.0,
+        buying_power=50_000.0,
+        maintenance_margin=0.0,
+        excess_liquidity=50_000.0,
+    )
+
+
+def test_the_value_envelope_measures_the_whole_book(db, monkeypatch) -> None:
+    """Both books' stock as the broker holds it, no value line added twice, each pending buy's
+    linear rates (beta x 0.10 / NLV; the beta fallback 1.5 with no price history)."""
+    from src.storage import envelope_switches as sw
+    from src.value.stage3 import value_envelope
+
+    monkeypatch.setattr(sw, "enforce_mode", lambda: "on")
+    env = asyncio.run(
+        value_envelope(
+            object(),
+            [_p("GOOGL", "STK", 100, market_price=150.0, market_value=15_000.0)],
+            _acct(),
+            ["STDY"],
+            now=NOW,
+        )
+    )
+    assert env is not None
+    assert env.room.enforce == "on"
+    assert env.room.uew == 0.15  # $15,000 of stock on $100,000, counted once
+    assert env.room.measured is False  # `on` with no glide record: the value book never starts it
+    assert "no_glide_record" in env.room.reasons_if_unmeasured
+    assert env.s10_per_dollar["STDY"] == 1.5 * 0.10 / 100_000.0
+    assert env.uew_per_dollar["STDY"] == 1.0 / 100_000.0
+
+
+def test_the_value_envelope_is_off_or_fails_closed(db, monkeypatch) -> None:
+    import src.analytics.shock_inputs as si
+    from src.storage import envelope_switches as sw
+    from src.value.stage3 import value_envelope
+
+    book = [_p("GOOGL", "STK", 100, market_price=150.0)]
+    monkeypatch.setattr(sw, "enforce_mode", lambda: "off")
+    assert asyncio.run(value_envelope(object(), book, _acct(), ["STDY"], now=NOW)) is None
+    monkeypatch.setattr(sw, "enforce_mode", lambda: "on")
+    assert asyncio.run(value_envelope(object(), book, _acct(), [], now=NOW)) is None  # no buys
+
+    def broken(*a, **k):
+        raise RuntimeError("price history unreadable")
+
+    monkeypatch.setattr(si, "build_inputs", broken)
+    env = asyncio.run(value_envelope(object(), book, _acct(), ["STDY"], now=NOW))
+    assert env is not None and env.room.measured is False and env.room.enforce == "on"

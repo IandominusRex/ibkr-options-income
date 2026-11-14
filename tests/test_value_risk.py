@@ -7,8 +7,16 @@ from dataclasses import replace
 import pytest
 
 from src.common.config import get_config
+from src.common.envelope_types import EnvelopeRoom
 from src.value import sizing
-from src.value.risk import BuyContext, fundable_only, validate
+from src.value.risk import (
+    FUNDABLE,
+    BuyContext,
+    ValueEnvelope,
+    envelope_reasons,
+    fundable_only,
+    validate,
+)
 
 BOOK = get_config().value.book
 # A $100,000 account; the book's ceiling is 30% = $30,000; the name cap 8% of it = $2,400.
@@ -105,3 +113,73 @@ def test_tiers_tranches_and_the_trend_brake() -> None:
     assert not sizing.tranche_due(3, 10, [], 10.0, 9.0, BOOK)
     assert sizing.trend_brake([100.0] * 9 + [90.0]) is True
     assert sizing.trend_brake([100.0] * 9) is None
+
+
+# --- risk-envelope Task 20: value-book buys under the envelope (ruling Q2) -----------------------
+
+# A $1,500 buy (10 x $150) of a beta-1.2 name on a $100,000 book: S10 +0.18 points (1,500 x 0.12 /
+# 100,000 x 100), U_ew +0.015.
+S10_RATE = 1.2 * 0.10 / 100_000.0
+UEW_RATE = 1.0 / 100_000.0
+
+
+def _room(*, s10=20.0, s10_limit=25.0, uew=1.20, uew_limit=1.30, enforce="on", measured=True):
+    return EnvelopeRoom(
+        s10_gross=s10,
+        s10_limit=s10_limit,
+        uew=uew,
+        uew_limit=uew_limit,
+        t20_gross=0.0,
+        t20_limit=None,
+        enforce=enforce,
+        measured=measured,
+    )
+
+
+def _env(**room) -> BuyContext:
+    return replace(OK, envelope=_room(**room), s10_per_dollar=S10_RATE, uew_per_dollar=UEW_RATE)
+
+
+def test_a_buy_inside_the_envelope_passes() -> None:
+    assert _v(_env()) == []
+
+
+def test_a_buy_that_breaches_l_of_t_is_refused() -> None:
+    assert _v(_env(s10=24.9)) == ["envelope_shock_budget"]  # 24.9 + 0.18 > 25.0
+    assert _v(_env(s10=24.8)) == []  # 24.98: under it
+
+
+def test_a_buy_over_the_uew_limit_is_refused() -> None:
+    assert _v(_env(uew=1.29)) == ["envelope_gross_budget"]  # 1.29 + 0.015 > 1.30
+    # a book already above its limit takes no buy at all (every buy raises U_ew)
+    assert "envelope_gross_budget" in _v(_env(uew=1.40))
+
+
+def test_unmeasured_envelope_refuses_the_buy() -> None:
+    assert _v(_env(measured=False)) == ["envelope_unmeasured"]
+    no_rate = replace(_env(), s10_per_dollar=None)  # no beta for the name
+    assert _v(no_rate) == ["envelope_unmeasured"]
+
+
+def test_record_mode_records_only() -> None:
+    ctx = _env(s10=24.9, uew=1.29, enforce="record")
+    assert _v(ctx) == []  # refuses nothing
+    assert envelope_reasons(ctx) == ["envelope_shock_budget", "envelope_gross_budget"]
+    off = _env(s10=24.9, enforce="off")
+    assert _v(off) == [] and envelope_reasons(off) == []
+
+
+def test_envelope_reasons_are_never_fundable() -> None:
+    assert FUNDABLE == frozenset({"gross_notional_cap"})
+    both = _v(replace(_env(s10=24.9), gross_used=99_000.0))
+    assert set(both) == {"gross_notional_cap", "envelope_shock_budget"}
+    assert not fundable_only(both)
+
+
+def test_a_filled_buy_joins_the_envelope_for_the_next() -> None:
+    env = ValueEnvelope(
+        room=_room(), s10_per_dollar={"GOOGL": S10_RATE}, uew_per_dollar={"GOOGL": UEW_RATE}
+    )
+    after = env.after_buy("GOOGL", 10_000.0)
+    assert after.room.s10_gross == pytest.approx(21.2) and after.room.uew == pytest.approx(1.30)
+    assert env.after_buy("ZZZ", 10_000.0) is env  # no rate: unchanged (that buy was unmeasured)

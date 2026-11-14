@@ -26,7 +26,7 @@ from typing import Any
 
 from sqlalchemy import select
 
-from src.common.envelope_types import EnvelopeSnapshot, GlideSpan, ShockResult
+from src.common.envelope_types import EnvelopeRoom, EnvelopeSnapshot, GlideSpan, ShockResult
 from src.storage.db import session_scope
 from src.storage.models import BrokerExecutionRow, EnvelopeSnapshotRow
 from src.storage.system_settings import get_setting_strict, set_setting
@@ -140,6 +140,59 @@ def limits_on(record: GlideRecord, day: date) -> tuple[float, float]:
     s10 = record.s10_start - (record.s10_start - record.s10_target) * k / record.weeks
     uew = record.uew_start - (record.uew_start - record.uew_target) * k / record.weeks
     return s10, uew
+
+
+def room_for(
+    result: ShockResult,
+    *,
+    enforce: str,
+    t20_on: bool,
+    today: date,
+    may_start: bool,
+) -> EnvelopeRoom:
+    """The measured book against *today*'s limits (the body of ``engine.envelope.room``, here so
+    the value book can share it without importing ``src.engine``: risk-envelope Task 20, C8).
+
+    ``on``: the glide's limits for today; with no record the glide is started from *result* when
+    *may_start* and the book is fully measured, else the room is unmeasured (``no_glide_record``);
+    an unreadable record is unmeasured (``glide_unreadable``) and never restarted. ``record`` and
+    ``off``: the would-be start-of-glide limits (P1). ``t20_on`` puts T20 under the same L(t) (H8).
+    """
+    from src.common.config import get_envelope_cfg
+
+    cfg = get_envelope_cfg()
+    reasons = [f"unmeasured:{s}" for s in result.unmeasured]
+    would_be = start_levels(result, s10_target=cfg.s10_target_pct, uew_target=cfg.uew_target)
+    glide_ok = True
+    if enforce == "on":
+        try:
+            rec = load_glide()
+            if rec is None and may_start and result.measured:
+                rec = start_glide(result, today)
+        except Exception:
+            log.warning("envelope: the glide record is unreadable; failing closed", exc_info=True)
+            rec = None
+            reasons.append("glide_unreadable")
+        if rec is None:
+            glide_ok = False
+            if "glide_unreadable" not in reasons:
+                reasons.append("no_glide_record")
+            s10_lim, uew_lim = would_be
+        else:
+            s10_lim, uew_lim = limits_on(rec, today)
+    else:
+        s10_lim, uew_lim = would_be
+    return EnvelopeRoom(
+        s10_gross=result.s10,
+        s10_limit=s10_lim,
+        uew=result.uew,
+        uew_limit=uew_lim,
+        t20_gross=result.t20,
+        t20_limit=s10_lim if t20_on else None,
+        enforce=enforce,
+        measured=result.measured and glide_ok,
+        reasons_if_unmeasured=tuple(reasons),
+    )
 
 
 def glide_end(record: GlideRecord) -> date:

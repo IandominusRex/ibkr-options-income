@@ -174,6 +174,63 @@ def test_the_trading_path_never_imports_the_value_book() -> None:
     assert offenders == []
 
 
+# Risk-envelope Task 20 (code fact C8): the value book reaches the envelope only through these,
+# from `stage3.py` and only inside its functions; the pure gate reads the plain types.
+STAGE3_ENVELOPE = (
+    "src.analytics.shock",
+    "src.analytics.shock_inputs",
+    "src.storage.envelope_state",
+    "src.storage.envelope_switches",
+    "src.ibkr.live_iv",
+)
+
+
+def _top_level_imports(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    out: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            continue
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Import):
+                out.update(a.name for a in sub.names)
+            elif isinstance(sub, ast.ImportFrom) and sub.module:
+                out.add(sub.module)
+    return out
+
+
+def test_stage3_may_import_the_shock_engine() -> None:
+    """The one allowance: stage3 imports the five envelope modules, lazily (inside functions), so
+    importing src.value loads none of them (the sys.modules probe below stays unchanged); no
+    other value module imports them; the pure gate imports only the plain envelope types."""
+    stage3 = ROOT / "src" / "value" / "stage3.py"
+    assert set(STAGE3_ENVELOPE) <= imported_modules(stage3)
+    assert not [m for m in _top_level_imports(stage3) if _reaches({m}, "src.analytics")]
+    assert not set(STAGE3_ENVELOPE) & _top_level_imports(stage3)
+    others = [
+        f"{p.relative_to(ROOT)} -> {m}"
+        for p in VALUE
+        if p.name != "stage3.py"
+        for m in STAGE3_ENVELOPE
+        if _reaches(imported_modules(p), m)
+    ]
+    assert others == []
+    risk = imported_modules(ROOT / "src" / "value" / "risk.py")
+    assert "src.common.envelope_types" in risk
+    assert not [m for m in risk if m.startswith("src.") and not m.startswith("src.common")]
+
+
+def test_value_still_imports_no_engine() -> None:
+    """The allowance is the pure shock engine, never `src.engine` (the wheel's gate and its
+    envelope): no value module and none of the five allowed modules imports it."""
+    assert [
+        str(p.relative_to(ROOT)) for p in VALUE if _reaches(imported_modules(p), "src.engine")
+    ] == []
+    for mod in STAGE3_ENVELOPE:
+        path = ROOT / (mod.replace(".", "/") + ".py")
+        assert not _reaches(imported_modules(path), "src.engine"), mod
+
+
 def test_value_commands_is_stdlib_only() -> None:
     mods = imported_modules(ROOT / "src" / "common" / "value_commands.py")
     assert {m.split(".")[0] for m in mods} <= {"__future__", "hashlib", "re", "datetime", "typing"}

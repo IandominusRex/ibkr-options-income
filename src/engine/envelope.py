@@ -37,13 +37,7 @@ from src.analytics.shock import measure
 from src.common.config import get_config, get_envelope_cfg
 from src.common.envelope_types import BookLine, EnvelopeRoom, ShockInputs, ShockResult
 from src.common.schemas import TradeCandidate
-from src.storage.envelope_state import (
-    limits_on,
-    load_glide,
-    save_snapshot,
-    start_glide,
-    start_levels,
-)
+from src.storage.envelope_state import room_for, save_snapshot
 from src.storage.envelope_switches import enforce_mode, get_switch, set_switch, switch_record
 
 log = logging.getLogger(__name__)
@@ -63,42 +57,15 @@ def room(
     result: ShockResult | None = None,
 ) -> EnvelopeRoom:
     """The book against today's limits. *may_start* False never writes the glide record (the
-    stored-IV display snapshot must not start the glide; only the live measurement may)."""
-    enforce = enforce_mode()
+    stored-IV display snapshot must not start the glide; only the live measurement may). The
+    arithmetic is ``envelope_state.room_for``, which the value book shares (Task 20)."""
     res = result if result is not None else measure(inputs)
-    cfg = get_envelope_cfg()
-    reasons = [f"unmeasured:{s}" for s in res.unmeasured]
-    would_be = start_levels(res, s10_target=cfg.s10_target_pct, uew_target=cfg.uew_target)
-    glide_ok = True
-    if enforce == "on":
-        try:
-            rec = load_glide()
-            if rec is None and may_start and res.measured:
-                rec = start_glide(res, today)
-        except Exception:
-            log.warning("envelope: the glide record is unreadable; failing closed", exc_info=True)
-            rec = None
-            reasons.append("glide_unreadable")
-        if rec is None:
-            glide_ok = False
-            if "glide_unreadable" not in reasons:
-                reasons.append("no_glide_record")
-            s10_lim, uew_lim = would_be
-        else:
-            s10_lim, uew_lim = limits_on(rec, today)
-    else:
-        s10_lim, uew_lim = would_be
-    t20_lim = s10_lim if get_switch("t20_limit") == "on" else None
-    return EnvelopeRoom(
-        s10_gross=res.s10,
-        s10_limit=s10_lim,
-        uew=res.uew,
-        uew_limit=uew_lim,
-        t20_gross=res.t20,
-        t20_limit=t20_lim,
-        enforce=enforce,
-        measured=res.measured and glide_ok,
-        reasons_if_unmeasured=tuple(reasons),
+    return room_for(
+        res,
+        enforce=enforce_mode(),
+        t20_on=get_switch("t20_limit") == "on",
+        today=today,
+        may_start=may_start,
     )
 
 
