@@ -2,7 +2,10 @@
 # Committed reference data (like news_playbook.yaml), read by src/common/macro_calendar.py.
 # Covers 2026-11-14 to 2027-12-31. One row per event: day (ET calendar date), kind
 # (FOMC | CPI | PPI | NFP | PCE), time_et (HH:MM ET), source (the agency page the date was read from).
-# Sources, read 2026-11-14 (never copied from an aggregator):
+# Sources, read 2026-11-14 (never copied from an aggregator). FOMC and BEA dates were parsed from the
+# agencies' raw HTML. bls.gov refuses plain scripted requests, so the BLS dates (CPI, PPI, NFP) were
+# read through a summarising fetch twice, independently, and agreed both times; a human spot-check
+# against bls.gov is still owed:
 #   FOMC  https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm  (the decision day is the second day of each meeting; the page lists no
 #         December 2027 meeting yet, so none is recorded; "tentative until confirmed at the meeting
 #         immediately preceding it")
