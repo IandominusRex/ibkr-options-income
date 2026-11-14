@@ -57,6 +57,9 @@ DETERMINISTIC = sorted(
         # Task 13: the envelope and its stored state
         SRC / "engine" / "envelope.py",
         SRC / "storage" / "envelope_state.py",
+        # Task 30: the book-repair builder and its table
+        SRC / "engine" / "repair.py",
+        SRC / "storage" / "repair_proposals.py",
         *(SRC / "regime").glob("*.py"),
         # Task 16: the hedge package (quote capture; the order path arrives in Tasks 33-36)
         *(SRC / "hedge").glob("*.py"),
@@ -99,6 +102,13 @@ def test_the_envelope_modules_exist_and_are_on_the_deterministic_list() -> None:
         "engine/envelope.py",
         "storage/envelope_state.py",
     ):
+        assert (SRC / rel).exists(), rel
+        assert SRC / rel in DETERMINISTIC, rel
+
+
+def test_the_repair_modules_are_on_the_deterministic_list() -> None:
+    """Risk-envelope Task 30: the repair builder and its store import no enrichment."""
+    for rel in ("engine/repair.py", "storage/repair_proposals.py"):
         assert (SRC / rel).exists(), rel
         assert SRC / rel in DETERMINISTIC, rel
 

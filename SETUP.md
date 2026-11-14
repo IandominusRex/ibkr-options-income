@@ -761,6 +761,7 @@ Once the approval service is running, you can interact with the system from your
 | `/value` | **Value book (Part 6, SETUP §19).** The top five READY or WATCH names per list (effective verdict, margin of safety, fair value, age) and each proposal waiting for your tap as its own message with **Approve / Reject** buttons. |
 | `/value NAME` | One name's stored ticker file with its age; a stale file is flagged and refreshed by the value process, and an unknown name is queued ("not scored yet"). |
 | `/value NAME analyse` | Queues Claude's read of the name (needs `claude.enabled: true` in `config/value.yaml`). |
+| Repair cards (Approve / Reject) | **Book repair (risk-envelope Task 30, SETUP §20).** After the EOD report, one card per repair proposal in the account thread, each with S10 and U_ew before and after it beside today's limits L(t). **Nothing on a repair card is ever sent without your tap, at any autonomy level.** Approve on a covered-call overlay queues that call like any approved card (re-checked on a fresh quote before it is sent); Approve on "stop adding" removes the name from `would_own` (undo it on the web Universe page). |
 | `/expire` | Expires all pending approvals without executing any of them. Use when you decide not to trade for the day. |
 | `/health` | Connection status for both IBKR links, database reachability, time since last scan, and counts of pending approvals and open orders. |
 | `/help` | Lists all available commands. |
@@ -2392,6 +2393,22 @@ snapshot, a price series missing) writes nothing and says why; it never invents 
 | `python -m scripts.sleeve_replay [--db PATH] [--since DATE] [--dry-run]` | The E7 replay: the leveraged-ETF lots the drawdown sleeve would have opened on the `price_history` panel (the Leveraged Entry Signal above the 200-day, the half tier on the bottoming path below it), valued with the wheel's leveraged rules (roll first, buy back at the 2x line). PASS: total P&L at least 0, no lot losing over 1% of your net liquidation, at most 2 open at once; no lot opened is "no result". Writes `E7.json` (switch `leveraged_sleeve`). Needs `iv_history` and `price_history` for TQQQ/SOXL and their governing index (QQQ, SOXX; SMH stands in for SOXX). |
 | `python -m scripts.cc_floor_replay [--db PATH] [--since DATE] [--dry-run]` | The E12 replay: monthly 30-day covered calls on your held stock under the basis floors 1.00, 0.95 and 0.90 (call delta 0.20), counting premium, call-aways, upside forgone and S10. A floor below 1.00 passes when it earns more premium than the extra upside it gives away and S10 is no higher; the lowest passing floor is written to `E12.json` (switch `cc_basis_floor`). The leveraged ETFs you hold are replayed on their own at no floor and delta 0.25 (`E12_leveraged.json`, switch `leveraged_cc_auto`); until that passes a leveraged call stays tap-only. |
 | `python -m scripts.les_replay [--fill-lag 0\|1] [--refresh] [--ignore-reproduction] [--dry-run]` | The L8 replay of the Leveraged Entry Signal: QQQ->TQQQ and SOXX->SOXL, each on a synthetic 3x (2000-06-01..2016-12-31) and the real ETF (2017 on), for buy and hold, the 200-day filter and LES. It downloads daily closes from 1999 through the price provider (about four series, cached under `data/envelope_reports/les_cache/`; `--refresh` fetches again) and the Nasdaq-100 breadth history, so it needs internet the first time. PASS: LES's Sharpe at least the filter's in 3 of 4 cells and its max drawdown no worse than buy-and-hold's in all 4; writes `LES.json` (switch `leveraged_entry` -> `on`, paper only; always refused in live). **It checks its own numbers against the spec's table to within 0.5 points; a larger gap prints STOP and writes no verdict until you have looked** (`--ignore-reproduction` writes it anyway). The criterion was set after seeing the same numbers, so a PASS is a reproduction check; the forward `record` period is the clean evidence. |
+
+### Book repair (Section I, 2026-11-15)
+
+Each evening, after the EOD report, the system posts **tap-only repair cards** to the account thread
+(`repair_proposals` in the trading database). Every card shows S10 (gross) and U_ew before and after the
+proposal beside today's L(t). **A repair card never acts by itself, at any autonomy level**: your tap is the
+only way, and an approved order is still checked by the Rules Engine when it is decided and again, on a
+fresh quote, when it is sent.
+
+| Card | What Approve does |
+|---|---|
+| Covered-call overlay | Queues the call like any approved card. It is the best call the day's scans found on shares that are still uncovered, at the strike floor the `cc_basis_floor` switch allows (never above `covered_call.min_strike_vs_basis`). On TQQQ/SOXL a call below your cost basis is allowed only at delta 0.25 or less and stays tap-only until the `leveraged_cc_auto` switch is on |
+| Stop adding | Removes the name from `would_own` (no new cash-secured put on it). Shown while S10 is above L(t), for the names that carry most of it. Undo it on the web Universe page |
+
+Every proposal, tapped or not, is re-valued each evening from stored closes (`repair_proposals.shadow_value`),
+so you can read later what acting on it would have earned.
 
 ## Troubleshooting
 

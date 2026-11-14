@@ -750,6 +750,16 @@ async def run() -> None:
     #     turns its switch on (paper only) and the operator is told. Best-effort, never fatal.
     await _apply_envelope_reports()
 
+    # 7a'. Book repair (risk-envelope Task 30): today's tap-only proposals, each with S10 and
+    #      U_ew before and after; every stored proposal re-marked (tapped or not). Nothing is
+    #      sent from here: a card's Approve is the only way any of it acts. Never fatal.
+    try:
+        from src.orchestrator.repair_cards import run_repair_step
+
+        await run_repair_step(positions, account, today=today)
+    except Exception:
+        logger.exception("EOD: repair proposals failed — continuing")
+
     # 7b. Trade ledger: pull recent executions from the IBKR Flex Web Service (spec R6).
     #     Reporting only — a Flex failure never fails the EOD report. Runs after the Telegram
     #     send (not before), so a slow Flex poll (up to 10 min) never delays the operator's

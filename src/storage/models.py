@@ -197,6 +197,44 @@ class SizingActionRow(Base):
     record_key: Mapped[str] = mapped_column(String(64))
 
 
+class RepairProposalRow(Base):
+    """One tap-only book-repair proposal (risk-envelope Task 30; spec §3.7 item 2, ruling P10).
+
+    Written by the EOD run (`src/storage/repair_proposals.py`), one row per (day, kind, symbol);
+    ``payload`` is the `RepairProposal` as built (the envelope before and after, the covered call
+    for an overlay, the shares for a trim or de-lever). ``status`` is ``pending`` until a tap
+    (``approved`` / ``rejected``), then ``sent`` / ``failed`` once a stock order ran (Tasks 31-32).
+    ``shadow_value`` is what the proposal would have earned since it was built, re-marked every
+    EOD from stored closes whether it was tapped or not (``shadow_marked_on`` the day it was).
+    Nothing on the trading path reads it back: a human does.
+    """
+
+    __tablename__ = "repair_proposals"
+    __table_args__ = (
+        UniqueConstraint("day", "kind", "symbol", name="uq_repair_proposals_day_kind_symbol"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    day: Mapped[date] = mapped_column(Date, index=True)  # the ET day it was built
+    kind: Mapped[str] = mapped_column(String(16))  # cc_overlay | stop_adding | trim | delever
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    detail: Mapped[str] = mapped_column(Text, default="")
+    s10_before: Mapped[float] = mapped_column(Float)
+    s10_after: Mapped[float] = mapped_column(Float)
+    uew_before: Mapped[float] = mapped_column(Float)
+    uew_after: Mapped[float] = mapped_column(Float)
+    s10_limit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    uew_limit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    payload: Mapped[dict] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(12), default="pending")
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    decided_by: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    result: Mapped[str | None] = mapped_column(Text, nullable=True)
+    shadow_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    shadow_marked_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+
 class IVHistoryRow(Base):
     """Daily implied-vol observations powering IV Rank/Percentile."""
 

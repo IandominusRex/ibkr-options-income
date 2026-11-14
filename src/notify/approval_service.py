@@ -386,6 +386,9 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     data = query.data or ""
+    if data.startswith("repair:"):
+        await _handle_repair_button(query, context, data)
+        return
     parts = data.split(":", 1)
     if len(parts) != 2 or parts[0] not in ("approve", "reject"):
         logger.warning("Unexpected callback_data: %r", data)
@@ -407,6 +410,88 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # decision_text is plain text — no parse_mode needed.
     await query.edit_message_text(decision_text)
     logger.info("Button %s for approval_id=%s processed", action, approval_id)
+
+
+def _process_repair_button(proposal_id: int, action: str, decided_by: str = "telegram") -> str:
+    """Synchronous DB work for a tap on a repair card (risk-envelope Task 30, P10).
+
+    Reject records the decision. Approve acts by kind: a covered-call overlay raises an ordinary
+    approval for its call and runs ``_process_button`` on it unchanged (the order is re-gated by
+    the Rules Engine on a fresh quote at send time); a stop-adding writes a ``universe_overrides``
+    remove of the name from ``would_own``. A trim or de-lever is only marked approved here: the
+    caller sends it through the stock order path. Returns the card's new text (plain)."""
+    from src.storage.repair_proposals import decide, load_proposal
+
+    loaded = load_proposal(proposal_id)
+    if loaded is None:
+        return "Repair proposal not found."
+    proposal, status = loaded
+    label = f"{proposal.kind.replace('_', ' ')} {proposal.symbol}"
+    if status != "pending":
+        return f"Already {status}: {label}"
+    if action != "approve":
+        decide(proposal_id, "rejected", by=decided_by)
+        return f"❌ Rejected: {label}"
+    if proposal.kind == "cc_overlay":
+        cand = proposal.candidate
+        if cand is None:
+            decide(proposal_id, "failed", by=decided_by, result="no covered call on the proposal")
+            return f"Nothing to approve: {label}"
+        if not decide(proposal_id, "approved", by=decided_by):
+            return f"Already decided: {label}"
+        with session_scope() as s:
+            approval = ApprovalRow(
+                candidate_id=cand.candidate_id,
+                status=ApprovalStatus.PENDING,
+                chat_id=str(get_config().secrets.telegram_chat_id or ""),
+                snapshot=cand.model_dump(mode="json"),
+            )
+            s.add(approval)
+            s.flush()
+            approval_id = approval.id
+        _found, text, _short = _process_button(approval_id, "approve", decided_by)
+        decide(proposal_id, "sent", by=decided_by, result=f"approval {approval_id}")
+        return f"Repair overlay: {text}"
+    if proposal.kind == "stop_adding":
+        from src.common.universe import invalidate_universe_cache
+        from src.storage.universe_overrides import set_override
+
+        if not decide(proposal_id, "approved", by=decided_by):
+            return f"Already decided: {label}"
+        with session_scope() as s:
+            set_override(
+                s,
+                symbol=proposal.symbol,
+                list_name="would_own",
+                action="remove",
+                created_by=f"repair:{proposal_id}",
+            )
+        invalidate_universe_cache()
+        decide(proposal_id, "sent", by=decided_by, result="would_own remove override")
+        return (
+            f"✅ Stop adding {proposal.symbol}: removed from would_own (no new cash-secured put). "
+            "Undo it on the web Universe page."
+        )
+    if not decide(proposal_id, "approved", by=decided_by):
+        return f"Already decided: {label}"
+    return f"✅ Approved: {label}. Sending it through the stock order path."
+
+
+async def _handle_repair_button(query: Any, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
+    """``repair:<id>:approve|reject`` (risk-envelope Task 30). Tap-only: this tap is the human
+    decision; nothing in a repair proposal is ever sent without one (P10)."""
+    parts = data.split(":")
+    if len(parts) != 3 or parts[2] not in ("approve", "reject"):
+        logger.warning("Unexpected repair callback_data: %r", data)
+        return
+    try:
+        proposal_id = int(parts[1])
+    except ValueError:
+        logger.warning("Non-integer repair id in callback_data: %r", data)
+        return
+    text = await asyncio.to_thread(_process_repair_button, proposal_id, parts[2])
+    await query.edit_message_text(text)
+    logger.info("Repair button %s for proposal %s processed", parts[2], proposal_id)
 
 
 async def handle_live_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2313,7 +2398,7 @@ async def _run_service(token: str, chat_id: str) -> None:
     app.bot_data["ib_scan"] = ib_scan
 
     # Button callbacks
-    app.add_handler(CallbackQueryHandler(handle_button, pattern="^(approve|reject):"))
+    app.add_handler(CallbackQueryHandler(handle_button, pattern="^(approve|reject|repair):"))
     app.add_handler(CallbackQueryHandler(handle_live_confirm, pattern="^confirm_live:"))
     app.add_handler(CallbackQueryHandler(handle_close_short, pattern="^close_short:"))
     app.add_handler(CallbackQueryHandler(handle_value_button, pattern="^vbook:"))

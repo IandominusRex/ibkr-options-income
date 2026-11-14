@@ -347,6 +347,21 @@ Operator to-dos: re-copy `config/examples/value.yaml`'s `telegram:` and `prompt_
 
 ---
 
+## Built (2026-11-15 — risk envelope Section I: book repair, the stock order path and LES shares)
+
+Plan `docs/superpowers/plans/2026-11-14-risk-envelope.md` Tasks 30-32 and 32a, spec
+`docs/superpowers/specs/2026-11-13-risk-envelope-design.md` §3.7, §3.5.1, §2.7. On `feat/risk-envelope`,
+unmerged; the daemons run none of it until a merge and `./ibkr restart`.
+
+- **Tap-only repair proposals** (Task 30, `src/engine/repair.py`, `src/orchestrator/repair_cards.py`,
+  `repair_proposals`): each EOD, covered-call overlays (the day's covered calls on still-uncovered shares) and,
+  while S10 is above L(t), "stop adding" on the names with the largest S10 share; each card shows S10_gross and
+  U_ew before and after beside L(t), and every proposal is shadow-valued each evening from stored closes, tapped or
+  not. **The stock path's tap-only rule (P10):** a repair proposal, a trim and a de-lever are never sent at any
+  autonomy level without a human tap; a `TradeCandidate.tap_only` card (the leveraged below-basis covered call
+  while `leveraged_cc_auto` is off) is never auto-queued. The covered-call floor reads the `cc_basis_floor`
+  switch under the configured `min_strike_vs_basis` (the ceiling).
+
 ## Built (2026-11-15 — risk envelope Section H: replays and the harness)
 
 Plan `docs/superpowers/plans/2026-11-14-risk-envelope.md` Tasks 26-29 and 29a, spec

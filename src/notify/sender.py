@@ -29,6 +29,7 @@ from src.common.schemas import (
     ClaudeReview,
     OrderState,
     PositionSnapshot,
+    RepairProposal,
     Strategy,
     TradeCandidate,
 )
@@ -306,7 +307,9 @@ async def send_candidates(
     auto_candidates: list[TradeCandidate] = []
     manual_candidates: list[TradeCandidate] = []
     for c in candidates:
-        (auto_candidates if may_auto_open(c.underlying) else manual_candidates).append(c)
+        # A tap-only card (risk-envelope Task 30, P10) goes to a human at every autonomy level.
+        auto = not c.tap_only and may_auto_open(c.underlying)
+        (auto_candidates if auto else manual_candidates).append(c)
     observe_only = get_autonomy_level() == AutonomyLevel.OBSERVE
 
     sent = False
@@ -1072,3 +1075,47 @@ async def send_order_notification(
             )
     except Exception:
         logger.exception("Failed to send order notification for order_id=%s", order_id)
+
+
+def repair_keyboard(proposal_id: int) -> InlineKeyboardMarkup:
+    """Approve / Reject for a tap-only repair card (``repair:<id>:approve|reject``)."""
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("✅ Approve", callback_data=f"repair:{proposal_id}:approve"),
+                InlineKeyboardButton("❌ Reject", callback_data=f"repair:{proposal_id}:reject"),
+            ]
+        ]
+    )
+
+
+async def send_repair_cards(proposals: list[RepairProposal]) -> int:
+    """Post one tap-only card per stored repair proposal to the account thread (risk-envelope
+    Task 30, P10). The buttons are the only way anything in a proposal is ever sent: nothing here
+    queues an order. Returns the cards posted; never raises."""
+    from src.notify.formatters import format_repair_proposal
+
+    cfg = get_config()
+    token = cfg.secrets.telegram_bot_token
+    chat_id = cfg.secrets.telegram_chat_id
+    if not proposals or not token or not chat_id:
+        return 0
+    posted = 0
+    try:
+        async with Bot(token=token) as bot:
+            for p in proposals:
+                if p.id is None:
+                    continue
+                try:
+                    await bot.send_message(
+                        chat_id=str(chat_id),
+                        message_thread_id=thread_id(cfg.secrets.telegram_thread_account),
+                        text=format_repair_proposal(p),
+                        reply_markup=repair_keyboard(p.id),
+                    )
+                    posted += 1
+                except Exception:
+                    logger.exception("repair card %s not sent", p.id)
+    except Exception:
+        logger.exception("repair cards not sent")
+    return posted

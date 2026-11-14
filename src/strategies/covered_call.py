@@ -25,8 +25,10 @@ from src.common.schemas import (
     TechnicalStats,
     TradeCandidate,
 )
+from src.common.universe import is_leveraged_etf
 from src.engine.regime_limits import cc_timing_reasons
 from src.storage.campaigns import adjusted_cost_basis_for
+from src.storage.envelope_switches import get_switch
 from src.strategies._evaluation import (
     REASON_BELOW_BASIS,
     REASON_BELOW_FAIR_VALUE,
@@ -49,6 +51,24 @@ from src.strategies._scoring import (
 )
 
 log = logging.getLogger(__name__)
+
+# The leveraged-ETF class floor (spec §3.7 item 1, ruling E12): a call below cost basis is admitted
+# on a leveraged ETF only at |delta| <= this.
+LEVERAGED_CC_DELTA_MAX = 0.25
+
+
+def basis_floor(configured: float) -> float:
+    """The covered call's strike floor as a fraction of cost basis (N18, ruling E12).
+
+    The ``cc_basis_floor`` switch (1.00, 0.95 or 0.90; its replay lowers it in paper) is read
+    under the configured ``covered_call.min_strike_vs_basis``, which stays the ceiling: the
+    switch can only lower the floor the operator set, never raise it. An unreadable switch
+    reads its default, 1.00."""
+    try:
+        switched = float(get_switch("cc_basis_floor"))
+    except (TypeError, ValueError):
+        switched = 1.0
+    return min(float(configured), switched)
 
 
 def uncovered_call_capacity(positions: list[PositionSnapshot], underlying: str) -> int:
@@ -166,7 +186,11 @@ def screen_cc_candidates(
     delta_max: float = cc_cfg["delta_max"]
     dte_min: int = cc_cfg["dte_min"]
     dte_max: int = cc_cfg["dte_max"]
-    min_strike_vs_basis: float = cc_cfg.get("min_strike_vs_basis", 1.00)
+    min_strike_vs_basis = basis_floor(cc_cfg.get("min_strike_vs_basis", 1.00))
+    # The leveraged class floor (E12): no basis floor at |delta| <= 0.25, tap-only until its own
+    # replay turns `leveraged_cc_auto` on (paper).
+    leveraged = is_leveraged_etf(symbol)
+    leveraged_auto = leveraged and get_switch("leveraged_cc_auto") == "on"
 
     enforce_volume = volume_gate_active()  # N19: skip the volume gate before the morning cutoff
     breakout_now = sizing.cc_breakout.get(symbol.upper()) if sizing is not None else None
@@ -203,8 +227,12 @@ def screen_cc_candidates(
         # favours not capping the recovery over squeezing income from a loser. To allow below-basis
         # writes (e.g. to keep harvesting premium on a long-term hold), lower the knob in
         # risk_limits.yaml (e.g. 0.95 permits strikes down to 5% below basis).
+        below_basis_carve_out = False
         if quote.strike < basis * min_strike_vs_basis:
-            reasons.append(REASON_BELOW_BASIS)
+            if leveraged and delta is not None and delta <= LEVERAGED_CC_DELTA_MAX + 1e-9:
+                below_basis_carve_out = True
+            else:
+                reasons.append(REASON_BELOW_BASIS)
 
         # Price the contract for display even when it failed above; the reasons list tells the
         # reader how much to trust it.
@@ -288,8 +316,10 @@ def screen_cc_candidates(
             quote_ask=quote.ask,
             open_interest=quote.open_interest,
             option_volume=quote.volume,
-            rationale_tags=["iv_rank_unavailable"] if iv_stats.iv_rank is None else [],
+            rationale_tags=(["iv_rank_unavailable"] if iv_stats.iv_rank is None else [])
+            + (["leveraged_below_basis"] if below_basis_carve_out else []),
             cc_breakout=breakout_now,
+            tap_only=below_basis_carve_out and not leveraged_auto,
         )
         # After an upside breakout the call has to be pushed out (strike floor, delta cap);
         # the full reason list is kept like every other gate's.

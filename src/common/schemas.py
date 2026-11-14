@@ -828,6 +828,48 @@ class TradeCandidate(BaseModel):
     # Covered call only: the breakout in force on the name when the call was priced (the card
     # shows it and the send-time gate re-checks the strike floor and delta cap from it).
     cc_breakout: CcBreakout | None = None
+    # Tap-only (risk-envelope Task 30, ruling P10): the card goes to a human at every autonomy
+    # level, never auto-queued. Set on a leveraged-ETF covered call written below its cost basis
+    # (the E12 carve-out) while the ``leveraged_cc_auto`` switch is off.
+    tap_only: bool = False
+
+
+RepairKind = Literal["cc_overlay", "stop_adding", "trim", "delever"]
+
+
+class RepairProposal(BaseModel):
+    """One book-repair proposal Python builds each day (risk-envelope Task 30; spec §3.7 item 2).
+
+    Tap-only always (ruling P10): a proposal is never sent by itself at any autonomy level. The
+    card shows the envelope before and after the proposal (S10_gross, U_ew) beside today's limits
+    L(t) (``s10_limit`` / ``uew_limit``). ``mark`` is the underlying's price when it was built (and
+    ``twin_mark`` the twin's), the base its daily shadow value is measured from, tapped or not.
+
+    * ``cc_overlay``: ``candidate`` is the covered call (a ``TradeCandidate``), approved through
+      the ordinary approval path and re-gated at send time like any card.
+    * ``stop_adding``: no new cash-secured put on ``symbol`` (a ``universe_overrides`` remove).
+    * ``trim``: sell ``shares`` of ``symbol`` through the stock order path (Task 31).
+    * ``delever``: sell ``shares`` of a leveraged ETF, then optionally buy ``twin_shares`` of its
+      unleveraged ``twin`` (Task 32), each leg its own gated order.
+    """
+
+    id: int | None = None
+    kind: RepairKind
+    symbol: str
+    detail: str
+    s10_before: float
+    s10_after: float
+    uew_before: float
+    uew_after: float
+    s10_limit: float | None = None
+    uew_limit: float | None = None
+    created_at: datetime = Field(default_factory=_utcnow)
+    shares: float = 0.0
+    twin: str | None = None
+    twin_shares: float = 0.0
+    candidate: TradeCandidate | None = None
+    mark: float | None = None
+    twin_mark: float | None = None
 
 
 class RiskVerdict(BaseModel):

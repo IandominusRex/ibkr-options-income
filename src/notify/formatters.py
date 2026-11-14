@@ -33,6 +33,7 @@ from src.common.schemas import (
     OptionRight,
     PositionSnapshot,
     Regime,
+    RepairProposal,
     RollAlert,
     RollDecision,
     RollReview,
@@ -2581,3 +2582,33 @@ def format_manual_buy_line(
     if after.unmeasured:
         lines.append(f"Unmeasured: {', '.join(after.unmeasured)}")
     return "\n".join(lines)
+
+
+_REPAIR_TITLES = {
+    "cc_overlay": "Repair: covered-call overlay",
+    "stop_adding": "Repair: stop adding",
+    "trim": "Repair: trim",
+    "delever": "Repair: de-lever",
+}
+
+
+def format_repair_proposal(p: RepairProposal) -> str:
+    """A tap-only book-repair card (risk-envelope Task 30; spec §3.7 item 2): what it does, and
+    S10_gross and U_ew before and after it beside today's L(t). Plain text. Nothing is sent until
+    a human taps Approve; a tapped order is gated by the Rules Engine at decision and send time
+    on a fresh quote."""
+    limits = (
+        f"L(t): S10 {p.s10_limit:.1f}%, U_ew {p.uew_limit:.2f}"
+        if p.s10_limit is not None and p.uew_limit is not None
+        else "L(t): not measured"
+    )
+    return "\n".join(
+        [
+            f"{_REPAIR_TITLES.get(p.kind, 'Repair')}: {p.symbol} (tap-only)",
+            p.detail,
+            f"S10 {_env_pct(p.s10_before)} -> {_env_pct(p.s10_after)} (gross)",
+            f"U_ew {p.uew_before:.2f} -> {p.uew_after:.2f}",
+            limits,
+            "Nothing is sent unless you approve; an approved order is re-gated on a fresh quote.",
+        ]
+    )
