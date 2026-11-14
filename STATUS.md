@@ -365,6 +365,11 @@ synthetic inputs only. Each one's output is a result file that does not exist un
   function replayed against the `claude_cut` rows and the profitable uncut system CSP opens of Oct 13-Nov 12; a
   rule passes on its own (trims or blocks at least 6 of 10 cut rows, blocks at most 25% of the profitable uncut
   opens) and writes its own result file (`E15_tech_cap.json`, `E15_stacking.json`).
+- **The slow-breaker threshold replay** (Task 28, `scripts/slow_breaker_replay.py`): E14's pick of 8, 10, 12 or 15
+  percent from a real-NLV slide check and a synthetic first-year episode count; writes `E14.json`, which the EOD
+  run applies by setting the `slow_breaker` switch to the threshold (paper only). The real NLV series is the
+  `portfolio_snapshots` history, which is short (it starts in October 2026); when it holds under 5 sessions of the
+  slide the synthetic series stands in and the report says so.
 
 ## Built (2026-11-15 — risk envelope Section G: limits behind switches)
 

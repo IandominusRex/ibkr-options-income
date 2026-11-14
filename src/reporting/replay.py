@@ -173,15 +173,19 @@ def strike_for_delta(
     return float(spot * math.exp(-d1 * iv * math.sqrt(t) + (r + 0.5 * iv * iv) * t))
 
 
-def worst_drawdown(values: Sequence[float], window: int = 20) -> float:
-    """The worst peak-to-trough fall, as a percent, measured from the highest value of the trailing
-    *window* sessions (the current one included); 0.0 for a series that never falls."""
-    worst = 0.0
+def drawdown_series(values: Sequence[float], window: int = 20) -> list[float]:
+    """Each session's fall from the highest value of the trailing *window* sessions (the current
+    one included), as a percent: the slow breaker's own measure (``circuit_breakers._slow_raw``)."""
+    out: list[float] = []
     for i, v in enumerate(values):
         peak = max(values[max(0, i - window + 1) : i + 1])
-        if peak > 0:
-            worst = max(worst, (peak - v) / peak * 100.0)
-    return worst
+        out.append(max(0.0, (peak - v) / peak * 100.0) if peak > 0 else 0.0)
+    return out
+
+
+def worst_drawdown(values: Sequence[float], window: int = 20) -> float:
+    """The worst of ``drawdown_series``, a percent; 0.0 for a series that never falls."""
+    return max(drawdown_series(values, window), default=0.0)
 
 
 def sessions_between(a: date, b: date) -> int:
