@@ -1,6 +1,6 @@
 # Risk envelope, leveraged-ETF policy and the spreads book — design
 
-Date: 2026-11-13 · Status: **revision 2 (2026-11-14), draft for operator review**. Sequenced
+Date: 2026-11-13 · Status: **revision 3 (2026-11-14), ruled (§6.2)**; revision 3 adds the Leveraged Entry Signal (§0.2, §2.7, §3.5.1). Sequenced
 **before** the Mastermind (`2026-11-12-mastermind-design.md`, now revision 4). That spec's envelope
 repair, book repair and spreads decisions now live here; it references this spec as a prerequisite.
 Revision 2 adds bought index puts as a **bridge hedge** during the glide (§0.1, §2.6, §3.10) and
@@ -49,6 +49,19 @@ What revision 2 changes here: §2.6 (evidence), §3.1 (the hedge row), §3.4.1 (
 greeks), §3.4.3 (T20, S-SMH), §3.9 (Claude's place), **new §3.10 (the bridge hedge)**, §4 (phasing),
 §5, §6 (**H1–H10**), §7 and §8. The Mastermind's revision 4 holds Claude's hedge roles, the paper put
 budget, Track D, the premium-cost dimension of its §4, and decisions H11–H16.
+
+### 0.2 Revision 3 (2026-11-14): a dip-entry signal for the leveraged sleeve
+
+The operator asked to use the McClellan oscillator with the 50- and 200-day averages to load up on
+3x ETFs through CSPs or outright buys. The study behind it is §2.7. The operator then ruled (binding):
+
+| # | Ruling |
+|---|---|
+| OR13 | **Our own signal, not the stock McClellan oscillator:** the Leveraged Entry Signal (LES, §3.5.1). A trend gate (the governing index above its 200-day), a pullback (RSI(2) under 5 or a close under the 50-day), and a McClellan-style breadth washout computed on the **Nasdaq-100** constituents, which sets the size tier |
+| OR14 | **The trend gate governs the CSP sleeve too.** Above the 200-day, LES drives sleeve CSPs and share buys. Below it, only §3.5's bottoming and drawdown trigger may open a sleeve CSP, at half the tier, and no share is bought |
+| OR15 | **A paper share-buy path for TQQQ and SOXL, built now.** Inside the sleeve and the envelope, refused in live. A position is held until the trend breaks (2 consecutive index closes under the 200-day), with no time stop |
+| OR16 | **Signal-scaled sleeve up to 6%:** 3% of NLV (leverage-weighted) on a pullback, 6% with the breadth washout, always inside S10_gross ≤ L(t) and U_ew. This replaces E7's flat 3% |
+| OR17 | **Breadth data:** the free thetrading.tools series (from 2016-11; personal-use licence, attribution) for history, plus the system's own daily count from Nasdaq-100 constituent closes going forward |
 
 ## 1. Intent
 
@@ -288,6 +301,30 @@ cash-settled. One third-party snapshot (Nov 12) shows **total open interest ~19.
 an average bid/ask of ~30% of mid across the whole chain** (wings included). The whole chain's open
 interest is smaller than one QQQ strike's (27,575 on QQQ 680P, Jun 25 [V, `option_quotes`]). **XND
 liquidity is unmeasured;** IBKR's routing, fees and paper behaviour for XND are [U].
+
+### 2.7 Dip signals for 3x ETFs: evidence (revision 3)
+
+The study ran on 2026-11-14 as a scratch replay, not repo code.
+- **Breadth:** thetrading.tools' free series, 2016-11 to 2026-11. It is computed from that provider's own
+  stock universe, not official NYSE counts [W]. The ratio-adjusted oscillator computed here matched the
+  provider's published values exactly [V].
+- **Prices:** yfinance.
+- **"Synthetic 3x":** 3 × the index's daily return − 3%/yr, for history before the real ETFs.
+- **Timing:** signal on the close, entry at the next close. Costs beyond ETF fees are ignored [M].
+
+| Finding | Numbers |
+|---|---|
+| **The 200-day is the robust part** | Holding TQQQ only while QQQ > 200-day, 2017–2026: CAGR 35.0% vs 37.5% buy-and-hold, worst drawdown −56% vs −82%. Gayed and Bilello report the same for 2x S&P 1928–2015 [W] |
+| **The NYSE McClellan oscillator: no consistent edge** | TQQQ 40-session returns after oscillator < −50 / −70 / −90 with QQQ > 200-day: +13.1% / +10.6% / +2.3%, against +8.1% from a random day. The result flips with the threshold, and n = 9–34 [V, 2017–2026 only] |
+| **It missed the Nov 2026 dip** | QQQ fell 14.8% from its 60-day high on Nov 5. NYSE oscillator low −1, Nasdaq-100 oscillator low −17: the selloff was narrow and led by tech |
+| **Dip buys under the 200-day lose, out of sample** | Before 2017, RSI(2) < 5 with the index under its 200-day: 10-session synthetic 3x return QQQ −0.5%, SOXX −1.1%. Drawdown ≥ 1σ₆₀ plus a reversal bar: worst 40-session result −79% |
+| **Pullbacks above the 200-day beat a random day** | Before 2017, 20-session synthetic 3x returns: QQQ RSI(2) < 5 +4.3% vs +1.7% random-above-200-day; SOXX +7.5% vs +3.1%. 2017–2026: QQQ +2.9% vs +4.5% (worse), SOXX +9.6% vs +7.1% |
+| **The breadth washout adds a little** | Above the 200-day with Nasdaq-100 oscillator < −40 and RSI(2) < 10, 2017–2026, 20 sessions: SOXX +12.2% vs +7.1%, QQQ +5.0% vs +4.5%. **No out-of-sample test is possible** (data from 2016) |
+| **LES as a whole** (pullback entry, hold to a trend break) | QQQ synthetic 2000-06 to 2016: CAGR 10.9%, max DD −65%, Sharpe 0.46, against 4.2% / −84% / 0.31 for the 200-day filter and −15.7% / −99.9% / 0.20 for buy-and-hold. SOXX: 10.2% / −77% / 0.44 against 4.7% / −90% / 0.35. 2017–2026 real ETFs: TQQQ 25.4% / −62% / 0.71 (below both, 35.0% / 0.85 and 37.5% / 0.81); SOXL 38.1% / −77% / 0.81 (the best of the three) |
+| **Data** | IBKR's AD-NYSE index is live-only, and historical requests have been reported to fail [W, 2015]. Official NYSE breadth history (1960s on) is sold by McClellan Financial [W] |
+
+The LES parameters were chosen **after** seeing these numbers. The replay in the plan is therefore a
+reproduction check, not an independent test. The forward `record` period is the only clean evidence.
 
 ## 3. Decisions
 
@@ -553,9 +590,11 @@ returns 0 for a leveraged name outside the sleeve (a code change: today it floor
 SOXL leave `actively_wheeling` and stay `would_own`. UPRO and DPST leave the universe's trading
 lists (OR4). LABU and TSLL stay CC-only.
 
-**A sleeve lot opens only when all of these hold:**
+**A sleeve lot opens only when all of these hold** (revision 3 changes conditions 1 and 8; see §3.5.1):
 
-1. **Signal:** the name's or the governing index's bottoming signal fires (existing machinery).
+1. **Signal:** with the governing index **above** its 200-day, the LES pullback fires (§3.5.1); conditions 2
+   and 3 then do not apply. With it **below** its 200-day, the name's or the governing index's bottoming
+   signal fires (existing machinery), conditions 2 and 3 hold, and the lot sizes at half the tier.
 2. **Drawdown:** the governing unleveraged index is ≥ 1.0 × its 60-session σ below its 60-session
    high, with σ₆₀ = one-year realised vol × √(60/252). Today that is ≈ 10.4% for QQQ and ≈ 20.7% for
    SOXX (SMH as proxy until SOXX history exists).
@@ -567,9 +606,12 @@ lists (OR4). LABU and TSLL stay CC-only.
 6. **The fair-value floor applies:** `vrp_waiver` returns False when `leverage_factor` is not None.
    SOXL's IV/realised median is 0.98, and the floor rejected 5,264 of 10,127 SOXL put evaluations (S2R).
 7. **Pace:** one lot per name per 3 sessions; at most 2 lots open.
-8. **Sleeve cap:** ≤ 3% of NLV of leverage-weighted collateral across all leveraged names. At today's
-   prices that is **one lot at a time**: a TQQQ lot is ~$6k of collateral, ~$18k (2.8% of NLV) at
-   leverage; a SOXL lot is ~$5.5–6.6k, ~$16.5–20k at leverage.
+8. **Sleeve cap (revision 3, OR16):** the LES tier, leverage-weighted, across all leveraged names and
+   counting sleeve CSP collateral and LES shares together. That is 3% of NLV on a pullback and 6% with
+   the breadth washout; below the 200-day it is half the tier (1.5%). At today's prices a TQQQ lot is ~$6k
+   of collateral, ~$18k (2.8% of NLV) at leverage, and a SOXL lot is ~$5.5–6.6k, ~$16.5–20k at leverage.
+   So the 3% tier is **one lot**, the 6% tier is two, and the 1.5% half tier is **zero lots** until NLV
+   grows or the ETF's price falls. A lot never rounds up.
 9. **Envelope:** each lot passes S10 and U_ew.
 
 **Governing indexes:** TQQQ → QQQ; SOXL → **SOXX**. Add SOXX to the research worker's price and IV
@@ -587,6 +629,47 @@ the tech-linked group cap and the sleeve cap. Risk units already scale through I
 
 **Assignment of a sleeve lot:** the 2026-10-14 roll ruling stands. On assignment, the leveraged
 covered-call carve-out and the de-lever proposal apply (§3.7).
+
+#### 3.5.1 The Leveraged Entry Signal (revision 3; OR13–OR17)
+
+LES is deterministic tier and pure: price bars and breadth counts in, a signal out. No LLM output reaches
+it. It is computed per governing index G (QQQ for TQQQ, SOXX for SOXL) on each completed daily close and
+fails closed: missing bars, fewer than 200 sessions or a stale breadth count means no signal.
+
+| Part | Rule | What it does |
+|---|---|---|
+| **Trend gate** | G's close > its 200-day simple average | Decides whether LES applies at all. Below it, only §3.5's bottoming path may open a sleeve CSP, at half the tier, and LES buys nothing |
+| **Pullback** | Trend gate holds **and** (RSI(2) of G < 5 **or** G's close < its 50-day average) | Opens the **3% tier**: a sleeve CSP (conditions 4–9) or LES shares |
+| **Breadth washout** | The Nasdaq-100 breadth oscillator (below) ≤ −40 on any of the last 5 sessions, with the pullback firing | Lifts the tier to **6%** |
+| **Trend break (exit)** | 2 consecutive closes of G under its 200-day | Sells every LES share position on that ETF (paper, automatic). Open sleeve CSPs stay under the wheel's roll rules |
+
+**The breadth oscillator** (inspired by McClellan, but built for this book). The stock McClellan oscillator
+uses NYSE breadth, which held up through the Nov 2026 tech selloff (§2.7). The book's leveraged risk is
+Nasdaq-100 and semiconductor risk, so LES counts the Nasdaq-100 constituents instead:
+`RANA_t = (adv − dec) / (adv + dec) × 1000`, then `osc_t = EMA_0.10(RANA) − EMA_0.05(RANA)` (the 19- and 39-day
+smoothing constants). History comes from the free thetrading.tools series (`ndx_advancing` / `ndx_declining`, from
+2016-11). Going forward the system makes its own count each night from constituent closes, from a committed
+constituent list refreshed quarterly. Where both sources exist, a gap of more than 10 points is flagged and the
+system's own count is used.
+
+**Shares.** An LES buy is a whole-share limit order at mid in TQQQ or SOXL for the tier's room: the tier's
+leverage-weighted cap, minus the sleeve exposure already open, divided by the leverage. It also needs:
+- S10_gross ≤ L(t) and U_ew ≤ L_ew(t) after the buy (a 3x share counts at leverage × the index β);
+- `leveraged_entry` set to `on` in paper;
+- one buy per ETF per 3 sessions.
+
+A pullback signal that persists adds no new lot until the pace allows one and the tier has room. LES shares
+are their own book: orderRef `les:<id>`, a ledger tag `book="les"`, never wheel shares. So the wheel never
+writes a covered call against them, the value book never counts them, and a trim never sells them.
+
+**Why the trend gate.** From 1999 to 2026, buying 3x dips under the 200-day lost money out of sample, while
+pullbacks above it beat a random entry. The breadth tier rests on 2016–2026 data only (§2.7). The share
+position's drawdowns stay severe (−62% to −77% on the position). That is why it is a sleeve: at the 6% tier,
+leverage-weighted, the shares are about 2% of NLV, so a −77% drawdown costs about 1.5% of NLV.
+
+**Activation.** `leveraged_entry` ships `record`: every would-be buy and exit is written with its envelope
+result. It turns `on` in paper when the LES replay PASSes (the criterion is the plan's), and is refused in
+live.
 
 ### 3.6 The index class and the universe (E8, E9)
 
@@ -950,7 +1033,7 @@ D13 and D14 now point here.
 | **E4** | The shock budget | S10 by full revaluation, Blume betas, leveraged at leverage × index β; target **15%** at SPY −10%; start at the measured level on adoption (≈ 22%); linear weekly glide over **13 weeks**; report S20 | Accept that no new CSP opens until trims or call-aways create room: covered calls alone reach about 20% |
 | **E5** | The gross backstop | U_ew unconditional; **1.25** target, gliding from 1.36; ITM puts at strike | O2R: 1.0 (account-level cash-secured). S2: 1.5. Adjudicated in §3.0 |
 | **E6** | The gap measures | G10 and P20 as classification and display measures; not limits | Making them limits would duplicate the sleeve cap |
-| **E7** | The leveraged sleeve | §3.5 conditions; vol-scaled drawdown (1.0 σ₆₀); a sleeve delta window of 0.15–0.20 (load check changed); 3% of NLV aggregate, which is one lot at a time at today's prices | Alternative: 3% per name with 2 lots (≈ 6% aggregate). OR4 reads as aggregate |
+| **E7** | The leveraged sleeve | §3.5 conditions; vol-scaled drawdown (1.0 σ₆₀); a sleeve delta window of 0.15–0.20 (load check changed); 3% of NLV aggregate, which is one lot at a time at today's prices. **Revision 3 (OR13–OR16):** the LES tier, 3% on a pullback and 6% with the breadth washout, half under the 200-day (§3.5.1) | Alternative: 3% per name with 2 lots (≈ 6% aggregate). OR4 reads as aggregate |
 | **E8** | Universe | UPRO, DPST out; TQQQ, SOXL out of `actively_wheeling`; QQQ in; SOXX dip-watch for liquidity; SPY after E3 | — |
 | **E9** | The index class | One lot ≤ 15% of NLV, {QQQ, SPY}; VOO/IVV only as fallback | O2R: 12% with SMH |
 | **E10** | Tail-class deployment | `index_1x` multipliers {1.0, 1.0, 0.8, 0.5}, record-only until the wheel-faithful replay agrees in sign under both valuations | — |
@@ -976,6 +1059,20 @@ Numbered H so they collide with neither E1–E15 nor D1–D21. The Mastermind ow
 | **H8** | Tech scenarios | T20 and S-SMH as display, harness and credit-grid measures; not limits; T20 returns to the operator as a candidate limit if T20 − S10 > 3 points | O3R preferred S-QQQ / S-SMH from positions; S3R preferred T20. Adjudicated for T20 |
 | **H9** | Book, fence and build | `book="hedge"`, `hedge:` and `hedge:claude:` refs, underlying and contract disjointness, `hedge_view`, `src/hedge/`, own tables, the reconciliation skip, `tests/test_hedge_fence.py`, a CLAUDE.md hedge-fence section; the §3.10.10 build | None on substance; the build list is the union adjudicated in §3.10.0 |
 | **H10** | Any future headroom credit for a hedge | **None in this spec.** A later ruling, after the review gate, would need at least: credit = the minimum over {S10, S20, T20, G10, P20}; a haircut by the 60-session R² of NLV on the instrument; hedge DTE ≥ the longest admitted position's DTE + 10 sessions; ≤ 2 points; no lift while it supports open risk; a harness pass | Both reviewers: zero credit in v1. Hedge-funded headroom is at best break-even (§2.6) |
+
+### 6.2 Rulings, 2026-11-14
+
+The operator **adopted every recommendation in E1–E15 and H1–H10** as ruled, confirming E4 as written, E7 at 3% of NLV
+aggregate, and H6 with the VXN 90th-percentile block. The data-gated rulings turn on automatically in paper on a PASS,
+stay record-only in live, and can be reversed by CLI. The E3 cutover only notifies. The pass/fail criteria, the
+thresholds the plan set itself, and the code facts that correct §3.4.2 (C1–C8) are in the implementation plan,
+`docs/superpowers/plans/2026-11-14-risk-envelope.md` (its Rulings section).
+
+**Revision 3 (same day), OR13–OR17:**
+- The Leveraged Entry Signal (§3.5.1, evidence §2.7) changes E7. The sleeve is now LES-tiered at 3% / 6%,
+  with half the tier under the 200-day, and adds paper share buys of TQQQ and SOXL held until the trend breaks.
+- The plan carries LES as rulings L1–L8 and Tasks 10a, 23, 29 and 32a.
+- E0 adds the breadth oscillator and records the LES state each session. E2 adds the share-buy path.
 
 ## 7. Unverified, and open research
 
