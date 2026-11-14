@@ -27,6 +27,7 @@ trade ledger (``src/ledger`` dedupes by execId and tags them ``book="spreads"``)
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -35,6 +36,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from src.common.config import Config, SpreadsCfg, get_config
+from src.common.macro_calendar import events_on
 from src.common.market_hours import is_trading_day, next_session
 from src.common.schemas import (
     ChainOption,
@@ -90,6 +92,9 @@ from src.spreads.tape import SessionTape, trigger
 log = logging.getLogger(__name__)
 
 _MAP_RETRY = timedelta(minutes=5)
+# The slow drawdown breaker spanning books (risk-envelope spec §3.4.5, plan Task 22) writes this
+# system_settings key as JSON {"tripped": true, ...}; until then it is absent.
+SLOW_BREAKER_KEY = "slow_breaker_tripped"
 _CARD_BEAT = timedelta(minutes=5)  # the day card's clock moves at least this often while live
 
 
@@ -220,6 +225,7 @@ class SpreadsService:
         self._card: DayCard | None = None  # the day's edited-in-place card (notify.py)
         # An opening order that may still fill (cancel unconfirmed): what is needed to book it.
         self._late_open: dict[str, tuple[SpreadCandidate, str, Any, int | None, str | None]] = {}
+        self._account_unreadable = False  # set by _account_state when its read failed
 
     @property
     def books(self) -> list[tuple[str, Executor]]:
@@ -626,6 +632,7 @@ class SpreadsService:
         today = now.astimezone(ET).date()
         trades, realized = store.day_stats(today, mode)
         open_count = len(store.open_positions(mode)) + len(store.expiring_positions(mode))
+        halted, slow = self._account_state()
         return SpreadRiskContext(
             now=now,
             levels=levels,
@@ -636,7 +643,31 @@ class SpreadsService:
             excess_liquidity_usd=excess,
             capital_usd=self.capital(mode),
             sides_today=store.sides_opened(today, mode),  # type: ignore[arg-type]
+            account_halted=halted,
+            slow_breaker=slow,
+            macro_events=sorted({e.kind for e in events_on(today)}),
         )
+
+    def _account_state(self) -> tuple[bool, bool]:
+        """(the account's master halt, the slow drawdown breaker), from the trading DB's
+        system_settings: the link from the account's own stops to the spreads gate
+        (risk-envelope Task 3). Read strictly, so an unreadable state reads (True, True) and
+        blocks new entries until it can be read again. Exits never consult it."""
+        try:
+            from src.storage.system_settings import HALT_KEY, get_setting_strict
+
+            halted = (get_setting_strict(HALT_KEY) or "false").strip().lower() == "true"
+            raw = get_setting_strict(SLOW_BREAKER_KEY)
+            slow = False
+            if raw:
+                state = json.loads(raw)
+                slow = bool(state.get("tripped")) if isinstance(state, dict) else bool(state)
+            self._account_unreadable = False
+            return halted, slow
+        except Exception:
+            log.exception("spreads: the account halt state is unreadable, entries blocked")
+            self._account_unreadable = True
+            return True, True
 
     def capital(self, mode: str | None = None) -> float:
         """A book's sizing capital: starting capital plus everything that book has realized."""
@@ -670,6 +701,19 @@ class SpreadsService:
             return  # one decision at a time: the pick in flight resolves first
         if self.entries_blocked:
             self._watch(now, f"entries blocked: {self.entries_blocked}")
+            return
+        halted, slow = self._account_state()
+        if self._account_unreadable:
+            self._watch(now, "account halt state unreadable, no new entries")
+            await self.alert_once(
+                "account_state",
+                "[SPREADS] the account halt state (system_settings) cannot be read: no new "
+                "entries until it can; exits keep running",
+            )
+            return
+        if halted or slow:
+            why = "the account is halted" if halted else "the slow drawdown breaker tripped"
+            self._watch(now, f"{why}, no new entries")
             return
         if self.halt_path.exists():
             self._watch(now, "halt file present, no new entries")
@@ -867,6 +911,10 @@ class SpreadsService:
             if ev.day == et.date():
                 when = "all day" if ev.until is None else f"until {ev.until} ET"
                 out.append(f"{ev.label or 'event'} ({when})")
+        block = set(self.cfg.risk.calendar_block)
+        for m in events_on(et.date()):
+            rule = "no new entries today" if m.kind in block else "no block"
+            out.append(f"{m.kind} {m.time_et} ET ({rule})")
         return out
 
     def _ex_div_window(self, today: date) -> bool:

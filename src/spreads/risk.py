@@ -44,6 +44,12 @@ def validate(c: SpreadCandidate, ctx: SpreadRiskContext, cfg: SpreadsCfg) -> Spr
         if ev.day == today and (ev.until is None or hhmm < ev.until):
             reasons.append("event_day" if ev.until is None else "event_window")
             break
+    if any(kind in r.calendar_block for kind in ctx.macro_events):
+        reasons.append("macro_event_day")
+    if ctx.account_halted:
+        reasons.append("account_halted")
+    if ctx.slow_breaker:
+        reasons.append("slow_breaker")
     if c.side == "call" and r.ex_dividend_dates:
         exdiv = set(r.ex_dividend_dates)
         if today in exdiv or next_session(today) in exdiv:

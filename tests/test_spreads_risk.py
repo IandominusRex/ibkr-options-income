@@ -42,6 +42,7 @@ CFG = _BASE.model_copy(
                 "min_excess_liquidity_usd": 10_000.0,
                 "max_quote_age_seconds": 20.0,
                 "events": [],
+                "calendar_block": ["FOMC"],
                 "ex_dividend_dates": [],
             }
         ),
@@ -226,3 +227,40 @@ def test_holiday_and_early_close_days_are_skipped() -> None:
 def test_after_entry_end_is_outside_the_window() -> None:
     late = datetime(2026, 10, 7, 17, 31, tzinfo=UTC)  # 13:31 EDT
     assert "outside_entry_window" in validate(cand(late), ctx(late), CFG).reasons
+
+
+# Risk envelope Task 3 — the static macro calendar, the account halt and the slow breaker.
+def test_an_fomc_decision_day_blocks_entries_from_the_calendar() -> None:
+    v = validate(cand(), ctx(macro_events=["FOMC"]), CFG)
+    assert not v.approved and "macro_event_day" in v.reasons
+
+
+def test_an_0830_print_does_not_block_by_default() -> None:
+    assert _BASE.risk.calendar_block == ["FOMC"]  # the shipped default
+    shipped = CFG.model_copy(
+        update={"risk": CFG.risk.model_copy(update={"calendar_block": _BASE.risk.calendar_block})}
+    )
+    assert validate(cand(), ctx(macro_events=["CPI", "PPI", "NFP", "PCE"]), shipped).approved
+    cpi = CFG.model_copy(
+        update={"risk": CFG.risk.model_copy(update={"calendar_block": ["FOMC", "CPI"]})}
+    )
+    assert "macro_event_day" in validate(cand(), ctx(macro_events=["CPI"]), cpi).reasons
+
+
+def test_an_operator_event_still_blocks() -> None:
+    speech = [SpreadsEventCfg(day=date(2026, 10, 7), label="Fed chair speech")]
+    ev = CFG.model_copy(
+        update={"risk": CFG.risk.model_copy(update={"events": speech, "calendar_block": []})}
+    )
+    v = validate(cand(), ctx(macro_events=[]), ev)
+    assert "event_day" in v.reasons and "macro_event_day" not in v.reasons
+
+
+def test_account_halted_blocks_entries() -> None:
+    v = validate(cand(), ctx(account_halted=True), CFG)
+    assert not v.approved and v.reasons == ["account_halted"]
+
+
+def test_slow_breaker_blocks_entries() -> None:
+    v = validate(cand(), ctx(slow_breaker=True), CFG)
+    assert not v.approved and v.reasons == ["slow_breaker"]

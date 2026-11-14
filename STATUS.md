@@ -347,6 +347,20 @@ Operator to-dos: re-copy `config/examples/value.yaml`'s `telegram:` and `prompt_
 
 ---
 
+## Built (2026-11-14 — risk envelope Section B: the spreads book's fixes)
+
+Plan `docs/superpowers/plans/2026-11-14-risk-envelope.md` Tasks 3-7, spec
+`docs/superpowers/specs/2026-11-13-risk-envelope-design.md` §3.2. On `feat/risk-envelope`, unmerged;
+the daemons run none of it until a merge and `./ibkr restart`.
+
+- **The calendar and the account's stops reach the spreads gate (Task 3).** FOMC decision days in the
+  committed `config/macro_calendar.yaml` stop new spreads entries all day (`risk.calendar_block`,
+  default `[FOMC]`; reason `macro_event_day`); the 08:30 prints are not blocked unless listed. The
+  wheel's master halt and the slow drawdown breaker (`system_settings`, read strictly each cycle) stop
+  new entries too (`account_halted`, `slow_breaker`); an unreadable state blocks and alerts; exits keep
+  running. Before this, the only spreads halt was `data/spreads.halt` and the Oct 28 FOMC day traded.
+  The slow breaker itself is Task 22: until then its key is absent and reads as not tripped.
+
 ## Bugs fixed (2026-11-12 — spreads late fill, regime flapping, roll noise)
 
 From the week's logs (Nov 5–12):

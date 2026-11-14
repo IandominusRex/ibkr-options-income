@@ -74,6 +74,7 @@ risk:
   events: []                  # operator-maintained. Whole day: - {day: 2026-10-28, label: FOMC}
                               # Until a time (ET): - {day: 2026-08-28, until: "10:30", label: Fed chair speech}
                               # CPI/PPI print before the open, so they usually need no entry here
+  calendar_block: [FOMC]      # kinds in config/macro_calendar.yaml (FOMC/CPI/PPI/NFP/PCE) that stop new entries all day; the 08:30 prints are not blocked unless listed
   ex_dividend_dates: []       # SPY ex-dividend dates (quarterly), operator-maintained: no new CALL spreads
                               # on the day before or the day of (early-assignment risk on short calls)
 

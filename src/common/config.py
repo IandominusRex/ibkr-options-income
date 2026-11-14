@@ -942,6 +942,10 @@ class SpreadsRiskCfg(BaseModel):
     min_excess_liquidity_usd: float = 10_000.0
     max_quote_age_seconds: float = 20.0
     events: list[SpreadsEventCfg] = Field(default_factory=list)
+    # Kinds in config/macro_calendar.yaml (src/common/macro_calendar.py) that block new entries
+    # all day (risk-envelope Task 3, ruling E2): FOMC decision days by default; the 08:30 prints
+    # land before the entry window and block only when listed here.
+    calendar_block: list[Literal["FOMC", "CPI", "PPI", "NFP", "PCE"]] = ["FOMC"]
     ex_dividend_dates: list[date] = Field(default_factory=list)
 
     @model_validator(mode="after")

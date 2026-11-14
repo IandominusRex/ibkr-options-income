@@ -1917,6 +1917,11 @@ class SpreadRiskContext(BaseModel):
     excess_liquidity_usd: float | None
     capital_usd: float  # the book's capital: starting capital + realized P&L (sizing basis)
     sides_today: list[SpreadSide] = Field(default_factory=list)  # sides opened this ET day
+    # The account's own stops (risk-envelope Task 3): the wheel's master halt and the slow
+    # drawdown breaker spanning books, read by the service from system_settings each cycle.
+    account_halted: bool = False
+    slow_breaker: bool = False
+    macro_events: list[str] = Field(default_factory=list)  # calendar kinds today, e.g. ["FOMC"]
 
 
 class SpreadVerdict(BaseModel):

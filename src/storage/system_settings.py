@@ -63,6 +63,15 @@ def get_setting(key: str, default: str = "") -> str:
         return default
 
 
+def get_setting_strict(key: str) -> str | None:
+    """The stored value, or None when the row is absent. Unlike ``get_setting`` it raises when
+    the table cannot be read, for a caller that must fail closed on an unreadable state (the
+    spreads service's account-halt link, risk-envelope Task 3)."""
+    with session_scope() as s:
+        row = s.query(SystemSettingRow).filter_by(key=key).first()
+        return row.value if row else None
+
+
 def _write_setting(s: Session, key: str, value: str) -> None:
     row = s.query(SystemSettingRow).filter_by(key=key).first()
     if row:

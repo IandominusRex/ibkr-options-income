@@ -8,6 +8,7 @@ import pytest
 from src.common.config import get_config
 from src.common.schemas import ChainOption, ChainSnapshot, SessionSnapshot
 from src.spreads.executor import SpreadExecutor
+from src.spreads.service import SpreadsService
 
 TODAY = date(2026, 10, 7)
 T0931 = datetime(2026, 10, 7, 13, 31, tzinfo=UTC)
@@ -214,10 +215,17 @@ class FakeNotifier:
         return [*self.sent, *self.edits]
 
 
+REAL_ACCOUNT_STATE = SpreadsService._account_state  # the service's own system_settings reader
+
+
 @pytest.fixture()
 def spreads_db(tmp_path, monkeypatch):
     import src.spreads.store as st
 
+    # Every service test that is not about the account's own stops runs with them clear, so it
+    # never reads the checkout's trading DB (risk-envelope Task 3). The account-stop tests put
+    # the real reader back on an isolated trading DB.
+    monkeypatch.setattr(SpreadsService, "_account_state", lambda self: (False, False))
     monkeypatch.setattr(st, "_engine", None)
     monkeypatch.setattr(st, "_SessionLocal", None)
     monkeypatch.setattr(st, "_resolve_url", lambda: f"sqlite:///{tmp_path / 'spreads.db'}")
@@ -968,3 +976,101 @@ async def test_no_urgent_alert_after_the_bell_or_for_a_past_expiry(tmp_path, spr
     clock[0] = datetime(2026, 10, 8, 1, 0, tzinfo=UTC)  # 21:00 ET, after the bell
     await svc.while_disconnected()
     assert not any("URGENT" in m for m in notifier.sent)
+
+
+# ---------------------------------------------------------------- risk envelope Task 3
+
+
+def _candidate_count(st) -> int:
+    with st.spreads_session() as s:
+        return s.query(st.SpreadCandidateRow).count()
+
+
+async def test_a_halt_blocks_entries_but_exits_run(tmp_path, spreads_db, db, monkeypatch) -> None:
+    from src.storage.system_settings import set_halted
+
+    monkeypatch.setattr(SpreadsService, "_account_state", REAL_ACCOUNT_STATE)
+    clock = [T0945]
+    svc, broker, _ = make(tmp_path, clock)  # two trades a day: 11:00 could open another
+    await svc.tick()
+    clock[0] = T1005
+    await svc.tick()
+    assert len(spreads_db.open_positions("shadow")) == 1
+    set_halted(True, "operator test", source="operator")
+    broker.leg_quotes = {
+        (679.0, "P"): o(679, "P", 0.30, 0.34),
+        (674.0, "P"): o(674, "P", 0.03, 0.05),
+    }
+    clock[0] = T1100
+    assessed = _candidate_count(spreads_db)
+    await svc.tick()
+    assert spreads_db.open_positions("shadow") == []  # the exit ran
+    ((_, reason, _),) = spreads_db.closed_results("shadow")
+    assert reason == "profit_take"
+    assert len(spreads_db.trade_log("shadow")) == 1  # and nothing new opened
+    assert _candidate_count(spreads_db) == assessed  # no entry was even assessed
+    assert svc._card is not None and "halted" in (svc._card.watch_note or "")
+    set_halted(False)
+    assert svc._account_state() == (False, False)
+
+
+async def test_unreadable_halt_state_blocks_entries(tmp_path, spreads_db, monkeypatch) -> None:
+    import src.storage.system_settings as ss
+
+    def broken():
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(SpreadsService, "_account_state", REAL_ACCOUNT_STATE)
+    monkeypatch.setattr(ss, "session_scope", broken)
+    clock = [T0945]
+    svc, broker, notifier = make(tmp_path, clock, ONE_A_DAY)
+    assert svc._account_state() == (True, True)  # fail closed
+    await svc.tick()
+    clock[0] = T1005
+    await svc.tick()
+    clock[0] = T1100
+    await svc.tick()
+    assert spreads_db.open_positions("shadow") == []
+    assert _candidate_count(spreads_db) == 0  # no entry was assessed
+    assert sum("cannot be read" in m for m in notifier.sent) == 1
+
+
+async def test_a_tripped_slow_breaker_reads_from_system_settings(
+    tmp_path, spreads_db, db, monkeypatch
+) -> None:
+    from src.spreads.service import SLOW_BREAKER_KEY
+    from src.storage.system_settings import set_setting
+
+    monkeypatch.setattr(SpreadsService, "_account_state", REAL_ACCOUNT_STATE)
+    svc, _, _ = make(tmp_path, [T0945])
+    assert svc._account_state() == (False, False)
+    set_setting(SLOW_BREAKER_KEY, '{"tripped": true, "drawdown_pct": 10.4}')
+    assert svc._account_state() == (False, True)
+    set_setting(SLOW_BREAKER_KEY, '{"tripped": false}')
+    assert svc._account_state() == (False, False)
+    set_setting(SLOW_BREAKER_KEY, "not json")
+    assert svc._account_state() == (True, True)  # unparseable: fail closed
+
+
+async def test_the_calendar_reaches_the_gate_and_the_events_list(
+    tmp_path, spreads_db, monkeypatch
+) -> None:
+    import src.spreads.service as service
+    from src.common.macro_calendar import MacroEvent
+
+    fomc = MacroEvent(day=TODAY, kind="FOMC", time_et="14:00", source="test")
+    cpi = MacroEvent(day=TODAY, kind="CPI", time_et="08:30", source="test")
+    monkeypatch.setattr(service, "events_on", lambda d: [fomc, cpi] if d == TODAY else [])
+    clock = [T0945]
+    svc, _, _ = make(tmp_path, clock, ONE_A_DAY)
+    await svc.tick()
+    clock[0] = T1005
+    await svc.tick()
+    assert spreads_db.open_positions("shadow") == []
+    with spreads_db.spreads_session() as s:
+        rows = s.query(spreads_db.SpreadCandidateRow).all()
+        assert rows and all("macro_event_day" in r.reasons for r in rows)
+    assert svc._events_today(T1005) == [
+        "FOMC 14:00 ET (no new entries today)",
+        "CPI 08:30 ET (no block)",
+    ]
