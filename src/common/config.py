@@ -2643,6 +2643,57 @@ class IvSanityCfg(_KeyedCfg):
         return {str(k).upper(): str(s) for k, s in v.items()}
 
 
+class RiskEnvelopeCfg(_KeyedCfg):
+    """The risk envelope (risk-envelope plan Tasks 12-13; spec §3.4, rulings E4, E5, P5, H7, H8).
+
+    ``s10_target_pct`` / ``uew_target`` are where the glide L(t) ends after ``glide_weeks``
+    weekly steps. Betas are Blume (0.67 β + 0.33) over ``beta_sessions`` daily log returns of
+    ``price_history``; fewer than ``beta_min_sessions`` means ``beta_fallback`` and a flag.
+    ``semis_names`` move in the S-SMH scenario by their beta to SMH; ``governing`` maps a
+    leveraged ETF to the index whose beta it moves by; ``soxx_proxy``'s beta stands in for SOXX
+    until SOXX has its own history. Live IV is read in chunks of ``live_iv_batch`` lines (at most
+    10), each waited on for ``live_iv_timeout_seconds``. Lives in ``config/risk_limits.yaml -> envelope:``; a missing block means these defaults.
+    """
+
+    KEYS: ClassVar[tuple[str, ...]] = (
+        "s10_target_pct",
+        "uew_target",
+        "glide_weeks",
+        "beta_sessions",
+        "beta_min_sessions",
+        "beta_fallback",
+        "semis_names",
+        "governing",
+        "soxx_proxy",
+        "live_iv_batch",
+        "live_iv_timeout_seconds",
+    )
+
+    s10_target_pct: float = Field(default=15.0, gt=0, lt=100)
+    uew_target: float = Field(default=1.25, gt=0)
+    glide_weeks: int = Field(default=13, ge=1)
+    beta_sessions: int = Field(default=250, ge=20)
+    beta_min_sessions: int = Field(default=120, ge=10)
+    beta_fallback: float = Field(default=1.5, gt=0)
+    semis_names: list[str] = Field(
+        default_factory=lambda: ["SMH", "SOXX", "SOXL", "NVDA", "AMD", "AVGO"]
+    )
+    governing: dict[str, str] = Field(default_factory=lambda: {"TQQQ": "QQQ", "SOXL": "SOXX"})
+    soxx_proxy: str = "SMH"
+    live_iv_batch: int = Field(default=10, ge=1, le=10)
+    live_iv_timeout_seconds: float = Field(default=8.0, gt=0)
+
+    @field_validator("semis_names")
+    @classmethod
+    def _upper_list(cls, v: list[str]) -> list[str]:
+        return [str(s).upper() for s in v]
+
+    @field_validator("governing")
+    @classmethod
+    def _upper_map(cls, v: dict[str, str]) -> dict[str, str]:
+        return {str(k).upper(): str(g).upper() for k, g in v.items()}
+
+
 class ClaudeCutCfg(_KeyedCfg):
     """Claude's reduce-only size cut on auto-opened cash-secured puts (spec section 9).
 
@@ -2953,6 +3004,11 @@ def get_regime_cfg() -> RegimeCfg:
 def get_iv_sanity_cfg() -> IvSanityCfg:
     """The typed ``iv_sanity:`` block of ``config/risk_limits.yaml`` (shipped defaults when absent)."""
     return IvSanityCfg(**(get_config().risk.get("iv_sanity") or {}))
+
+
+def get_envelope_cfg() -> RiskEnvelopeCfg:
+    """The typed ``envelope:`` block of ``config/risk_limits.yaml`` (shipped defaults when absent)."""
+    return RiskEnvelopeCfg(**(get_config().risk.get("envelope") or {}))
 
 
 def get_claude_cut_cfg() -> ClaudeCutCfg:

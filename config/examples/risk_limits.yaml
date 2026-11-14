@@ -56,6 +56,24 @@ iv:
   # Lookback window (trading days) for the realized-vol computation used in the IV/RV ratio.
   realized_vol_window: 20
 
+# --- The risk envelope (risk-envelope plan Tasks 11-13, 2026-11-14; spec §3.4) ---
+# S10 = the book's loss, % of NLV, if SPY falls 10% in one step (every option fully revalued;
+# no long option counts, H1); U_ew = leverage-weighted stock + short-put strike over NLV. The
+# limit L(t) glides from the first `on` session's measured level to these targets. Typed in
+# src/common/config.py (RiskEnvelopeCfg); enforcement is the `envelope_enforce` switch.
+envelope:
+  s10_target_pct: 15.0          # where the S10 limit ends, % of NLV at SPY -10% (E4)
+  uew_target: 1.25              # where the U_ew limit ends, x NLV (E5)
+  glide_weeks: 13               # weekly linear steps from the start level to the targets
+  beta_sessions: 250            # daily log returns behind each Blume beta (0.67 b + 0.33) to SPY / SMH
+  beta_min_sessions: 120        # fewer common sessions than this: beta_fallback, flagged
+  beta_fallback: 1.5            # the beta of a name with too little history
+  semis_names: [SMH, SOXX, SOXL, NVDA, AMD, AVGO]   # moved by their beta to SMH in the S-SMH scenario
+  governing: {TQQQ: QQQ, SOXL: SOXX}                # a leveraged ETF moves at leverage x this index's beta
+  soxx_proxy: SMH               # SOXX borrows this symbol's beta until it has its own history
+  live_iv_batch: 10             # live-IV market-data lines open at once (at most 10), cancelled per chunk
+  live_iv_timeout_seconds: 8    # how long one chunk waits for IBKR model greeks; a miss is unmeasured
+
 # --- IV sanity check on iv_history writes (risk-envelope Task 10, 2026-11-14) ---
 # An implausible daily IV observation is stored but flagged, and every reader skips flagged rows
 # (QQQ's stored IV once read 14.6 against a VXN of 38.3). Typed in src/common/config.py (IvSanityCfg).

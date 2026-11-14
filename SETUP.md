@@ -2224,6 +2224,11 @@ and you can set or reverse any of them by hand. In **live** every switch reads i
 stored (`spxw_ready`, which only records the E3 verdict, excepted). A report never overwrites a value you
 set by hand, and a FAIL never turns anything off: only you do.
 
+**The `envelope:` block (Task 12).** `config/examples/risk_limits.yaml` gains an `envelope:` block (the S10 and
+U_ew targets, the glide length, the beta settings, the semis names, the leveraged ETFs' governing indexes and the
+live-IV chunk size). Your private `risk_limits.yaml` does not have it; without it the code defaults apply, which
+match the example, so copying it across only makes the values visible. A mistyped key in it is refused at first use.
+
 ### Scripts
 
 | Command | What it does |

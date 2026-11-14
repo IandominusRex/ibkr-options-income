@@ -49,6 +49,8 @@ DETERMINISTIC = sorted(
                 "leveraged_entry",
                 # risk-envelope Task 11: the pure shock engine
                 "shock",
+                # Task 12: its inputs (betas, stored IV, the BookLine builder)
+                "shock_inputs",
             )
         ),
         SRC / "common" / "envelope_types.py",
@@ -88,6 +90,7 @@ def test_the_envelope_modules_exist_and_are_on_the_deterministic_list() -> None:
     for rel in (
         "analytics/shock.py",
         "common/envelope_types.py",
+        "analytics/shock_inputs.py",
     ):
         assert (SRC / rel).exists(), rel
         assert SRC / rel in DETERMINISTIC, rel
