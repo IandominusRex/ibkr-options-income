@@ -370,6 +370,13 @@ synthetic inputs only. Each one's output is a result file that does not exist un
   run applies by setting the `slow_breaker` switch to the threshold (paper only). The real NLV series is the
   `portfolio_snapshots` history, which is short (it starts in October 2026); when it holds under 5 sessions of the
   slide the synthetic series stands in and the report says so.
+- **The sleeve replay and the covered-call floor replay** (Task 29, `scripts/sleeve_replay.py`,
+  `scripts/cc_floor_replay.py`): E7 (the lots the sleeve would have opened, valued under the wheel's leveraged
+  rules; total P&L at least 0, no lot over 1% of NLV, at most 2 open) and E12 (floors 1.00, 0.95, 0.90 with a
+  0.20-delta call; the lowest floor that nets at least 0 against 1.00 and does not raise S10 is applied), plus the
+  leveraged class's own E12 result (`E12_leveraged.json`). **Approximations:** the sleeve's below-200-day path
+  stands in the name's RSI turn and a higher close for the bottoming signal (the support condition is not
+  replayed); the covered-call replay uses the snapshot's `avg_cost` as the basis (not the campaign-adjusted one).
 
 ## Built (2026-11-15 — risk envelope Section G: limits behind switches)
 
