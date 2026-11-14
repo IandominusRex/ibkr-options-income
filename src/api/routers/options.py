@@ -110,6 +110,12 @@ _REASON_LABELS: dict[str, str] = {
     "regime_budget": "the market regime has shrunk the CSP budget",
     "regime_ceiling": "over the market regime's size limit",
     "leveraged_ceiling": "over the size limit for a leveraged ETF",
+    "sleeve_window": "outside the leveraged sleeve's expiry, delta or IV-rank window",
+    "sleeve_pace": "the leveraged sleeve's pace: a lot was opened lately or two are open",
+    "sleeve_cap": "the leveraged sleeve's share of the account is used up",
+    "tech_linked_cap": "tech-linked exposure would pass its cap",
+    "stacking_block": "this name already has an in-the-money short or too many fills today",
+    "stacking_halve": "this name already has a short near the same expiry: half size only",
     "regime_daily_limit": "the market regime's new-CSP limit for today is used up",
     # Scale-in ladder codes (engine/regime_limits.py): the next lot waits for a lower price.
     "scale_in_zone_not_reached": "the price has not reached the next lower entry zone",

@@ -127,3 +127,22 @@ def value_exposure() -> ValueExposure:
         earmarked=book.earmarked_usd,
         frozen=book.frozen,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class LesExposure:
+    """The LES share book's holdings (risk-envelope Task 23 reads it; Task 32a fills it): market
+    value per ETF of the shares bought under ``les:<id>`` orders (ledger ``book="les"``), outside
+    the wheel's share count. The sleeve cap counts them, leverage-weighted, with the sleeve's puts."""
+
+    by_name: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def gross(self) -> float:
+        return sum(self.by_name.values())
+
+
+def les_exposure() -> LesExposure:
+    """The LES share book's exposure. **Empty until Task 32a** builds the share order path (no LES
+    share exists before it), so the sleeve cap today counts the sleeve's puts alone."""
+    return LesExposure()

@@ -361,6 +361,16 @@ unmerged. Every limit is a deterministic reason in the Rules Engine or the sizer
   and the send-time re-fit. It is not a halt, and only a human resets it (`scripts.envelope reset-slow-breaker`,
   which restarts the window). Evaluated on every scan and every order poll. Not built: demoting Claude's
   risk-changing rungs to record-only (the Mastermind rungs do not exist yet).
+- **The leveraged sleeve (Task 23, E7, L1-L4).** Behind the `leveraged_sleeve` switch (ships off, off in live) a
+  leveraged ETF may open a cash-secured put only inside the sleeve: above its governing index's 200-day the LES
+  pullback is the signal (3% tier, 6% with the washout); below it only the bottoming signal + a sigma-60 drawdown +
+  IV rank >= 50 at the 1.5% half tier. DTE 7-14, |delta| 0.15-0.20 (replacing the put's bands), one lot per name per
+  3 sessions, two open; the size is the tier's room, leverage-weighted with every leveraged put and LES share, in whole
+  lots rounded down. Reasons `sleeve_window`, `sleeve_pace`, `sleeve_cap` at the generator and the gate. A missing
+  or stale (> 5 days) signal fails closed. **Not built:** the LES share path (Task 32a: `books.les_exposure()` is
+  empty until then); the below-trend path at send time trusts the card's frozen tag (no bars there); an LES signal's
+  bottoming condition uses the name's ladder signal or its bucket's market flag (the governing index has no signal
+  of its own).
 
 ## Built (2026-11-15 — risk envelope Section F: the envelope gate)
 

@@ -33,6 +33,17 @@ What each limit is:
   send time by `live_cc_delta_reason`): a call is pushed out, and when nothing on the chain
   clears both, none is sold on that name that scan. Its own switch (``cc_timing.breakout``); not
   a regime limit.
+* **The leveraged sleeve** (risk-envelope Task 23, behind the ``leveraged_sleeve`` switch) - the one
+  way a leveraged ETF gets a cash-secured put under ``leveraged_sizing.csp_mode: drawdown_only``.
+  Above the governing index's 200-day average the Leveraged Entry Signal's pullback is the signal;
+  below it only the bottoming signal + the sigma-drawdown path opens a lot, at half the tier
+  (`sleeve_path`, `sleeve_tier`). Its DTE and delta windows replace the put's own
+  (`sleeve_window_reason`), the pace is one lot per name per N sessions and at most M open
+  (`sleeve_pace_reason`), and the size is the LES tier's room, leverage-weighted with every other
+  leveraged put and LES share, rounded **down** to whole lots and never up to one (`sleeve_room_usd`,
+  `sleeve_contracts`). Reasons: ``sleeve_window``, ``sleeve_pace``, ``sleeve_cap``.
+* **The tech-linked cap and the stacking rule** (Task 25) and the index class's budget multipliers
+  (Task 24), each behind its own switch: see `tech_cap_reason`, `stacking_action` and `multipliers`.
 * **Variance-premium waiver** — a cash-secured put that opens on a *name-level* bottoming signal
   is exempt from the credit-below-fair-value floor and from nothing else (`vrp_waiver`): it
   carries its own guards (the delta cap and one lot per name per N sessions). Not a market-eased
@@ -52,7 +63,7 @@ from __future__ import annotations
 import math
 from typing import Literal
 
-from src.common.books import value_exposure
+from src.common.books import les_exposure, value_exposure
 from src.common.config import (
     ClaudeCutCfg,
     get_cc_timing_cfg,
@@ -65,6 +76,7 @@ from src.common.schemas import (
     CcBreakout,
     MarketRegime,
     OptionQuote,
+    OptionRight,
     PositionSnapshot,
     SizingContext,
     SizingNote,
@@ -122,6 +134,12 @@ def _effective_name_regime(ctx: SizingContext, symbol: str) -> MarketRegime:
     return name_regime(ctx, symbol)[0] if active(ctx) else MarketRegime.NORMAL
 
 
+def switch_on(ctx: SizingContext | None, name: str) -> bool:
+    """Whether the data-gated switch *name* reads ``on`` in *ctx* (read once when the context was
+    built; a missing key is off, and every switch is off in live)."""
+    return ctx is not None and ctx.switches.get(name) == "on"
+
+
 def multipliers(ctx: SizingContext | None, symbol: str) -> tuple[float, float]:
     """``(ticker, book)`` budget multipliers for *symbol*; ``(1.0, 1.0)`` when inactive.
 
@@ -165,13 +183,18 @@ def _base_cap(ctx: SizingContext, symbol: str, hard_max: int) -> int:
     return _floor(hard_max * _regime_fraction(ctx, symbol))
 
 
-def per_trade_cap(ctx: SizingContext | None, symbol: str, hard_max: int) -> int:
+def per_trade_cap(
+    ctx: SizingContext | None, symbol: str, hard_max: int, frozen: SizingNote | None = None
+) -> int:
     """The most contracts one CSP on *symbol* may carry (ruling 35).
 
     ``hard_max`` when there is no context. Otherwise ``base = floor(hard_max x regime fraction)``
     (the fraction is 1.0 when the regime limits are off); zero when ``base`` is zero; for a
-    leveraged ETF ``max(1, floor(hard_max x regime fraction x leverage fraction))`` with the
-    leverage fraction of the name's tier; else ``base``.
+    leveraged ETF zero under ``csp_mode: drawdown_only`` outside the sleeve (`sleeve_lot`), else
+    ``max(1, floor(hard_max x regime fraction x leverage fraction))`` with the leverage fraction of
+    the name's tier (a ceiling only: a sleeve lot's size is the LES tier's room, `sleeve_contracts`,
+    never a minimum of one); else ``base``. *frozen* is the card's own note, read for the sleeve's
+    below-trend path at send time (`sleeve_path_and_tier`).
     """
     if ctx is None:
         return hard_max
@@ -183,23 +206,189 @@ def per_trade_cap(ctx: SizingContext | None, symbol: str, hard_max: int) -> int:
     if factor is None:
         return base
     lev_cfg = get_leveraged_sizing_cfg()
-    if lev_cfg.csp_mode == "drawdown_only" and not sleeve_lot(ctx, symbol):
+    if lev_cfg.csp_mode == "drawdown_only" and not sleeve_lot(ctx, symbol, frozen):
         return 0  # 2026-11-14: no leveraged CSP outside the drawdown sleeve
     lf = lev_cfg.per_trade_fraction[leverage_tier(ctx, symbol)][factor]
     return max(1, _floor(hard_max * rf * lf))
 
 
-def sleeve_lot(ctx: SizingContext | None, symbol: str) -> bool:
-    """True when a CSP on leveraged *symbol* opens inside the drawdown sleeve.
+# --------------------------------------------------------------------------- #
+# The leveraged sleeve (risk-envelope Task 23; spec §3.5, rulings E7, L1-L4)
+# --------------------------------------------------------------------------- #
 
-    A stub until the sleeve is built (Task 23): no lot is a sleeve lot, so under
-    ``leveraged_sizing.csp_mode: drawdown_only`` a leveraged ETF gets no lot at all.
-    """
-    return False
+SleevePath = Literal["trend", "below_trend"]
+REASON_SLEEVE_WINDOW = "sleeve_window"
+REASON_SLEEVE_PACE = "sleeve_pace"
+REASON_SLEEVE_CAP = "sleeve_cap"
+
+
+def les_index(symbol: str) -> str | None:
+    """The unleveraged index whose Leveraged Entry Signal governs *symbol* (TQQQ -> QQQ, SOXL ->
+    SOXX), or None when it has none."""
+    return get_regime_cfg().leveraged_entry.governing.get(symbol.upper())
+
+
+def sleeve_path_and_tier(
+    ctx: SizingContext | None, symbol: str, frozen: SizingNote | None = None
+) -> tuple[SleevePath | None, float]:
+    """``(path, tier %)`` of a sleeve lot on *symbol*, or ``(None, 0.0)`` when none may open.
+
+    Closed unless the ``leveraged_sleeve`` switch is on and *symbol* is a leveraged ETF with a
+    governing index whose latest signal is on file (a missing or stale signal fails closed, L1).
+    **Trend** (the index closed above its 200-day, L3): the signal's own tier (3.0 on a pullback,
+    6.0 with the washout, 0.0 without a pullback). **Below trend**: ``tiers.below_trend`` (1.5) only
+    when the bottoming signal, the sigma-drawdown and (per candidate, `sleeve_window_reason`) the IV
+    rank all hold; at scan time that is ``ctx.sleeve_below_trend``, at send time (no bars) the path
+    frozen on the card (*frozen*)."""
+    if ctx is None or not switch_on(ctx, "leveraged_sleeve"):
+        return None, 0.0
+    if leverage_factor(ctx, symbol) is None:
+        return None, 0.0
+    index = les_index(symbol)
+    signal = ctx.les.get(index) if index else None
+    if signal is None:
+        return None, 0.0
+    if signal.trend_up:
+        return ("trend", signal.tier_pct) if signal.tier_pct > 0 else (None, 0.0)
+    if ctx.for_send:
+        held = frozen is not None and frozen.sleeve == "below_trend"
+    else:
+        held = symbol.upper() in ctx.sleeve_below_trend
+    tier = get_regime_cfg().leveraged_entry.tiers.below_trend
+    return ("below_trend", tier) if held and tier > 0 else (None, 0.0)
+
+
+def sleeve_path(
+    ctx: SizingContext | None, symbol: str, frozen: SizingNote | None = None
+) -> SleevePath | None:
+    """Which path a sleeve lot on *symbol* opens on (`sleeve_path_and_tier`), or None."""
+    return sleeve_path_and_tier(ctx, symbol, frozen)[0]
+
+
+def sleeve_tier(ctx: SizingContext | None, symbol: str, frozen: SizingNote | None = None) -> float:
+    """The LES tier, as a leverage-weighted % of net liquidation, a sleeve lot on *symbol* may fill
+    (0.0 when the sleeve is closed to it)."""
+    return sleeve_path_and_tier(ctx, symbol, frozen)[1]
+
+
+def sleeve_lot(ctx: SizingContext | None, symbol: str, frozen: SizingNote | None = None) -> bool:
+    """True when a CSP on leveraged *symbol* opens inside the drawdown sleeve (its tier is above
+    zero): the only way it gets a lot under ``csp_mode: drawdown_only``."""
+    return sleeve_tier(ctx, symbol, frozen) > 0.0
+
+
+def sleeve_window_reason(
+    ctx: SizingContext | None,
+    symbol: str,
+    *,
+    dte: int,
+    delta: float | None,
+    iv_rank: float | None,
+    frozen: SizingNote | None = None,
+) -> str | None:
+    """``"sleeve_window"`` when a sleeve lot's DTE or |delta| is outside the sleeve's own window
+    (conditions 4 and 5: DTE 7-14, delta 0.15-0.20), or, on the below-trend path, its IV rank is
+    under ``iv_rank_min`` or unknown (condition 3, fail closed). None for a name with no sleeve lot
+    and for a missing delta (the gate's own ``delta_missing``)."""
+    path = sleeve_path(ctx, symbol, frozen)
+    if path is None:
+        return None
+    cfg = get_leveraged_sizing_cfg().sleeve
+    if not (cfg.dte[0] <= dte <= cfg.dte[1]):
+        return REASON_SLEEVE_WINDOW
+    if delta is not None and not (cfg.delta[0] - 1e-9 <= abs(delta) <= cfg.delta[1] + 1e-9):
+        return REASON_SLEEVE_WINDOW
+    if path == "below_trend" and (iv_rank is None or iv_rank < cfg.iv_rank_min):
+        return REASON_SLEEVE_WINDOW
+    return None
+
+
+def leveraged_short_puts(
+    ctx: SizingContext | None, positions: list[PositionSnapshot]
+) -> list[PositionSnapshot]:
+    """The open short puts on leveraged ETFs (every name in the leverage map): the sleeve's CSP lots."""
+    if ctx is None:
+        return []
+    return [
+        p
+        for p in positions
+        if p.sec_type == "OPT"
+        and p.right == OptionRight.PUT
+        and p.position < 0
+        and ctx.leverage.get((p.underlying or p.symbol).upper(), 1) > 1
+    ]
+
+
+def sleeve_pace_reason(
+    ctx: SizingContext | None,
+    symbol: str,
+    positions: list[PositionSnapshot],
+    *,
+    batch_lots: int = 0,
+) -> str | None:
+    """``"sleeve_pace"`` when *symbol* had a sleeve lot inside the pace window (``every_sessions``,
+    3 sessions, ``ctx.sleeve_recent``), or when ``max_open_lots`` (2) sleeve puts are already open:
+    the book's leveraged short puts (`leveraged_short_puts`, one lot per contract) plus *batch_lots*
+    accepted earlier in the same batch."""
+    if ctx is None:
+        return None
+    if symbol.upper() in {n.upper() for n in ctx.sleeve_recent}:
+        return REASON_SLEEVE_PACE
+    cfg = get_leveraged_sizing_cfg().sleeve
+    open_lots = {
+        (p.underlying or p.symbol, p.strike, p.expiry) for p in leveraged_short_puts(ctx, positions)
+    }
+    return REASON_SLEEVE_PACE if len(open_lots) + batch_lots >= cfg.max_open_lots else None
+
+
+def sleeve_used_usd(ctx: SizingContext | None, positions: list[PositionSnapshot]) -> float:
+    """What the sleeve's tier already holds, leverage-weighted: the strike x 100 x contracts of every
+    open leveraged short put, plus the LES share book's market value (``books.les_exposure``, empty
+    until Task 32a), each at its leverage."""
+    if ctx is None:
+        return 0.0
+    used = sum(
+        (p.strike or 0.0)
+        * 100.0
+        * abs(p.position)
+        * ctx.leverage.get((p.underlying or p.symbol).upper(), 1)
+        for p in leveraged_short_puts(ctx, positions)
+    )
+    used += sum(
+        value * ctx.leverage.get(name.upper(), 1) for name, value in les_exposure().by_name.items()
+    )
+    return used
+
+
+def sleeve_room_usd(
+    ctx: SizingContext | None,
+    symbol: str,
+    account: AccountSnapshot,
+    positions: list[PositionSnapshot],
+    *,
+    extra_usd: float = 0.0,
+    frozen: SizingNote | None = None,
+) -> float:
+    """The leverage-weighted dollars a sleeve lot on *symbol* may still add: the tier's share of net
+    liquidation less what the sleeve holds (`sleeve_used_usd`) and *extra_usd* (lots accepted
+    earlier in the batch). Never negative."""
+    tier = sleeve_tier(ctx, symbol, frozen)
+    cap = tier / 100.0 * max(0.0, account.net_liquidation)
+    return max(0.0, cap - sleeve_used_usd(ctx, positions) - extra_usd)
+
+
+def sleeve_contracts(room_usd: float, strike: float, leverage: int) -> int:
+    """Whole lots of ``strike x 100 x leverage`` that fit *room_usd*: rounded down, never up to one."""
+    unit = strike * 100.0 * max(1, leverage)
+    return 0 if unit <= 0 else max(0, _floor(room_usd / unit))
 
 
 def ceiling_kind(
-    ctx: SizingContext | None, symbol: str, hard_max: int, pre: int
+    ctx: SizingContext | None,
+    symbol: str,
+    hard_max: int,
+    pre: int,
+    frozen: SizingNote | None = None,
 ) -> Literal["regime_ceiling", "leveraged_ceiling"] | None:
     """Which factor brings *pre* contracts down to the per-trade ceiling, or None.
 
@@ -209,7 +398,7 @@ def ceiling_kind(
     """
     if ctx is None:
         return None
-    cap = per_trade_cap(ctx, symbol, hard_max)
+    cap = per_trade_cap(ctx, symbol, hard_max, frozen)
     if cap >= pre:
         return None
     if cap < min(pre, _base_cap(ctx, symbol, hard_max)):
@@ -584,7 +773,7 @@ def trim_for_send(
     """
     if ctx is None or cand.strategy != Strategy.CASH_SECURED_PUT:
         return cand.contracts
-    n = min(cand.contracts, per_trade_cap(ctx, cand.underlying, hard_max))
+    n = min(cand.contracts, per_trade_cap(ctx, cand.underlying, hard_max, cand.sizing))
     if budget_fit is not None:
         n = min(n, budget_fit)
     return n

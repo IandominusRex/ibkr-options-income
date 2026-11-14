@@ -2293,6 +2293,20 @@ book opens nothing, and you get one Telegram notice. It stays tripped when the d
 under its old high is not tripped again at once). `python -m scripts.envelope show` prints its state. It is
 evaluated on each scan and on each order poll.
 
+### The leveraged sleeve (Task 23, 2026-11-15)
+
+Leveraged ETFs (TQQQ, SOXL) get **no** cash-secured put by default (`leveraged_sizing.csp_mode: drawdown_only`). The
+`leveraged_sleeve` switch (`off`; set it by hand, or a PASSed sleeve replay turns it on in paper:
+`python -m scripts.envelope switch leveraged_sleeve on`) opens the one exception: above the governing index's
+200-day average (QQQ for TQQQ, SOXX for SOXL) a pullback in the nightly Leveraged Entry Signal allows a lot (3% of
+net liquidation, leverage-weighted; 6% on a breadth washout); below the 200-day only a bottoming signal plus a 60-session
+drawdown of at least one sigma-60 and an IV rank of 50 allows one, at 1.5%. A sleeve put has its own windows (7-14
+days, delta 0.15-0.20), at most one lot per name per 3 sessions and two open, and the tier counts every leveraged
+put (and, from Task 32a, every LES share) at its leverage, so at today's prices a TQQQ lot (~2.8% of NLV at
+leverage) fits only the 3% tier, never the 1.5% one: lots round down and are never raised to one. The windows live in
+`leveraged_sizing.sleeve:` of `config/examples/risk_limits.yaml`; your private copy needs the block added by hand (the
+code defaults match). The signal must be recent (the EOD run records it); a missing or stale one keeps the sleeve shut.
+
 ### Quote capture (Section E, 2026-11-14)
 
 **Hedge-menu quotes (Task 16).** From the first restart on this code, the trading service quotes the index

@@ -163,3 +163,35 @@ def _washout(
         False,
         f"washout: breadth {seen} in the last {cfg.washout_sessions} sessions, not <= {cfg.washout_osc:g}",
     )
+
+
+def sigma_drawdown(
+    bars: pd.DataFrame | None,
+    k: float,
+    *,
+    window: int = 60,
+    vol_sessions: int = 252,
+    min_vol_sessions: int = 120,
+) -> tuple[bool, str]:
+    """Spec §3.5 condition 2: the governing index is at least *k* x sigma-60 below its *window*-session
+    high, with sigma-60 = one-year realised vol x sqrt(60/252) (daily log-return std x sqrt(60)).
+
+    Pure and fail-closed: no usable bars, or fewer than *min_vol_sessions* returns to measure the vol
+    on, is ``(False, reason)``. Used only on the sleeve's below-200-day path (ruling L3).
+    """
+    if bars is None or bars.empty or "Close" not in bars.columns:
+        return False, "sigma drawdown: no price history"
+    close = bars["Close"].astype(float).dropna()
+    if len(close) < max(window, min_vol_sessions + 1):
+        return False, f"sigma drawdown: {len(close)} bars, too few to measure"
+    rets = np.log(close).diff().dropna().iloc[-vol_sessions:]
+    sigma = float(rets.std(ddof=1)) * float(np.sqrt(window))
+    if not np.isfinite(sigma) or sigma <= 0:
+        return False, "sigma drawdown: no measurable volatility"
+    high = float(close.iloc[-window:].max())
+    drawdown = 1.0 - float(close.iloc[-1]) / high
+    holds = drawdown >= k * sigma
+    return holds, (
+        f"sigma drawdown: {drawdown * 100:.1f}% under the {window}-session high, "
+        f"{'at least' if holds else 'under'} {k:g} x sigma-{window} ({sigma * 100:.1f}%)"
+    )

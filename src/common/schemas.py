@@ -678,6 +678,15 @@ class SizingNote(BaseModel):
     # ``t20_budget``). Display and audit only; the gate re-tests the envelope itself.
     envelope_from: int | None = None
     envelope_binding: str | None = None
+    # The leveraged sleeve (risk-envelope Task 23): which path opened this lot, frozen on the card
+    # because the send-time context fetches no bars (``trend``: the LES pullback above the 200-day;
+    # ``below_trend``: the bottoming + sigma-drawdown path at half the tier). The send-time re-gate
+    # reads it for the below-trend path only, the way ``vrp_waiver`` reads ``bottoming``.
+    sleeve: Literal["trend", "below_trend"] | None = None
+    # A limit trimmed this lot (Tasks 23-25: ``sleeve_cap``, ``tech_linked_cap``, ``stacking_halve``):
+    # the count before and the reason. Display and audit only; the gate re-tests every limit itself.
+    limit_from: int | None = None
+    limit_binding: str | None = None
 
 
 class CcBreakout(BaseModel):
@@ -727,6 +736,25 @@ class SizingContext(BaseModel):
     # Held names in a covered-call breakout (scan time only; the send-time gate reads the
     # candidate's own frozen copy). Not a regime limit: `/regime off` leaves it on.
     cc_breakout: dict[str, CcBreakout] = Field(default_factory=dict)
+    # --- The limits behind switches (risk-envelope Tasks 23-25). Read once when the context is built,
+    # so the pure functions in `engine/regime_limits.py` stay free of I/O and the generator, the gate
+    # and the send-time re-gate read the same values. A missing key is "off"; in live every switch
+    # reads its default (`envelope_switches.get_switch`), so these are empty or "off" there.
+    switches: dict[str, str] = Field(
+        default_factory=dict
+    )  # leveraged_sleeve, index_1x, tech_cap, stacking_rule
+    # The latest Leveraged Entry Signal per governing index (QQQ, SOXX); a signal older than a few
+    # sessions is left out (the sleeve fails closed on a missing or stale signal).
+    les: dict[str, LesSignal] = Field(default_factory=dict)
+    # Leveraged names whose below-200-day path holds (bottoming signal + the sigma-drawdown on the
+    # governing index). Scan time only: at send time the card's frozen ``SizingNote.sleeve`` is read.
+    sleeve_below_trend: list[str] = Field(default_factory=list)
+    sleeve_recent: list[str] = Field(
+        default_factory=list
+    )  # names with a sleeve lot inside the pace window
+    # Today's sent (submitted, partial or filled) cash-secured put opens per underlying: the
+    # stacking rule's "same-day fills".
+    csp_fills_by_name: dict[str, int] = Field(default_factory=dict)
 
 
 class TradeCandidate(BaseModel):
@@ -810,6 +838,10 @@ class RiskVerdict(BaseModel):
     # envelope Tasks 18-19, P1): they never refuse; the caller writes them to ``sizing_actions``
     # (``regime.actions.record_envelope_verdicts``) inside its own transaction. Empty otherwise.
     envelope_would: list[str] = Field(default_factory=list)
+    # The same for the limits behind switches that are off (Tasks 24-25: ``tech_linked_cap``,
+    # ``stacking_block``, ``stacking_halve``): what the limit would have refused. They never refuse;
+    # ``regime.actions.record_envelope_verdicts`` writes them to ``sizing_actions``.
+    limits_would: list[str] = Field(default_factory=list)
 
 
 class AssessmentStage(StrEnum):

@@ -60,6 +60,11 @@ from src.engine.regime_limits import (
     per_trade_cap,
     scale_in_reason,
     sizing_note,
+    sleeve_contracts,
+    sleeve_pace_reason,
+    sleeve_path,
+    sleeve_room_usd,
+    sleeve_window_reason,
     vrp_waiver,
 )
 from src.storage.slow_breaker import csp_budget_fraction as slow_breaker_fraction
@@ -377,8 +382,17 @@ def validate_candidates(
         ):
             reasons.append("iv_rv_below_minimum")
 
+        # A leveraged sleeve lot (Task 23): the sleeve's own DTE and delta windows replace the put's.
+        is_sleeve = cand.strategy == Strategy.CASH_SECURED_PUT and (
+            sleeve_path(sizing, cand.underlying, cand.sizing) is not None
+        )
+
         # --- DTE window (strategy-specific) ---
-        if limits and not (limits.get("dte_min", 0) <= cand.dte <= limits.get("dte_max", 999)):
+        if (
+            limits
+            and not is_sleeve
+            and not (limits.get("dte_min", 0) <= cand.dte <= limits.get("dte_max", 999))
+        ):
             reasons.append("dte_out_of_range")
 
         # --- Delta: required for income strategies regardless of limits-dict presence ---
@@ -393,10 +407,27 @@ def validate_candidates(
                     reasons.append("delta_sign_mismatch")
                 elif cand.right == OptionRight.CALL and cand.delta < 0:
                     reasons.append("delta_sign_mismatch")
-                elif limits and not (
-                    limits.get("delta_min", 0.0) <= abs(cand.delta) <= limits.get("delta_max", 1.0)
+                elif (
+                    limits
+                    and not is_sleeve
+                    and not (
+                        limits.get("delta_min", 0.0)
+                        <= abs(cand.delta)
+                        <= limits.get("delta_max", 1.0)
+                    )
                 ):
                     reasons.append("delta_out_of_range")
+        if is_sleeve:
+            window = sleeve_window_reason(
+                sizing,
+                cand.underlying,
+                dte=cand.dte,
+                delta=cand.delta,
+                iv_rank=cand.iv_rank,
+                frozen=cand.sizing,
+            )
+            if window is not None:
+                reasons.append(window)
 
         # --- Max contracts per position ---
         max_contracts = limits.get("max_contracts") if limits else None
@@ -407,9 +438,9 @@ def validate_candidates(
         # ceiling. Cash-secured puts only: a roll or a covered call is never regime-limited.
         if sizing is not None and cand.strategy == Strategy.CASH_SECURED_PUT:
             hard_max = int(limits.get("max_contracts", 10)) if limits else 10
-            if cand.contracts > per_trade_cap(sizing, cand.underlying, hard_max):
+            if cand.contracts > per_trade_cap(sizing, cand.underlying, hard_max, cand.sizing):
                 reasons.append(
-                    ceiling_kind(sizing, cand.underlying, hard_max, cand.contracts)
+                    ceiling_kind(sizing, cand.underlying, hard_max, cand.contracts, cand.sizing)
                     or "regime_ceiling"
                 )
             # The scale-in ladder (same functions as the sizer): a loss exit on the name earlier
@@ -544,6 +575,8 @@ def validate_candidates(
     accepted_floor: dict[str, str] = {}  # underlying -> governing index, floor lots this batch
     accepted_signal_lot: set[str] = set()  # names that took a name-level signal lot this batch
     env_check = _EnvelopeCheck(envelope, candidates, representative_ids)
+    sleeve_batch_usd = 0.0  # leveraged-weighted sleeve dollars accepted earlier in this batch
+    sleeve_batch_lots = 0
 
     def _others(by_name: dict[str, str], index: str, underlying: str) -> int:
         return sum(1 for name, idx in by_name.items() if idx == index and name != underlying)
@@ -574,6 +607,25 @@ def validate_candidates(
                 hard_reasons.append("combined_name_cap")
         if is_csp:
             hard_reasons.extend(env_check.reasons(cand))
+        # The leveraged sleeve's pace and cap (Task 23): the LES tier's room, leverage-weighted with
+        # everything else the sleeve holds and the lots accepted earlier in this batch, in whole lots.
+        sleeve_p = sleeve_path(sizing, cand.underlying, cand.sizing) if is_csp else None
+        if sleeve_p is not None:
+            pace = sleeve_pace_reason(
+                sizing, cand.underlying, positions, batch_lots=sleeve_batch_lots
+            )
+            if pace is not None:
+                hard_reasons.append(pace)
+            room_usd = sleeve_room_usd(
+                sizing,
+                cand.underlying,
+                account,
+                positions,
+                extra_usd=sleeve_batch_usd,
+                frozen=cand.sizing,
+            )
+            if cand.contracts > sleeve_contracts(room_usd, cand.strike, lev):
+                hard_reasons.append("sleeve_cap")
 
         took_floor = False
         if regime_active:
@@ -638,6 +690,9 @@ def validate_candidates(
             )
             if is_csp:
                 env_check.accept(cand)
+            if sleeve_p is not None:
+                sleeve_batch_usd += cand.strike * 100.0 * cand.contracts * lev
+                sleeve_batch_lots += 1
             if sizing is not None and is_csp:
                 index = governing_index(sizing, cand.underlying)
                 accepted_csp[cand.underlying] = index

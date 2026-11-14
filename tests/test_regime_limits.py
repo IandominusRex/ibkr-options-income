@@ -202,7 +202,7 @@ def test_drawdown_only_gives_zero_outside_the_sleeve():
 
 
 def test_a_sleeve_lot_keeps_the_leveraged_ceiling(monkeypatch):
-    monkeypatch.setattr(rl, "sleeve_lot", lambda ctx, symbol: symbol == "TQQQ")
+    monkeypatch.setattr(rl, "sleeve_lot", lambda ctx, symbol, frozen=None: symbol == "TQQQ")
     assert rl.per_trade_cap(ctx(N, N), "TQQQ", 10) == 6  # the calm ceiling, as before
     assert rl.per_trade_cap(ctx(N, N), "SOXL", 10) == 0
 

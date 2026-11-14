@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from src.analytics import regime as regime_data
 from src.analytics.bottoming import name_bottoming
 from src.analytics.breakout import breakout
+from src.analytics.leveraged_entry import sigma_drawdown
 from src.analytics.scale_in import (
     compute_zone,
     last_broken_support,
@@ -35,12 +36,14 @@ from src.common.config import (
     RegimeLadderCfg,
     get_cc_timing_cfg,
     get_config,
+    get_envelope_cfg,
     get_leveraged_sizing_cfg,
     get_regime_cfg,
 )
 from src.common.market_hours import is_trading_day
 from src.common.schemas import (
     CcBreakout,
+    LesSignal,
     MarketRegime,
     OrderState,
     PositionSnapshot,
@@ -48,8 +51,10 @@ from src.common.schemas import (
     SizingContext,
     Strategy,
 )
-from src.engine.regime_limits import active, name_regime
+from src.engine.regime_limits import active, governing_index, les_index, name_regime
 from src.regime.anchors import latest_anchor, loss_exits_today, recent_loss_exit_names
+from src.storage.envelope_switches import get_switch
+from src.storage.les_state import latest_signal
 from src.storage.models import OrderRow, SizingActionRow
 from src.storage.regime_state import load_regime_state, regime_suspended
 
@@ -129,6 +134,117 @@ def floor_lots_counted(
             key = _bucket(snap, tech_linked)
             counts[key] = counts.get(key, 0) + 1
     return counts
+
+
+# The switches the pure limit functions read from the context (Tasks 23-25).
+_LIMIT_SWITCHES: tuple[str, ...] = ("leveraged_sleeve", "index_1x", "tech_cap", "stacking_rule")
+# A stored Leveraged Entry Signal older than this many calendar days is not used (a long weekend
+# is 4): the sleeve fails closed on a stale signal rather than trade on an old close.
+_LES_MAX_AGE_DAYS = 5
+
+
+def _limit_switches() -> dict[str, str]:
+    """Each limit switch's value (``get_switch``: its default, ``off``, in live and when unreadable)."""
+    return {name: get_switch(name) for name in _LIMIT_SWITCHES}
+
+
+def _les_signals(today: date) -> dict[str, LesSignal]:
+    """The latest stored signal per governing index (QQQ, SOXX), when it is recent enough."""
+    out: dict[str, LesSignal] = {}
+    for index in sorted(set(get_regime_cfg().leveraged_entry.governing.values())):
+        sig = latest_signal(index)
+        if (
+            sig is not None
+            and sig.asof is not None
+            and 0 <= (today - sig.asof).days <= _LES_MAX_AGE_DAYS
+        ):
+            out[index] = sig
+    return out
+
+
+def sleeve_recent_names(
+    session: Session, today: date, *, sessions: int, for_send: bool, leveraged: set[str]
+) -> list[str]:
+    """Leveraged names with a cash-secured put order opened fewer than *sessions* sessions ago
+    (sent or working; queued ones too at decision time, as ``csp_opens_counted`` counts them): the
+    sleeve's pace, one lot per name per N sessions. Read from the orders table."""
+    since = _day_bounds_utc(today - timedelta(days=sessions * 3 + 7))[0]
+    states = [OrderState.SUBMITTED.value, OrderState.PARTIAL.value, OrderState.FILLED.value]
+    if not for_send:
+        states.append(OrderState.QUEUED.value)
+    rows = (
+        session.query(OrderRow.snapshot, OrderRow.created_at)
+        .filter(
+            OrderRow.created_at >= since,
+            OrderRow.state.in_(states),
+            OrderRow.candidate_id.notlike("close:%"),
+        )
+        .all()
+    )
+    names: set[str] = set()
+    for snap, created in rows:
+        if not isinstance(snap, dict) or snap.get("strategy") != Strategy.CASH_SECURED_PUT.value:
+            continue
+        name = str(snap.get("underlying", "")).upper()
+        if name not in leveraged:
+            continue
+        created_at = created if created.tzinfo is not None else created.replace(tzinfo=UTC)
+        if _sessions_between(_et_date(created_at), today) < sessions:
+            names.add(name)
+    return sorted(names)
+
+
+def csp_fills_by_name(session: Session, today: date) -> dict[str, int]:
+    """Today's sent (submitted, partial or filled) cash-secured put opens per underlying: the
+    stacking rule's same-day fills. Queued cards are not fills."""
+    start, end = _day_bounds_utc(today)
+    states = [OrderState.SUBMITTED.value, OrderState.PARTIAL.value, OrderState.FILLED.value]
+    rows = (
+        session.query(OrderRow.snapshot)
+        .filter(
+            OrderRow.created_at >= start,
+            OrderRow.created_at < end,
+            OrderRow.state.in_(states),
+            OrderRow.candidate_id.notlike("close:%"),
+        )
+        .all()
+    )
+    counts: dict[str, int] = {}
+    for (snap,) in rows:
+        if isinstance(snap, dict) and snap.get("strategy") == Strategy.CASH_SECURED_PUT.value:
+            name = str(snap.get("underlying", "")).upper()
+            counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
+def _sleeve_below_trend(ctx: SizingContext, bars: dict[str, pd.DataFrame] | None) -> list[str]:
+    """Leveraged names whose below-200-day sleeve path holds (spec §3.5 conditions 1-2, L3): the
+    governing index's signal says it is not above its 200-day, the name's or its bucket's bottoming
+    signal fires, and the index is at least ``sleeve.sigma_drawdown`` x sigma-60 under its 60-session
+    high. The IV rank (condition 3) is the candidate's own and is checked per candidate. The index's
+    bars are the SOXX proxy's (``envelope.soxx_proxy``) when SOXX has none yet."""
+    if not (ctx.switches.get("leveraged_sleeve") == "on" and ctx.les):
+        return []
+    k = get_leveraged_sizing_cfg().sleeve.sigma_drawdown
+    out: list[str] = []
+    for symbol in sorted(ctx.leverage):
+        index = les_index(symbol)
+        sig = ctx.les.get(index) if index else None
+        if index is None or sig is None or sig.trend_up:
+            continue
+        if not (
+            symbol in ctx.name_bottoming or ctx.market_bottoming.get(governing_index(ctx, symbol))
+        ):
+            continue
+        frame = (bars or {}).get(index)
+        if frame is None or frame.empty:
+            frame = regime_data.get_bars(index)
+        if frame.empty and index == "SOXX":
+            frame = regime_data.get_bars(get_envelope_cfg().soxx_proxy)
+        holds, _why = sigma_drawdown(frame, k)
+        if holds:
+            out.append(symbol)
+    return out
 
 
 def _leverage_map() -> dict[str, int]:
@@ -433,13 +549,28 @@ def build_sizing_context(
             session, today, sessions=regime_cfg.bottoming.signal_lot_every_sessions
         ),
         for_send=for_send,
+        switches=_limit_switches(),
+        les=_les_signals(today),
+        csp_fills_by_name=csp_fills_by_name(session, today),
+    )
+    ctx = ctx.model_copy(
+        update={
+            "sleeve_recent": sleeve_recent_names(
+                session,
+                today,
+                sessions=get_leveraged_sizing_cfg().sleeve.every_sessions,
+                for_send=for_send,
+                leveraged=set(ctx.leverage),
+            )
+        }
     )
     if for_send:
         return ctx
     if cc_cfg.enabled:
         ctx = ctx.model_copy(update={"cc_breakout": _cc_breakouts(positions or [], bars, cc_cfg)})
     if not symbols or not (regime_cfg.enabled or leveraged_on):
-        return ctx  # a breakout-only context needs no ladder work
+        # a breakout-only context needs no ladder work; the sleeve's path reads the market flag
+        return ctx.model_copy(update={"sleeve_below_trend": _sleeve_below_trend(ctx, bars)})
     triggers, zones, bottoming_names = _ladder(
         ctx,
         session=session,
@@ -451,6 +582,7 @@ def build_sizing_context(
         cfg=regime_cfg.ladder,
         bottoming_cfg=regime_cfg.bottoming,
     )
-    return ctx.model_copy(
+    ctx = ctx.model_copy(
         update={"name_triggers": triggers, "scale_in": zones, "name_bottoming": bottoming_names}
     )
+    return ctx.model_copy(update={"sleeve_below_trend": _sleeve_below_trend(ctx, bars)})

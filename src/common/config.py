@@ -2558,6 +2558,52 @@ def _leveraged_fraction_defaults() -> dict[Literal["calm", "stressed"], dict[int
     }
 
 
+class LeveragedSleeveCfg(_KeyedCfg):
+    """The leveraged-ETF drawdown sleeve's own windows (``leveraged_sizing.sleeve``; risk-envelope
+    Task 23, spec §3.5, rulings E7 and L1-L4).
+
+    ``dte`` and ``delta`` are the sleeve's DTE and absolute-delta windows, replacing the cash-secured
+    put's own bands for a sleeve lot (the recommended 0.15-0.20 sits under ``cash_secured_put.
+    delta_min``, so each is checked on its own: ``0 < lo < hi < 1``). ``sigma_drawdown`` and
+    ``iv_rank_min`` are conditions 2 and 3, which apply only on the below-200-day path;
+    ``every_sessions`` is the pace (one lot per name per that many sessions) and ``max_open_lots`` the
+    number of sleeve puts that may be open at once. The size cap is the LES tier (``regime.
+    leveraged_entry.tiers``), leveraged-weighted, not a key here.
+    """
+
+    KEYS: ClassVar[tuple[str, ...]] = (
+        "sigma_drawdown",
+        "iv_rank_min",
+        "dte",
+        "delta",
+        "every_sessions",
+        "max_open_lots",
+    )
+
+    sigma_drawdown: float = Field(default=1.0, gt=0)
+    iv_rank_min: float = Field(default=50.0, ge=0, le=100)
+    dte: tuple[int, int] = (7, 14)
+    delta: tuple[float, float] = (0.15, 0.20)
+    every_sessions: int = Field(default=3, ge=1)
+    max_open_lots: int = Field(default=2, ge=1)
+
+    @field_validator("dte")
+    @classmethod
+    def _dte_valid(cls, v: tuple[int, int]) -> tuple[int, int]:
+        if not (0 < v[0] <= v[1]):
+            raise ValueError(f"leveraged_sizing.sleeve.dte {list(v)} must satisfy 0 < low <= high")
+        return v
+
+    @field_validator("delta")
+    @classmethod
+    def _delta_valid(cls, v: tuple[float, float]) -> tuple[float, float]:
+        if not (0.0 < v[0] < v[1] < 1.0):
+            raise ValueError(
+                f"leveraged_sizing.sleeve.delta {list(v)} must satisfy 0 < low < high < 1"
+            )
+        return v
+
+
 class LeveragedSizingCfg(_KeyedCfg):
     """A smaller per-trade size for 2x and 3x leveraged ETFs, in every regime (ruling 35).
 
@@ -2568,13 +2614,20 @@ class LeveragedSizingCfg(_KeyedCfg):
 
     ``csp_mode`` (operator, 2026-11-14): ``drawdown_only`` (the default) gives a leveraged ETF
     no cash-secured put at all outside the drawdown sleeve (``regime_limits.sleeve_lot``, Task
-    23); ``normal`` restores decision 32's ``max(1, ...)`` lot.
+    23); ``normal`` restores decision 32's ``max(1, ...)`` lot. ``sleeve`` is that sleeve's windows.
     """
 
-    KEYS: ClassVar[tuple[str, ...]] = ("enabled", "per_trade_fraction", "leverage", "csp_mode")
+    KEYS: ClassVar[tuple[str, ...]] = (
+        "enabled",
+        "per_trade_fraction",
+        "leverage",
+        "csp_mode",
+        "sleeve",
+    )
 
     enabled: bool = True
     csp_mode: Literal["drawdown_only", "normal"] = "drawdown_only"
+    sleeve: LeveragedSleeveCfg = Field(default_factory=LeveragedSleeveCfg)
     per_trade_fraction: dict[Literal["calm", "stressed"], dict[int, float]] = Field(
         default_factory=lambda: _leveraged_fraction_defaults()
     )

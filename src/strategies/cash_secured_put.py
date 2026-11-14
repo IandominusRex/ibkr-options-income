@@ -44,6 +44,11 @@ from src.engine.regime_limits import (
     scale_in_reason,
     signal_lot,
     sizing_note,
+    sleeve_contracts,
+    sleeve_pace_reason,
+    sleeve_path,
+    sleeve_room_usd,
+    sleeve_window_reason,
     vrp_waiver,
 )
 from src.storage.slow_breaker import csp_budget_fraction as slow_breaker_fraction
@@ -61,6 +66,7 @@ from src.strategies._evaluation import (
     REASON_REGIME_CEILING,
     REASON_ROC,
     REASON_SCALE_IN_ZONE,
+    REASON_SLEEVE_CAP,
     REASON_YIELD,
     ScreenResult,
     display_premium,
@@ -186,6 +192,11 @@ def screen_csp_candidates(
         ticker_mult, book_mult = multipliers(sizing, symbol)
         scaled_caps = scale_caps(caps, ticker=ticker_mult, book=book_mult)
     ceiling = per_trade_cap(sizing, symbol, hard_max)
+    # The leveraged sleeve (Task 23): a leveraged ETF's only way to a put. Its DTE and delta windows
+    # replace the put's own, its size is the LES tier's room rounded down, and the pace holds.
+    sleeve = sleeve_path(sizing, symbol)
+    sleeve_room = sleeve_room_usd(sizing, symbol, account, positions or []) if sleeve else 0.0
+    sleeve_pace = sleeve_pace_reason(sizing, symbol, positions or []) if sleeve else None
 
     enforce_volume = volume_gate_active()  # N19: skip the volume gate before the morning cutoff
     rejected: list[tuple[TradeCandidate, list[str]]] = []
@@ -202,12 +213,18 @@ def screen_csp_candidates(
         delta_abs = abs(quote.delta) if quote.delta is not None else None
         if delta_abs is None:
             reasons.append(REASON_DELTA_MISSING)
-        elif not (delta_min <= delta_abs <= delta_max):
+        elif not sleeve and not (delta_min <= delta_abs <= delta_max):
             reasons.append(REASON_DELTA_RANGE)
 
         dte = quote.dte
-        if not (dte_min <= dte <= dte_max):
+        if not sleeve and not (dte_min <= dte <= dte_max):
             reasons.append(REASON_DTE_RANGE)
+        if sleeve:
+            window = sleeve_window_reason(
+                sizing, symbol, dte=dte, delta=quote.delta, iv_rank=iv_stats.iv_rank
+            )
+            if window is not None:
+                reasons.append(window)
 
         # Require a genuine two-sided market (N10): never price a candidate off a stale `last`.
         strict = quote.strict_mid
@@ -272,9 +289,25 @@ def screen_csp_candidates(
                 reasons.append(REASON_REGIME_CEILING)
             else:
                 contracts = min(contracts, ceiling)
+        sleeve_from: int | None = None
+        if sleeve and contracts >= 1:
+            # the LES tier's room, whole lots, rounded down and never up to one
+            room_lots = sleeve_contracts(sleeve_room, quote.strike, leverage)
+            if room_lots < 1:
+                reasons.append(REASON_SLEEVE_CAP)
+            elif room_lots < contracts:
+                sleeve_from, contracts = contracts, room_lots
+            if sleeve_pace is not None:
+                reasons.append(sleeve_pace)
         note = sizing_note(sizing, symbol, max(unscaled, 1), hard_max)
         if note is not None and floor_lot:
             note = note.model_copy(update={"floor_lot": True})
+        if note is not None and sleeve:
+            note = note.model_copy(update={"sleeve": sleeve})
+            if sleeve_from is not None:
+                note = note.model_copy(
+                    update={"limit_from": sleeve_from, "limit_binding": REASON_SLEEVE_CAP}
+                )
         # The scale-in ladder (same functions as the gate): a loss exit on the name earlier today
         # blocks it; a name under the ladder waits for its zone. The zone travels on the card.
         if loss_exit_reason(sizing, symbol) is not None:
