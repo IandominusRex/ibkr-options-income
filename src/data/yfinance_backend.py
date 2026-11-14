@@ -44,7 +44,9 @@ def _period_for_lookback(lookback_days: int) -> str:
         return "2y"
     if lookback_days <= 1830:
         return "5y"
-    return "10y"  # the value book's Stage 1b backtest (scripts/value_backtest.py)
+    if lookback_days <= 3660:
+        return "10y"  # the value book's Stage 1b backtest (scripts/value_backtest.py)
+    return "max"  # scripts/les_replay.py: daily closes from 1999
 
 
 class YFinancePriceProvider:

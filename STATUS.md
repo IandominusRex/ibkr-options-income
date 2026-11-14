@@ -377,6 +377,15 @@ synthetic inputs only. Each one's output is a result file that does not exist un
   leveraged class's own E12 result (`E12_leveraged.json`). **Approximations:** the sleeve's below-200-day path
   stands in the name's RSI turn and a higher close for the bottoming signal (the support condition is not
   replayed); the covered-call replay uses the snapshot's `avg_cost` as the basis (not the campaign-adjusted one).
+- **The Leveraged Entry Signal replay** (Task 29a, `scripts/les_replay.py`): L8's four cells (synthetic 3x and
+  real ETF, QQQ->TQQQ and SOXX->SOXL) for buy and hold, the 200-day filter and LES, on daily closes from 1999
+  through the price provider; PASS when LES's Sharpe is at least the filter's in 3 cells and its drawdown is no
+  worse than buy-and-hold's in all 4. It prints the spec §2.7 figures' reproduction gaps and writes no verdict on
+  a gap over 0.5 points. **Not run**: it needs the network (yfinance, thetrading.tools), which the build session
+  did not use; `LES.json` does not exist until the operator runs it. The fill convention (a signal on a close is
+  filled on the next close, the first return earned the session after) is this build's reading of "entry at the
+  next close" and is compared against fill lag 0 in the output. `yfinance_backend._period_for_lookback` gained a
+  `"max"` bucket for lookbacks over 3,660 days (it ended at `"10y"`).
 
 ## Built (2026-11-15 — risk envelope Section G: limits behind switches)
 
