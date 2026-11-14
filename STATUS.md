@@ -397,6 +397,31 @@ the daemons run none of it until a merge and `./ibkr restart`.
   so expect fixes on first contact; until a PASS, the spreads book records shadow only. The switch is
   read at service start: `./ibkr restart` after it changes.
 
+## Built (2026-11-14 — risk envelope Section D: measurement and displays)
+
+Plan `docs/superpowers/plans/2026-11-14-risk-envelope.md` Tasks 11-14, spec
+`docs/superpowers/specs/2026-11-13-risk-envelope-design.md` §3.4.1-3.4.3, §3.4.7, §3.7.4, §3.10.8. On
+`feat/risk-envelope`, unmerged; the daemons run none of it until a merge and `./ibkr restart`.
+
+- **The shock engine** (`src/analytics/shock.py`, pure): S10, S20, G10, P20, T20, S-SMH and S10 at +10 vol
+  points by full Black-Scholes revaluation, gross (no long option from any source: H1, H10) and net, plus
+  U_ew. A line with no IV, spot or beta is unmeasured, never zero.
+- **Its inputs** (`src/analytics/shock_inputs.py`, `src/ibkr/live_iv.py`): Blume betas from `price_history`
+  (fallback 1.5, flagged; SOXX borrows SMH's), the latest unflagged stored IV, live IBKR model IV in chunks
+  of at most ten lines; the value book counted once (C7). Config: `risk_limits.yaml -> envelope:`.
+- **The envelope** (`src/engine/envelope.py`, `src/storage/envelope_state.py`): the glide record and L(t),
+  `admits` / `max_contracts_under`, the H8 T20 trigger, and an `envelope_snapshots` row per measurement,
+  written every scan cycle before the put generator runs (stored IV always; live IV unless the switch is
+  `off`). `python -m scripts.envelope show` prints them; `... stabilisation` prints §3.8's conditions.
+- **Not yet:** the envelope gates nothing (Tasks 18-20 wire `admits` into the generator and the Rules
+  Engine and record would-blocks in `sizing_actions`). The hedge book's marks are not in the inputs
+  until `hedge_view` exists (Task 33). The spreads book's SPY legs are not in S10 (`get_positions()`
+  drops them; the harness counts the spreads book at its caps, Task 26).
+- **Known limitations:** the live-IV read adds up to `live_iv_timeout_seconds` (8 s) per ten option
+  positions to every scan cycle while the switch is not `off`; P20 values an option that expires inside the
+  ten-day path at intrinsic on the path's last spot; a leveraged ETF with no `envelope.governing` entry
+  (LABU, TSLL) moves by the larger of its own beta move and leverage x the index move.
+
 ## Built (2026-11-14 — risk envelope Section C: leveraged policy, universe, IV data, breadth and LES)
 
 Plan `docs/superpowers/plans/2026-11-14-risk-envelope.md` Tasks 8-10 and 10a, spec

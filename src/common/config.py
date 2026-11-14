@@ -2652,7 +2652,9 @@ class RiskEnvelopeCfg(_KeyedCfg):
     ``semis_names`` move in the S-SMH scenario by their beta to SMH; ``governing`` maps a
     leveraged ETF to the index whose beta it moves by; ``soxx_proxy``'s beta stands in for SOXX
     until SOXX has its own history. Live IV is read in chunks of ``live_iv_batch`` lines (at most
-    10), each waited on for ``live_iv_timeout_seconds``. Lives in ``config/risk_limits.yaml -> envelope:``; a missing block means these defaults.
+    10), each waited on for ``live_iv_timeout_seconds``. ``t20_trigger_points`` is H8's trigger:
+    the first measured session on which T20_gross - S10_gross exceeds it turns the ``t20_limit``
+    switch on (paper), once (Task 13). Lives in ``config/risk_limits.yaml -> envelope:``; a missing block means these defaults.
     """
 
     KEYS: ClassVar[tuple[str, ...]] = (
@@ -2667,6 +2669,7 @@ class RiskEnvelopeCfg(_KeyedCfg):
         "soxx_proxy",
         "live_iv_batch",
         "live_iv_timeout_seconds",
+        "t20_trigger_points",
     )
 
     s10_target_pct: float = Field(default=15.0, gt=0, lt=100)
@@ -2682,6 +2685,7 @@ class RiskEnvelopeCfg(_KeyedCfg):
     soxx_proxy: str = "SMH"
     live_iv_batch: int = Field(default=10, ge=1, le=10)
     live_iv_timeout_seconds: float = Field(default=8.0, gt=0)
+    t20_trigger_points: float = Field(default=3.0, gt=0)
 
     @field_validator("semis_names")
     @classmethod

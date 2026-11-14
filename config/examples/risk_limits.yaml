@@ -73,6 +73,7 @@ envelope:
   soxx_proxy: SMH               # SOXX borrows this symbol's beta until it has its own history
   live_iv_batch: 10             # live-IV market-data lines open at once (at most 10), cancelled per chunk
   live_iv_timeout_seconds: 8    # how long one chunk waits for IBKR model greeks; a miss is unmeasured
+  t20_trigger_points: 3.0       # H8: the first session T20 - S10 exceeds this turns switch t20_limit on (paper), once
 
 # --- IV sanity check on iv_history writes (risk-envelope Task 10, 2026-11-14) ---
 # An implausible daily IV observation is stored but flagged, and every reader skips flagged rows

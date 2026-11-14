@@ -253,6 +253,46 @@ class LesSignalRow(Base):
     reasons: Mapped[list] = mapped_column(JSON, default=list)
 
 
+class EnvelopeSnapshotRow(Base):
+    """One measurement of the risk envelope (risk-envelope Task 13): every scenario loss, gross
+    (no long option) and net, as percent of NLV, U_ew, the limits it was compared with, the
+    ``envelope_enforce`` value, and whether it was measured. ``source`` is ``stored`` (the
+    display snapshot on stored IV) or ``live`` (IBKR model IV, what the gate reads). Written by
+    ``src/storage/envelope_state.py::save_snapshot`` only; read by the EOD line and
+    ``GET /envelope``."""
+
+    __tablename__ = "envelope_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    source: Mapped[str] = mapped_column(String(8))
+    enforce: Mapped[str] = mapped_column(String(8))
+    measured: Mapped[bool] = mapped_column(Boolean, default=False)
+    s10: Mapped[float] = mapped_column(Float)
+    s20: Mapped[float] = mapped_column(Float)
+    g10: Mapped[float] = mapped_column(Float)
+    p20: Mapped[float] = mapped_column(Float)
+    t20: Mapped[float] = mapped_column(Float)
+    s_smh: Mapped[float] = mapped_column(Float)
+    s10_vol10: Mapped[float] = mapped_column(Float)
+    s10_net: Mapped[float] = mapped_column(Float)
+    s20_net: Mapped[float] = mapped_column(Float)
+    g10_net: Mapped[float] = mapped_column(Float)
+    p20_net: Mapped[float] = mapped_column(Float)
+    t20_net: Mapped[float] = mapped_column(Float)
+    s_smh_net: Mapped[float] = mapped_column(Float)
+    s10_vol10_net: Mapped[float] = mapped_column(Float)
+    uew: Mapped[float] = mapped_column(Float)
+    unmeasured: Mapped[list] = mapped_column(JSON, default=list)
+    unmeasured_net: Mapped[list] = mapped_column(JSON, default=list)
+    s10_limit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    uew_limit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    t20_limit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    nlv: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cash_after_itm: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reasons: Mapped[list] = mapped_column(JSON, default=list)
+
+
 class PriceHistoryRow(Base):
     """Daily OHLCV bars (one settled session per row) backing the technical indicators
     and HV30. Bootstrapped by scripts/backfill_prices.py and kept fresh by a daily append;

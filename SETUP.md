@@ -2229,11 +2229,28 @@ U_ew targets, the glide length, the beta settings, the semis names, the leverage
 live-IV chunk size). Your private `risk_limits.yaml` does not have it; without it the code defaults apply, which
 match the example, so copying it across only makes the values visible. A mistyped key in it is refused at first use.
 
+**What the envelope does after a restart on this code (Task 13).** Every scan cycle, before the put
+generator runs, the trading service measures the book: S10 (the loss, as a share of net liquidation, if
+SPY falls 10% in one step, every option repriced with Black-Scholes and **no long option counted**), its
+net-of-long-options twin, S20, G10, P20, T20, S-SMH and U_ew (leverage-weighted stock and short-put
+strike over net liquidation). It stores one snapshot on stored IV (labelled as such) and, unless
+`envelope_enforce` is `off`, one on live IBKR model IV, read for every option position at most ten
+market-data lines at a time. The switch ships `record`: nothing is refused, and the limits are
+computed as if the glide started today. The **glide** starts on the first session the switch reads
+`on` (paper only; it turns on after the survivability harness PASSes and ten clean record sessions,
+or by hand): its start is that session's live S10 rounded up to a whole percent and U_ew rounded up to
+0.01, and the limits step down weekly to 15% and 1.25 over 13 weeks. A missing live IV, or an
+unreadable glide record while `on`, reads as unmeasured and fails closed. If T20 ever exceeds S10 by
+more than 3 points on a live measurement, switch `t20_limit` turns on once (paper) with a Telegram
+notice. The envelope does not gate anything yet: Tasks 18-20 wire it into the generator and the Rules
+Engine.
+
 ### Scripts
 
 | Command | What it does |
 |---|---|
-| `python -m scripts.envelope show` | Every switch with its value, source (`cli`, `report:<id>` or default) and when it was set. |
+| `python -m scripts.envelope show` | Every switch with its value, source (`cli`, `report:<id>` or default) and when it was set; then the latest envelope snapshots (live IV and stored IV: S10 gross and net beside its limit, S20, G10, P20, T20, S-SMH, U_ew beside its limit, cash after every ITM put is assigned) and the glide (start, week, end, today's limits). |
+| `python -m scripts.envelope stabilisation` | Spec §3.8's three conditions for raising a limit after the glide: the market-level bottoming signal (from the regime record), the latest survivability-harness result file, and your ruling. Reads only; it never raises a limit. |
 | `python -m scripts.envelope switch NAME VALUE` | Set one by hand (refused if the value is outside the switch's set); sends a Telegram notice. Reverse a report's change with the default it prints, e.g. `python -m scripts.envelope switch slow_breaker off`. |
 | `python -m scripts.envelope apply-reports` | Apply the PASSed result files in `data/envelope_reports/` now. The EOD run does this every evening. |
 

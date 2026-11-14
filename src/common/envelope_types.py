@@ -11,11 +11,13 @@ counted positive; ``uew`` is a ratio (1.36 means 136% of NLV); IV is a decimal (
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import date, datetime
 from typing import Literal
 
 LineKind = Literal["stock", "short_put", "short_call", "long_put", "long_call"]
 Scenario = Literal["S10", "S20", "G10", "P20", "T20", "S_SMH"]
+SnapshotSource = Literal["stored", "live"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,3 +103,33 @@ class EnvelopeRoom:
     enforce: str
     measured: bool
     reasons_if_unmeasured: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class EnvelopeSnapshot:
+    """One stored measurement (``envelope_snapshots`` row) as plain data, for the formatters
+    and the API. ``cash_after_itm`` is the account's cash after every in-the-money short put is
+    assigned (spec §3.4.7, E11), None when unknown."""
+
+    captured_at: datetime
+    source: SnapshotSource
+    result: ShockResult
+    s10_limit: float | None
+    uew_limit: float | None
+    t20_limit: float | None
+    enforce: str
+    measured: bool
+    nlv: float | None = None
+    cash_after_itm: float | None = None
+    reasons: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True, slots=True)
+class GlideSpan:
+    """Where the glide stands on a day: its start, its end and the week number (1-based,
+    capped at ``weeks``)."""
+
+    start: date
+    end: date
+    week: int
+    weeks: int

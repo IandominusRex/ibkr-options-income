@@ -33,12 +33,16 @@ from src.analytics.iv import get_iv_stats, infer_spot_from_quotes
 from src.analytics.market_conditions import get_market_conditions
 from src.analytics.sector_context import get_sector_context, render_sector_context
 from src.analytics.sentiment import SentimentScorer
+from src.analytics.shock import measure as measure_shock
+from src.analytics.shock_inputs import build_inputs, stored_ivs
 from src.analytics.technicals import _fetch_last_price, get_technical_stats
 from src.claude.book_context import build_book_block
 from src.claude.dossier_context import dossier_block, load_dossiers, prose_key
 from src.claude.picture_context import load_picture, picture_key, render_picture_block
 from src.claude.runner import review_candidates
+from src.common.books import value_exposure
 from src.common.config import Config, get_config
+from src.common.envelope_types import EnvelopeRoom, ShockInputs
 from src.common.market_hours import today_et
 from src.common.schemas import (
     AccountSnapshot,
@@ -63,8 +67,15 @@ from src.common.schemas import (
 )
 from src.common.universe import effective_universe
 from src.engine.decision_engine import select_top_candidates_detailed
+from src.engine.envelope import (
+    cash_after_itm_assignment,
+    check_t20_trigger,
+    record_snapshot,
+)
+from src.engine.envelope import room as envelope_room
 from src.engine.risk_engine import validate_candidates
 from src.engine.scoring import score_candidates
+from src.ibkr.live_iv import live_option_ivs
 from src.ibkr.market_data import drain_market_data_lines, get_option_chain_quotes_async
 from src.ibkr.portfolio import get_account_snapshot_async, get_positions
 
@@ -86,6 +97,7 @@ from src.regime.context import build_sizing_context
 from src.regime.refresh import refresh_regime, refresh_regime_cached
 from src.storage.buy_candidates import save_buy_candidates
 from src.storage.db import session_scope
+from src.storage.envelope_switches import get_switch
 from src.storage.models import CandidateRow, ClaudeMemoryRow, ClaudeReviewRow
 from src.storage.regime_state import load_regime_state
 from src.storage.risk_verdicts import record_assessments
@@ -179,6 +191,11 @@ class ScanResult:
     # Data-provenance counters for the end-of-scan summary: where each piece of data this
     # cycle actually came from, and how many symbols/quotes fell back to a secondary source.
     provenance: ProvenanceCounts = field(default_factory=lambda: ProvenanceCounts())
+    # The risk envelope measured on live IBKR IV this cycle (risk-envelope Task 13), for the
+    # CSP generator and the Rules Engine (Task 19). None when ``envelope_enforce`` is off or the
+    # measurement failed: a reader that needs it while ``on`` must fail closed.
+    envelope_inputs: ShockInputs | None = None
+    envelope_room: EnvelopeRoom | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1200,6 +1217,91 @@ def _fetch_analytics(
     return iv_stats, tech_stats, fund_stats
 
 
+async def _measure_envelope(
+    ib: IB,
+    account: AccountSnapshot,
+    positions: list[PositionSnapshot],
+    spots: dict[str, float],
+) -> tuple[ShockInputs, EnvelopeRoom] | None:
+    """Measure the risk envelope for this cycle (risk-envelope Task 13; spec §3.4, H7).
+
+    Always writes the display snapshot on stored IV (``source="stored"``; it never starts the
+    glide). When ``envelope_enforce`` is not ``off`` it first reads live IBKR model IV for every
+    option position (``live_iv``: at most ten lines at a time, all closed before the chain
+    batches open) and writes the Rules Engine's snapshot (``source="live"``), returning its
+    inputs and room for the CSP generator and the gate (Task 19). H8's one-time T20 trigger
+    reads the live measurement only. Never raises: a failure is logged and returns None.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        enforce = get_switch("envelope_enforce")
+        exposure = value_exposure()
+        value_by_name = dict(exposure.by_name) if exposure.active and exposure.readable else {}
+        nlv = account.net_liquidation
+        today = today_et()
+        # The hedge book's marks join as hedge_lines once it exists (Task 33, hedge_view).
+        live_out: tuple[ShockInputs, EnvelopeRoom] | None = None
+        if enforce != "off":
+            live = await live_option_ivs(ib, positions)
+            live_inputs = await loop.run_in_executor(
+                None,
+                lambda: build_inputs(
+                    positions, nlv=nlv, value_by_name=value_by_name, ivs=live, spots=spots
+                ),
+            )
+            live_result = measure_shock(live_inputs)
+            live_room = envelope_room(live_inputs, today=today, result=live_result)
+            record_snapshot(
+                live_result,
+                live_room,
+                "live",
+                nlv=nlv,
+                cash_after_itm=cash_after_itm_assignment(account.total_cash, live_inputs),
+            )
+            live_out = (live_inputs, live_room)
+            notice = check_t20_trigger(live_result)
+            if notice:
+                from src.notify.notices import send_notice
+
+                await send_notice(notice)
+        underlyings = sorted(
+            {(p.underlying or p.symbol).upper() for p in positions if p.sec_type == "OPT"}
+        )
+        stored_inputs = await loop.run_in_executor(
+            None,
+            lambda: build_inputs(
+                positions,
+                nlv=nlv,
+                value_by_name=value_by_name,
+                ivs=stored_ivs(underlyings),
+                spots=spots,
+            ),
+        )
+        stored_result = measure_shock(stored_inputs)
+        stored_room = envelope_room(
+            stored_inputs, today=today, may_start=False, result=stored_result
+        )
+        record_snapshot(
+            stored_result,
+            stored_room,
+            "stored",
+            nlv=nlv,
+            cash_after_itm=cash_after_itm_assignment(account.total_cash, stored_inputs),
+        )
+        log.info(
+            "scan: envelope (stored IV) S10 %.1f%% (net %.1f%%), U_ew %.2f; enforce %s%s",
+            stored_result.s10,
+            stored_result.s10_net,
+            stored_result.uew,
+            enforce,
+            f"; unmeasured {list(stored_result.unmeasured)}" if stored_result.unmeasured else "",
+        )
+        return live_out
+    except Exception:
+        log.exception("scan: envelope measurement failed — continuing without it")
+        return None
+
+
 def _build_sizing(positions: list[PositionSnapshot], symbols: list[str]) -> SizingContext | None:
     """The market-regime `SizingContext` the sizer and the gate apply (one per scan).
 
@@ -1493,6 +1595,13 @@ async def _run_scan_body(
     # the opposite of what the gate exists to do.
     if probed_spots and (force_full_sweep or not intraday):
         _persist_seed_only_baselines(probed_spots, material_symbols)
+
+    # --- 3d. The risk envelope (risk-envelope Task 13): measured before the CSP generator runs,
+    # on stored IV for the display and on live IV for the Rules Engine. Its live-IV read opens
+    # at most ten lines at a time and closes them before the chain batches below begin.
+    envelope = await _measure_envelope(ib, account, positions, dict(probed_spots or {}))
+    if envelope is not None:
+        result.envelope_inputs, result.envelope_room = envelope
 
     # --- 4. Per-symbol: market data + analytics + strategy candidates ---
     cc_candidates: list[TradeCandidate] = []

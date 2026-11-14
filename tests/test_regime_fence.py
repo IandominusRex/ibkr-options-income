@@ -54,6 +54,9 @@ DETERMINISTIC = sorted(
             )
         ),
         SRC / "common" / "envelope_types.py",
+        # Task 13: the envelope and its stored state
+        SRC / "engine" / "envelope.py",
+        SRC / "storage" / "envelope_state.py",
         *(SRC / "regime").glob("*.py"),
         SRC / "storage" / "regime_state.py",
         SRC / "storage" / "les_state.py",
@@ -91,6 +94,8 @@ def test_the_envelope_modules_exist_and_are_on_the_deterministic_list() -> None:
         "analytics/shock.py",
         "common/envelope_types.py",
         "analytics/shock_inputs.py",
+        "engine/envelope.py",
+        "storage/envelope_state.py",
     ):
         assert (SRC / rel).exists(), rel
         assert SRC / rel in DETERMINISTIC, rel
