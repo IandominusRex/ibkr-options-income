@@ -4023,6 +4023,32 @@
         }
       }
     },
+    "/envelope": {
+      "get": {
+        "tags": [
+          "envelope"
+        ],
+        "summary": "Get Envelope",
+        "operationId": "get_envelope_envelope_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RiskEnvelopeResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/commands": {
       "post": {
         "tags": [
@@ -12731,6 +12757,451 @@
         ],
         "title": "RegimeState",
         "description": "The persisted market regime for both indices (written only by the trading process)."
+      },
+      "RiskEnvelopeGlide": {
+        "properties": {
+          "start": {
+            "type": "string",
+            "format": "date",
+            "title": "Start"
+          },
+          "end": {
+            "type": "string",
+            "format": "date",
+            "title": "End"
+          },
+          "week": {
+            "type": "integer",
+            "title": "Week"
+          },
+          "weeks": {
+            "type": "integer",
+            "title": "Weeks"
+          },
+          "s10_start": {
+            "type": "number",
+            "title": "S10 Start"
+          },
+          "uew_start": {
+            "type": "number",
+            "title": "Uew Start"
+          },
+          "s10_today": {
+            "type": "number",
+            "title": "S10 Today"
+          },
+          "uew_today": {
+            "type": "number",
+            "title": "Uew Today"
+          }
+        },
+        "type": "object",
+        "required": [
+          "start",
+          "end",
+          "week",
+          "weeks",
+          "s10_start",
+          "uew_start",
+          "s10_today",
+          "uew_today"
+        ],
+        "title": "RiskEnvelopeGlide"
+      },
+      "RiskEnvelopeLes": {
+        "properties": {
+          "index": {
+            "type": "string",
+            "title": "Index"
+          },
+          "asof": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asof"
+          },
+          "trend_up": {
+            "type": "boolean",
+            "title": "Trend Up"
+          },
+          "pullback": {
+            "type": "boolean",
+            "title": "Pullback"
+          },
+          "washout": {
+            "type": "boolean",
+            "title": "Washout"
+          },
+          "trend_break": {
+            "type": "boolean",
+            "title": "Trend Break"
+          },
+          "tier_pct": {
+            "type": "number",
+            "title": "Tier Pct"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons"
+          },
+          "breadth_osc": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Breadth Osc"
+          },
+          "breadth_asof": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Breadth Asof"
+          }
+        },
+        "type": "object",
+        "required": [
+          "index",
+          "trend_up",
+          "pullback",
+          "washout",
+          "trend_break",
+          "tier_pct"
+        ],
+        "title": "RiskEnvelopeLes",
+        "description": "The latest Leveraged Entry Signal for one governing index (record only)."
+      },
+      "RiskEnvelopeLimits": {
+        "properties": {
+          "s10": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "S10"
+          },
+          "uew": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uew"
+          },
+          "t20": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "T20"
+          },
+          "s10_target": {
+            "type": "number",
+            "title": "S10 Target"
+          },
+          "uew_target": {
+            "type": "number",
+            "title": "Uew Target"
+          }
+        },
+        "type": "object",
+        "required": [
+          "s10_target",
+          "uew_target"
+        ],
+        "title": "RiskEnvelopeLimits",
+        "description": "The limits the snapshot was compared with (null with no snapshot) and the glide's targets."
+      },
+      "RiskEnvelopeResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RiskEnvelopeSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "live": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RiskEnvelopeSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stored": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RiskEnvelopeSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limits": {
+            "$ref": "#/components/schemas/RiskEnvelopeLimits"
+          },
+          "enforce": {
+            "type": "string",
+            "title": "Enforce"
+          },
+          "glide": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RiskEnvelopeGlide"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "switches": {
+            "items": {
+              "$ref": "#/components/schemas/RiskEnvelopeSwitch"
+            },
+            "type": "array",
+            "title": "Switches"
+          },
+          "cash_after_itm_assignment": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cash After Itm Assignment"
+          },
+          "les": {
+            "items": {
+              "$ref": "#/components/schemas/RiskEnvelopeLes"
+            },
+            "type": "array",
+            "title": "Les"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "limits",
+          "enforce",
+          "switches"
+        ],
+        "title": "RiskEnvelopeResponse"
+      },
+      "RiskEnvelopeSnapshot": {
+        "properties": {
+          "captured_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Captured At"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "stored",
+              "live"
+            ],
+            "title": "Source"
+          },
+          "measured": {
+            "type": "boolean",
+            "title": "Measured"
+          },
+          "enforce": {
+            "type": "string",
+            "title": "Enforce"
+          },
+          "s10": {
+            "type": "number",
+            "title": "S10"
+          },
+          "s10_net": {
+            "type": "number",
+            "title": "S10 Net"
+          },
+          "s10_vol10": {
+            "type": "number",
+            "title": "S10 Vol10"
+          },
+          "s10_vol10_net": {
+            "type": "number",
+            "title": "S10 Vol10 Net"
+          },
+          "s20": {
+            "type": "number",
+            "title": "S20"
+          },
+          "s20_net": {
+            "type": "number",
+            "title": "S20 Net"
+          },
+          "g10": {
+            "type": "number",
+            "title": "G10"
+          },
+          "g10_net": {
+            "type": "number",
+            "title": "G10 Net"
+          },
+          "p20": {
+            "type": "number",
+            "title": "P20"
+          },
+          "p20_net": {
+            "type": "number",
+            "title": "P20 Net"
+          },
+          "t20": {
+            "type": "number",
+            "title": "T20"
+          },
+          "t20_net": {
+            "type": "number",
+            "title": "T20 Net"
+          },
+          "s_smh": {
+            "type": "number",
+            "title": "S Smh"
+          },
+          "s_smh_net": {
+            "type": "number",
+            "title": "S Smh Net"
+          },
+          "uew": {
+            "type": "number",
+            "title": "Uew"
+          },
+          "nlv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nlv"
+          },
+          "unmeasured": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unmeasured"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons"
+          }
+        },
+        "type": "object",
+        "required": [
+          "captured_at",
+          "source",
+          "measured",
+          "enforce",
+          "s10",
+          "s10_net",
+          "s10_vol10",
+          "s10_vol10_net",
+          "s20",
+          "s20_net",
+          "g10",
+          "g10_net",
+          "p20",
+          "p20_net",
+          "t20",
+          "t20_net",
+          "s_smh",
+          "s_smh_net",
+          "uew"
+        ],
+        "title": "RiskEnvelopeSnapshot",
+        "description": "One measurement: every scenario gross (no long option, H1) and net (long options counted)."
+      },
+      "RiskEnvelopeSwitch": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "value": {
+            "type": "string",
+            "title": "Value"
+          },
+          "default": {
+            "type": "string",
+            "title": "Default"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "set_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Set At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "value",
+          "default",
+          "source"
+        ],
+        "title": "RiskEnvelopeSwitch"
       },
       "RollAlertSummary": {
         "properties": {

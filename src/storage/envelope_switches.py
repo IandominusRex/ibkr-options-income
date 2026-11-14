@@ -83,10 +83,34 @@ def switch_record(name: str) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def parse_record(raw: str | None) -> dict[str, Any] | None:
+    """A stored switch row's JSON as a dict, or None (empty, unparseable or not an object)."""
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def resolve_switch(name: str, record: dict[str, Any] | None, *, live: bool) -> str:
+    """The pure rule behind ``get_switch`` (shared with the read-only API): the default in live
+    (``spxw_ready`` excepted) and whenever *record*'s value is missing or outside the set."""
+    default, allowed = _check(name)
+    if live and name not in LIVE_EXEMPT:
+        return default
+    value = record.get("value") if record else None
+    if isinstance(value, str) and value in allowed:
+        return value
+    return default
+
+
 def get_switch(name: str) -> str:
     """The switch's value: its default in live (``spxw_ready`` excepted) and whenever the stored
     value is missing, unparseable or outside the allowed set. Raises only on an unknown name."""
-    default, allowed = _check(name)
+    default, _allowed = _check(name)
+    live = False
     if name not in LIVE_EXEMPT:
         try:
             live = get_config().is_live
@@ -95,11 +119,7 @@ def get_switch(name: str) -> str:
             return default
         if live:
             return default
-    rec = switch_record(name)
-    value = rec.get("value") if rec else None
-    if isinstance(value, str) and value in allowed:
-        return value
-    return default
+    return resolve_switch(name, switch_record(name), live=live)
 
 
 def set_switch(name: str, value: str, *, source: str, report: str | None = None) -> None:

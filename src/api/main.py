@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from src.api.routers import (
     claude_context,
     commands,
+    envelope,
     ledger,
     meta,
     news,
@@ -68,5 +69,6 @@ def create_app() -> FastAPI:
     app.include_router(value.router)
     app.include_router(universe.router)
     app.include_router(watchlist.router)
+    app.include_router(envelope.router)
     app.include_router(commands.router)
     return app

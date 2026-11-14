@@ -2245,6 +2245,15 @@ more than 3 points on a live measurement, switch `t20_limit` turns on once (pape
 notice. The envelope does not gate anything yet: Tasks 18-20 wire it into the generator and the Rules
 Engine.
 
+**Where you see it (Task 14).** The EOD report ends with a **Risk envelope** block: S10 gross and net beside
+L(t), S10 at +10 vol points, S20, G10, P20, T20 and S-SMH (gross / net), U_ew beside its limit, *cash after
+every ITM put is assigned*, whether it was measured on live or stored IV, and a line per Leveraged Entry Signal
+(QQQ, SOXX: trend, pullback, washout, breadth, tier). When you buy stock in TWS, the account thread gets one
+line per buy (within one ledger sweep, `ledger.live_sweep_minutes`, during RTH, once the ledger tracks the
+account) with S10 and U_ew before and after and the headroom against tomorrow's L(t); the system never gates
+a manual order. The web API serves the same through `GET /envelope` (`docs/web/api.md`); the API reads
+the new `envelope_snapshots` table, so restart the trading service before the API.
+
 ### Scripts
 
 | Command | What it does |

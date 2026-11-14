@@ -28,7 +28,7 @@ from sqlalchemy import select
 
 from src.common.envelope_types import EnvelopeSnapshot, GlideSpan, ShockResult
 from src.storage.db import session_scope
-from src.storage.models import EnvelopeSnapshotRow
+from src.storage.models import BrokerExecutionRow, EnvelopeSnapshotRow
 from src.storage.system_settings import get_setting_strict, set_setting
 
 log = logging.getLogger(__name__)
@@ -257,3 +257,57 @@ def latest_snapshot(source: str | None = None) -> EnvelopeSnapshot | None:
     except Exception:
         log.warning("envelope: latest snapshot unreadable", exc_info=True)
         return None
+
+
+# --- manual stock buys (Task 14, E13) -------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ManualBuy:
+    exec_id: str
+    symbol: str
+    qty: float
+    price: float
+
+
+def _seen() -> list[str]:
+    raw = get_setting_strict(MANUAL_BUY_SEEN_KEY)
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return []
+    return [str(x) for x in data] if isinstance(data, list) else []
+
+
+def new_manual_buys(day: date) -> list[ManualBuy]:
+    """Stock buys the system did not place (ledger ``book="manual"``, ``sec_type="STK"``,
+    bought, not superseded) on ET *day* whose exec id has not been reported yet."""
+    seen = set(_seen())
+    with session_scope() as s:
+        rows = s.execute(
+            select(BrokerExecutionRow)
+            .where(
+                BrokerExecutionRow.book == "manual",
+                BrokerExecutionRow.sec_type == "STK",
+                BrokerExecutionRow.quantity > 0,
+                BrokerExecutionRow.trade_date == day,
+                BrokerExecutionRow.exec_id.is_not(None),
+                BrokerExecutionRow.superseded_by.is_(None),
+            )
+            .order_by(BrokerExecutionRow.trade_time)
+        ).scalars()
+        return [
+            ManualBuy(str(r.exec_id), r.underlying.upper(), float(r.quantity), float(r.price))
+            for r in rows
+            if str(r.exec_id) not in seen
+        ]
+
+
+def mark_manual_buys_seen(exec_ids: list[str]) -> None:
+    """Remember *exec_ids* as reported (the newest ``_SEEN_KEEP`` are kept)."""
+    if not exec_ids:
+        return
+    merged = [x for x in _seen() if x not in set(exec_ids)] + list(exec_ids)
+    set_setting(MANUAL_BUY_SEEN_KEY, json.dumps(merged[-_SEEN_KEEP:]))

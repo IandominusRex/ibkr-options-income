@@ -1790,3 +1790,37 @@ loss_exit_cooldown | bottoming_lot | claude_cut | claude_cut_unapplied | cc_brea
 deterministic_contracts (what the rules alone would have sent), sent_contracts (0 when held back), reason, order_id }`.
 For a `claude_cut` row the `reason` carries Claude's stated reason. An empty day answers `actions: []`.
 
+---
+
+## Risk envelope (risk-envelope plan, Task 14)
+
+### `GET /envelope`
+
+The risk envelope as the trading process last measured it. Read-only and owner-only
+(`src/api/routers/envelope.py`), straight from the trading DB through the API's read-only session:
+the latest `envelope_snapshots` rows (one per scan cycle and source, written by
+`src/storage/envelope_state.py::save_snapshot`), the glide record (`system_settings` key
+`envelope_glide`), every switch (`envelope_switch:<name>`, resolved with the trading process's own
+rule `envelope_switches.resolve_switch`, so a live account reads every default here too) and the
+latest Leveraged Entry Signal rows with the newest breadth reading. Nothing is computed from market
+data and nothing is written. The models are named `RiskEnvelope*` because `Envelope` is the API's
+response base.
+
+Every scenario figure is a percent of net liquidation, a loss counted positive. **Gross** leaves out
+every long option, whoever bought it (only gross ever admits a trade); **net** counts them (display
+and the harness only). U_ew is a ratio of net liquidation. With no snapshot every measure is `null`,
+never `0`.
+
+**Response — `RiskEnvelopeResponse`:**
+
+| Field | Meaning |
+|---|---|
+| `as_of` | the shown snapshot's `captured_at`, else now |
+| `snapshot` | `RiskEnvelopeSnapshot` or `null`: the live-IV measurement when it is from the same ET day as (or newer than) the stored-IV one, else the stored-IV one. `{ captured_at, source ("live" \| "stored": stored IV is a labelled display value), measured, enforce, s10, s10_net, s10_vol10, s10_vol10_net, s20, s20_net, g10, g10_net, p20, p20_net, t20, t20_net, s_smh, s_smh_net, uew, nlv, unmeasured: string[] (symbols the gross measures could not value), reasons: string[] (why the room was unmeasured) }` |
+| `live`, `stored` | the latest snapshot of each source, or `null` |
+| `limits` | `{ s10, uew, t20, s10_target, uew_target }`: the limits the shown snapshot was compared with (`null` with no snapshot; `t20` only while switch `t20_limit` is on) and the glide's targets (`envelope.s10_target_pct`, `uew_target`). In `record` mode the limits are the would-be start of the glide today |
+| `enforce` | the `envelope_enforce` switch as the trading process reads it (`off` \| `record` \| `on`) |
+| `glide` | `null` until the glide starts, else `{ start, end, week (1-based, capped), weeks, s10_start, uew_start, s10_today, uew_today }` |
+| `switches` | `RiskEnvelopeSwitch[]` `{ name, value, default, source ("default", "cli", "report:<id>", "trigger:<id>"), set_at }`, all fifteen |
+| `cash_after_itm_assignment` | the shown snapshot's cash after every in-the-money short put is assigned (spec §3.4.7), or `null` |
+| `les` | `RiskEnvelopeLes[]` for QQQ and SOXX when recorded: `{ index, asof, trend_up, pullback, washout, trend_break, tier_pct, reasons, breadth_osc, breadth_asof }` (record only; nothing trades on it yet) |

@@ -33,7 +33,7 @@ import logging
 import signal
 from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from ib_async import IB
@@ -129,6 +129,107 @@ _RETRY_QUEUE_KEY = "intraday_pending_retry_symbols"
 
 def _et_today() -> date:
     return datetime.now(_ET).date()
+
+
+async def envelope_manual_buy_check(ib: Any) -> int:
+    """E13 / spec §3.7.4: one Telegram line per stock buy the system did not place.
+
+    Run by ``envelope_manual_buy_loop`` on the RTH ledger sweep's cadence, reading the rows the
+    sweep and the commission hook ingested (the day's executions). For every
+    ``book="manual"`` STK buy of today not yet reported (``system_settings`` key
+    ``envelope_manual_buy_seen``, one line per exec id) it measures the book on stored IV now
+    (after) and without those shares (before), and posts S10 and U_ew before and after with the
+    headroom against the next session's L(t) (the glide's, or the targets while no glide has
+    started). Display only: a manual order is never gated. Returns the lines posted; never raises.
+    """
+    try:
+        from src.analytics.shock import measure
+        from src.analytics.shock_inputs import build_inputs, stored_ivs
+        from src.common.books import value_exposure
+        from src.common.config import get_envelope_cfg
+        from src.common.market_hours import next_session
+        from src.engine.envelope import without_shares
+        from src.ibkr.portfolio import get_account_snapshot_async, get_positions
+        from src.notify.formatters import format_manual_buy_line
+        from src.notify.notices import send_notice
+        from src.storage.envelope_state import (
+            limits_on,
+            load_glide,
+            mark_manual_buys_seen,
+            new_manual_buys,
+        )
+
+        today = today_et()
+        buys = await asyncio.to_thread(new_manual_buys, today)
+        if not buys:
+            return 0
+        cfg = get_config()
+        positions = get_positions(ib)
+        account = await get_account_snapshot_async(ib, cfg.secrets.ibkr_account)
+        exposure = value_exposure()
+        value_by_name = dict(exposure.by_name) if exposure.active and exposure.readable else {}
+        underlyings = sorted(
+            {(p.underlying or p.symbol).upper() for p in positions if p.sec_type == "OPT"}
+        )
+        after_inputs = await asyncio.to_thread(
+            lambda: build_inputs(
+                positions,
+                nlv=account.net_liquidation,
+                value_by_name=value_by_name,
+                ivs=stored_ivs(underlyings),
+            )
+        )
+        after = measure(after_inputs)
+        try:
+            rec = load_glide()
+        except Exception:
+            rec = None
+        if rec is not None:
+            s10_lim, uew_lim = limits_on(rec, next_session(today))
+            label = "tomorrow's L(t)"
+        else:
+            env_cfg = get_envelope_cfg()
+            s10_lim, uew_lim = env_cfg.s10_target_pct, env_cfg.uew_target
+            label = "the targets (no glide yet)"
+        posted = 0
+        for buy in buys:
+            before = measure(without_shares(after_inputs, buy.symbol, buy.qty))
+            text = format_manual_buy_line(
+                before,
+                after,
+                buy.symbol,
+                buy.qty,
+                s10_limit=s10_lim,
+                uew_limit=uew_lim,
+                limit_label=label,
+            )
+            if await send_notice(text):
+                posted += 1
+        await asyncio.to_thread(mark_manual_buys_seen, [b.exec_id for b in buys])
+        return posted
+    except Exception:
+        logger.warning("envelope: the manual-buy check failed", exc_info=True)
+        return 0
+
+
+async def envelope_manual_buy_loop(ib: Any, *, interval_minutes: float | None = None) -> None:
+    """Every ``ledger.live_sweep_minutes`` during RTH, with the exec connection up, run
+    ``envelope_manual_buy_check`` over what the ledger has ingested (the sweep in
+    ``src.ledger.live`` and the commission hook write the rows; this only reads them). A failure
+    is logged and the loop goes on."""
+    minutes = (
+        interval_minutes if interval_minutes is not None else get_config().ledger.live_sweep_minutes
+    )
+    while True:
+        await asyncio.sleep(minutes * 60)
+        try:
+            if ib is None or not is_rth() or not ib.isConnected():
+                continue
+            await envelope_manual_buy_check(ib)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("envelope: manual-buy loop cycle failed", exc_info=True)
 
 
 def _full_sweep_due() -> bool:
@@ -2392,6 +2493,8 @@ async def _run_service(token: str, chat_id: str) -> None:
         if ib is not None:
             attach_live_hook(ib)
         ledger_sweep_task = asyncio.create_task(live_sweep_loop(ib))
+        # The envelope's manual-buy line (risk-envelope Task 14), on the ledger sweep's cadence.
+        manual_buy_task = asyncio.create_task(envelope_manual_buy_loop(ib))
 
         from src.ledger.sheets_mirror import sheets_mirror_loop
 
@@ -2423,6 +2526,9 @@ async def _run_service(token: str, chat_id: str) -> None:
             ledger_sweep_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await ledger_sweep_task
+            manual_buy_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await manual_buy_task
             ledger_mirror_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await ledger_mirror_task

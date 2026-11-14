@@ -13,6 +13,7 @@ import re
 from collections import defaultdict
 from datetime import UTC, date, datetime
 
+from src.common.envelope_types import EnvelopeSnapshot, ShockResult
 from src.common.market_hours import today_et
 from src.common.schemas import (
     AccountSnapshot,
@@ -25,6 +26,7 @@ from src.common.schemas import (
     FundamentalStats,
     IdealZone,
     IVStats,
+    LesSignal,
     MarketConditions,
     MarketRegime,
     OptionQuote,
@@ -2465,3 +2467,100 @@ def format_campaigns(campaigns: list[dict]) -> str:
 
     text = "\n".join(parts).rstrip()
     return text
+
+
+# --- The risk envelope's lines (risk-envelope Task 14; spec §3.4, §3.4.7, §3.7.4) -----------
+
+
+def _env_pct(v: float | None) -> str:
+    return "n/a" if v is None else f"{v:.1f}%"
+
+
+def format_envelope_line(snapshot: EnvelopeSnapshot | None) -> str:
+    """The envelope's daily lines as plain text: S10 gross and net beside L(t), S10 at +10 vol
+    points, S20, G10, P20, T20 and S-SMH (gross / net), U_ew beside its limit, and "cash after
+    every ITM put is assigned" (E11). Labels stored IV as such (§3.4.1: the display may use
+    stored IV only labelled). Unknown values read ``n/a``, never 0."""
+    if snapshot is None:
+        return "Envelope: no measurement yet"
+    r = snapshot.result
+    iv = "live IV" if snapshot.source == "live" else "stored IV"
+    mode = {
+        "record": "record: not enforced yet",
+        "on": "on: enforced",
+        "off": "off",
+    }.get(snapshot.enforce, snapshot.enforce)
+    uew_lim = "n/a" if snapshot.uew_limit is None else f"{snapshot.uew_limit:.2f}"
+    lines = [
+        f"Envelope ({iv}, {mode}){'' if snapshot.measured else ' UNMEASURED'}",
+        f"S10   {_env_pct(r.s10)} gross · {_env_pct(r.s10_net)} net · L(t) {_env_pct(snapshot.s10_limit)}",
+        f"S10+10v {_env_pct(r.s10_vol10)} · S20 {_env_pct(r.s20)} / {_env_pct(r.s20_net)}",
+        f"G10 {_env_pct(r.g10)} / {_env_pct(r.g10_net)} · P20 {_env_pct(r.p20)} / {_env_pct(r.p20_net)}",
+        f"T20 {_env_pct(r.t20)} / {_env_pct(r.t20_net)} · S-SMH {_env_pct(r.s_smh)} / {_env_pct(r.s_smh_net)}",
+        f"U_ew  {r.uew:.2f} · limit {uew_lim}",
+    ]
+    if snapshot.t20_limit is not None:
+        lines.append(f"T20 limit {_env_pct(snapshot.t20_limit)} (t20_limit on)")
+    cash = snapshot.cash_after_itm
+    lines.append(
+        "Cash after every ITM put is assigned: " + ("n/a" if cash is None else f"${cash:,.0f}")
+    )
+    if r.unmeasured:
+        lines.append(f"Unmeasured: {', '.join(r.unmeasured)}")
+    return "\n".join(lines)
+
+
+def format_les_line(signal: LesSignal | None, *, index: str, osc: float | None = None) -> str:
+    """One Leveraged Entry Signal line (Task 10a, ruling L1-L4): trend, pullback, the breadth
+    washout and its oscillator reading, the tier. Record only: nothing trades on it yet."""
+    if signal is None:
+        return f"LES {index}: no signal recorded"
+    when = f" ({signal.asof:%d %b})" if signal.asof else ""
+    trend = (
+        "TREND BREAK" if signal.trend_break else ("trend up" if signal.trend_up else "below trend")
+    )
+    breadth = "n/a" if osc is None else f"{osc:+.1f}"
+    return (
+        f"LES {signal.index}{when}: {trend} · pullback {'yes' if signal.pullback else 'no'}"
+        f" · washout {'yes' if signal.washout else 'no'} · breadth {breadth}"
+        f" · tier {signal.tier_pct:.1f}%"
+    )
+
+
+def format_envelope_section(snapshot: EnvelopeSnapshot | None, les_lines: list[str]) -> str:
+    """The EOD message's envelope section, MarkdownV2: a header and one monospace block (inside
+    a code block only a backtick and a backslash need escaping)."""
+    body = "\n".join([format_envelope_line(snapshot), *les_lines])
+    body = body.replace("\\", "\\\\").replace("`", "\\`")
+    return "\n".join(["*Risk envelope*", "```", body, "```"])
+
+
+def format_manual_buy_line(
+    before: ShockResult,
+    after: ShockResult,
+    symbol: str,
+    qty: float,
+    *,
+    s10_limit: float | None = None,
+    uew_limit: float | None = None,
+    limit_label: str = "tomorrow's L(t)",
+) -> str:
+    """E13 / spec §3.7.4: a stock buy the system did not place (a TWS order), with S10 and U_ew
+    before and after and the headroom against the next session's limit. Display only: the system
+    never gates a manual order."""
+    lines = [
+        f"Manual buy seen: {symbol} +{qty:,.0f} shares (not placed by the system; nothing is gated).",
+        f"S10 {_env_pct(before.s10)} -> {_env_pct(after.s10)} (gross; net "
+        f"{_env_pct(before.s10_net)} -> {_env_pct(after.s10_net)})",
+        f"U_ew {before.uew:.2f} -> {after.uew:.2f}",
+    ]
+    if s10_limit is None or uew_limit is None:
+        lines.append(f"Headroom against {limit_label}: n/a")
+    else:
+        lines.append(
+            f"Headroom against {limit_label} (S10 {s10_limit:.1f}%, U_ew {uew_limit:.2f}): "
+            f"S10 {s10_limit - after.s10:+.1f} pts, U_ew {uew_limit - after.uew:+.2f}"
+        )
+    if after.unmeasured:
+        lines.append(f"Unmeasured: {', '.join(after.unmeasured)}")
+    return "\n".join(lines)

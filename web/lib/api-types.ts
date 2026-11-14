@@ -1359,6 +1359,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/envelope": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Envelope */
+        get: operations["get_envelope_envelope_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/commands": {
         parameters: {
             query?: never;
@@ -4805,6 +4822,163 @@ export interface components {
             qqq: components["schemas"]["IndexRegime"];
             /** Changes */
             changes?: components["schemas"]["RegimeChange"][];
+        };
+        /** RiskEnvelopeGlide */
+        RiskEnvelopeGlide: {
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
+            /** Week */
+            week: number;
+            /** Weeks */
+            weeks: number;
+            /** S10 Start */
+            s10_start: number;
+            /** Uew Start */
+            uew_start: number;
+            /** S10 Today */
+            s10_today: number;
+            /** Uew Today */
+            uew_today: number;
+        };
+        /**
+         * RiskEnvelopeLes
+         * @description The latest Leveraged Entry Signal for one governing index (record only).
+         */
+        RiskEnvelopeLes: {
+            /** Index */
+            index: string;
+            /** Asof */
+            asof?: string | null;
+            /** Trend Up */
+            trend_up: boolean;
+            /** Pullback */
+            pullback: boolean;
+            /** Washout */
+            washout: boolean;
+            /** Trend Break */
+            trend_break: boolean;
+            /** Tier Pct */
+            tier_pct: number;
+            /** Reasons */
+            reasons?: string[];
+            /** Breadth Osc */
+            breadth_osc?: number | null;
+            /** Breadth Asof */
+            breadth_asof?: string | null;
+        };
+        /**
+         * RiskEnvelopeLimits
+         * @description The limits the snapshot was compared with (null with no snapshot) and the glide's targets.
+         */
+        RiskEnvelopeLimits: {
+            /** S10 */
+            s10?: number | null;
+            /** Uew */
+            uew?: number | null;
+            /** T20 */
+            t20?: number | null;
+            /** S10 Target */
+            s10_target: number;
+            /** Uew Target */
+            uew_target: number;
+        };
+        /** RiskEnvelopeResponse */
+        RiskEnvelopeResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            snapshot?: components["schemas"]["RiskEnvelopeSnapshot"] | null;
+            live?: components["schemas"]["RiskEnvelopeSnapshot"] | null;
+            stored?: components["schemas"]["RiskEnvelopeSnapshot"] | null;
+            limits: components["schemas"]["RiskEnvelopeLimits"];
+            /** Enforce */
+            enforce: string;
+            glide?: components["schemas"]["RiskEnvelopeGlide"] | null;
+            /** Switches */
+            switches: components["schemas"]["RiskEnvelopeSwitch"][];
+            /** Cash After Itm Assignment */
+            cash_after_itm_assignment?: number | null;
+            /** Les */
+            les?: components["schemas"]["RiskEnvelopeLes"][];
+        };
+        /**
+         * RiskEnvelopeSnapshot
+         * @description One measurement: every scenario gross (no long option, H1) and net (long options counted).
+         */
+        RiskEnvelopeSnapshot: {
+            /**
+             * Captured At
+             * Format: date-time
+             */
+            captured_at: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "stored" | "live";
+            /** Measured */
+            measured: boolean;
+            /** Enforce */
+            enforce: string;
+            /** S10 */
+            s10: number;
+            /** S10 Net */
+            s10_net: number;
+            /** S10 Vol10 */
+            s10_vol10: number;
+            /** S10 Vol10 Net */
+            s10_vol10_net: number;
+            /** S20 */
+            s20: number;
+            /** S20 Net */
+            s20_net: number;
+            /** G10 */
+            g10: number;
+            /** G10 Net */
+            g10_net: number;
+            /** P20 */
+            p20: number;
+            /** P20 Net */
+            p20_net: number;
+            /** T20 */
+            t20: number;
+            /** T20 Net */
+            t20_net: number;
+            /** S Smh */
+            s_smh: number;
+            /** S Smh Net */
+            s_smh_net: number;
+            /** Uew */
+            uew: number;
+            /** Nlv */
+            nlv?: number | null;
+            /** Unmeasured */
+            unmeasured?: string[];
+            /** Reasons */
+            reasons?: string[];
+        };
+        /** RiskEnvelopeSwitch */
+        RiskEnvelopeSwitch: {
+            /** Name */
+            name: string;
+            /** Value */
+            value: string;
+            /** Default */
+            default: string;
+            /** Source */
+            source: string;
+            /** Set At */
+            set_at?: string | null;
         };
         /** RollAlertSummary */
         RollAlertSummary: {
@@ -8298,6 +8472,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_envelope_envelope_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RiskEnvelopeResponse"];
                 };
             };
         };

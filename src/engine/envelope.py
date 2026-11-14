@@ -192,3 +192,19 @@ def check_t20_trigger(result: ShockResult) -> str | None:
         f"(trigger {points:.1f}). t20_limit -> on (paper; record-only in live): T20_gross <= L(t) "
         "is now an admission test. Reverse: python -m scripts.envelope switch t20_limit off"
     )
+
+
+def without_shares(inputs: ShockInputs, symbol: str, qty: float) -> ShockInputs:
+    """*inputs* with *qty* shares of *symbol* taken out of its non-value stock lines (the book
+    before a manual buy, E13), never below zero. The value book's lines are left alone."""
+    left = qty
+    lines: list[BookLine] = []
+    for ln in inputs.lines:
+        if left > 0 and ln.kind == "stock" and ln.book != "value" and ln.symbol == symbol.upper():
+            take = min(left, max(0.0, ln.qty))
+            left -= take
+            if ln.qty - take > 0:
+                lines.append(replace(ln, qty=ln.qty - take))
+            continue
+        lines.append(ln)
+    return replace(inputs, lines=tuple(lines))

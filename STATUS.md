@@ -413,11 +413,17 @@ Plan `docs/superpowers/plans/2026-11-14-risk-envelope.md` Tasks 11-14, spec
   `admits` / `max_contracts_under`, the H8 T20 trigger, and an `envelope_snapshots` row per measurement,
   written every scan cycle before the put generator runs (stored IV always; live IV unless the switch is
   `off`). `python -m scripts.envelope show` prints them; `... stabilisation` prints §3.8's conditions.
+- **The displays** (Task 14): the EOD report's Risk envelope block and the two LES lines; a Telegram line
+  per manual TWS stock buy (S10 and U_ew before and after, tomorrow's headroom; E13), checked on the
+  ledger sweep's cadence during RTH, once per execution; `GET /envelope` (owner, read-only). The web
+  card is Task 15.
 - **Not yet:** the envelope gates nothing (Tasks 18-20 wire `admits` into the generator and the Rules
   Engine and record would-blocks in `sizing_actions`). The hedge book's marks are not in the inputs
   until `hedge_view` exists (Task 33). The spreads book's SPY legs are not in S10 (`get_positions()`
   drops them; the harness counts the spreads book at its caps, Task 26).
-- **Known limitations:** the live-IV read adds up to `live_iv_timeout_seconds` (8 s) per ten option
+- **Known limitations:** the manual-buy line reads the ledger, so it needs a ledger account locked by a
+  CSV/Flex import and arrives up to one sweep interval after the fill; the API must start after the
+  trading service has created `envelope_snapshots`. The live-IV read adds up to `live_iv_timeout_seconds` (8 s) per ten option
   positions to every scan cycle while the switch is not `off`; P20 values an option that expires inside the
   ten-day path at intrinsic on the path's last spot; a leveraged ETF with no `envelope.governing` entry
   (LABU, TSLL) moves by the larger of its own beta move and leverage x the index move.

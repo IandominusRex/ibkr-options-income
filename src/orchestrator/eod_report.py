@@ -428,6 +428,36 @@ def _write_journal(summary: EODSummary, narrative: str | None, fill_ids: list[in
     logger.info("JournalRow upserted for %s", summary.date)
 
 
+def _envelope_section() -> str:
+    """The risk envelope's EOD lines (risk-envelope Task 14): the day's latest snapshot (the
+    live-IV one when it is from the same ET day as the latest stored-IV one, else the stored one,
+    labelled), then the Leveraged Entry Signal for QQQ and SOXX with the newest breadth reading.
+    MarkdownV2. Never raises: an empty string leaves the report as it was."""
+    try:
+        from zoneinfo import ZoneInfo
+
+        from src.notify.formatters import format_envelope_section, format_les_line
+        from src.storage.envelope_state import latest_snapshot
+        from src.storage.les_state import latest_osc, latest_signal
+
+        et = ZoneInfo("America/New_York")
+        live = latest_snapshot("live")
+        stored = latest_snapshot("stored")
+        snap = stored
+        if live is not None and (
+            stored is None
+            or live.captured_at.astimezone(et).date() >= stored.captured_at.astimezone(et).date()
+        ):
+            snap = live
+        osc = latest_osc(1)
+        reading = osc[-1][1] if osc else None
+        les = [format_les_line(latest_signal(ix), index=ix, osc=reading) for ix in ("QQQ", "SOXX")]
+        return format_envelope_section(snap, les)
+    except Exception:
+        logger.exception("EOD: the envelope section failed — sending the report without it")
+        return ""
+
+
 async def _send_eod_telegram(summary: EODSummary, narrative: str | None) -> None:
     cfg = get_config()
     token = cfg.secrets.telegram_bot_token
@@ -441,6 +471,9 @@ async def _send_eod_telegram(summary: EODSummary, narrative: str | None) -> None
 
     thread_id_val = thread_id(cfg.secrets.telegram_thread_account)
     text = format_eod_summary(summary, narrative)
+    section = _envelope_section()
+    if section:
+        text = f"{text}\n\n{section}"
     try:
         async with Bot(token=token) as bot:
             await bot.send_message(
