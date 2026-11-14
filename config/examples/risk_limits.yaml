@@ -258,6 +258,7 @@ regime:
 # missing here is treated as 3x (the strictest) with a warning. TSLL's factor is yours to confirm.
 leveraged_sizing:
   enabled: true
+  csp_mode: drawdown_only   # drawdown_only: no leveraged-ETF CSP outside the drawdown sleeve (2026-11-14); normal: decision 32's max(1, ...) lot
   per_trade_fraction:
     calm:     {2: 0.8, 3: 0.6}
     stressed: {2: 0.5, 3: 0.3}

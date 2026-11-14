@@ -173,7 +173,12 @@ def test_regime_off_lifts_the_zone_but_not_the_same_day_loss_exit_block():
     assert gate([csp("c", spot=50.0)], ctx(suspended=True))["c"].verdict == Verdict.PASS
 
 
-def test_near_money_put_fires_the_ladder_not_a_block():
+def test_near_money_put_fires_the_ladder_not_a_block(monkeypatch):
+    # leveraged CSPs are drawdown-sleeve only since 2026-11-14 (Task 8); this test is about
+    # the ladder, so it runs under decision 32's `normal` mode
+    risk = dict(get_config().risk)
+    risk["leveraged_sizing"] = {"csp_mode": "normal"}
+    monkeypatch.setattr(get_config(), "risk", risk)
     # Operator decisions 21 and 35: a near-the-money 78P is held. It does not stop the name; the
     # next lot is accepted at the next zone down, and refused above it.
     with session_scope() as s:

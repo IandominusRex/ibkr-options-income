@@ -181,8 +181,20 @@ def per_trade_cap(ctx: SizingContext | None, symbol: str, hard_max: int) -> int:
     factor = leverage_factor(ctx, symbol)
     if factor is None:
         return base
-    lf = get_leveraged_sizing_cfg().per_trade_fraction[leverage_tier(ctx, symbol)][factor]
+    lev_cfg = get_leveraged_sizing_cfg()
+    if lev_cfg.csp_mode == "drawdown_only" and not sleeve_lot(ctx, symbol):
+        return 0  # 2026-11-14: no leveraged CSP outside the drawdown sleeve
+    lf = lev_cfg.per_trade_fraction[leverage_tier(ctx, symbol)][factor]
     return max(1, _floor(hard_max * rf * lf))
+
+
+def sleeve_lot(ctx: SizingContext | None, symbol: str) -> bool:
+    """True when a CSP on leveraged *symbol* opens inside the drawdown sleeve.
+
+    A stub until the sleeve is built (Task 23): no lot is a sleeve lot, so under
+    ``leveraged_sizing.csp_mode: drawdown_only`` a leveraged ETF gets no lot at all.
+    """
+    return False
 
 
 def ceiling_kind(
@@ -298,6 +310,8 @@ def vrp_waiver(
     """
     if strategy != Strategy.CASH_SECURED_PUT or ctx is None or not active(ctx):
         return False
+    if leverage_factor(ctx, symbol) is not None:
+        return False  # 2026-11-14: a leveraged ETF is never waived; it meets the floor like any lot
     if ctx.for_send:
         return (
             frozen is not None

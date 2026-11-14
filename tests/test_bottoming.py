@@ -844,3 +844,26 @@ def test_signal_lot_recent_reads_the_record_within_n_sessions():
     with session_scope() as s:
         s.query(SizingActionRow).update({"kind": "regime_ceiling"})
     assert recent(utc(2026, 10, 15, 17)) == []
+
+
+# --------------------------------------------------------------------------- #
+# Task 8 (2026-11-14): no fair-value waiver for a leveraged name
+# --------------------------------------------------------------------------- #
+
+
+def test_vrp_waiver_is_false_for_a_leveraged_name():
+    """A leveraged ETF on a bottoming signal still meets the credit-below-fair-value floor."""
+    from src.common.schemas import Strategy
+    from src.engine.regime_limits import vrp_waiver
+
+    c = ctx(SIZER_ZONE, symbol="TQQQ").model_copy(update={"name_bottoming": ["TQQQ"]})
+    assert signal_lot(c, "TQQQ", 70.0) is True  # a signal lot by the ladder's own test
+    assert c.leverage == {"TQQQ": 3}
+    assert vrp_waiver(c, Strategy.CASH_SECURED_PUT, "TQQQ", 70.0) is False
+
+
+def test_vrp_waiver_still_holds_for_an_unleveraged_signal_lot():
+    from src.common.schemas import Strategy
+    from src.engine.regime_limits import vrp_waiver
+
+    assert vrp_waiver(bottoming_ctx(), Strategy.CASH_SECURED_PUT, "BAC", 50.0) is True

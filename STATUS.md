@@ -397,6 +397,20 @@ the daemons run none of it until a merge and `./ibkr restart`.
   so expect fixes on first contact; until a PASS, the spreads book records shadow only. The switch is
   read at service start: `./ibkr restart` after it changes.
 
+## Built (2026-11-14 — risk envelope Section C: leveraged policy, universe, IV data, breadth and LES)
+
+Plan `docs/superpowers/plans/2026-11-14-risk-envelope.md` Tasks 8-10 and 10a, spec
+`docs/superpowers/specs/2026-11-13-risk-envelope-design.md` §3.5, §3.6, §3.10.8 and §2.7. On
+`feat/risk-envelope`, unmerged; the daemons run none of it until a merge and `./ibkr restart`.
+
+- **No leveraged CSP outside the drawdown sleeve (Task 8).** `leveraged_sizing.csp_mode` ships
+  `drawdown_only`: `regime_limits.per_trade_cap` returns 0 for a leveraged ETF unless
+  `regime_limits.sleeve_lot` is true, and `sleeve_lot` is a stub returning False until the sleeve is built
+  (Task 23). **This changes decision 32 / ruling 35** (a leveraged ETF always kept at least one lot):
+  `csp_mode: normal` restores it. `vrp_waiver` is False for a leveraged name, so a leveraged signal lot meets
+  the credit-below-fair-value floor like any other lot. `leveraged_sizing.enabled: false` still means the
+  name is treated as unleveraged (the policy is part of that block).
+
 ## Bugs fixed (2026-11-12 — spreads late fill, regime flapping, roll noise)
 
 From the week's logs (Nov 5–12):

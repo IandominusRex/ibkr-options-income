@@ -176,7 +176,8 @@ def test_generator_trims_to_the_per_trade_cap_and_records_the_note():
     assert note.floor_lot is False
 
 
-def test_generator_trims_a_leveraged_etf_in_a_normal_regime():
+def test_generator_trims_a_leveraged_etf_in_a_normal_regime(monkeypatch):
+    set_risk(monkeypatch, leveraged_sizing={"csp_mode": "normal"})  # decision 32 (Task 8)
     screen = _screen("TQQQ", sizing=ctx(N, N))
     c = screen.passed[0]
     assert c.contracts == 6  # calm 3x: floor(10 x 0.6)
@@ -186,7 +187,8 @@ def test_generator_trims_a_leveraged_etf_in_a_normal_regime():
     assert c.sizing.ceiling_kind == "leveraged_ceiling"
 
 
-def test_a_stressed_leveraged_etf_is_trimmed_harder():
+def test_a_stressed_leveraged_etf_is_trimmed_harder(monkeypatch):
+    set_risk(monkeypatch, leveraged_sizing={"csp_mode": "normal"})  # decision 32 (Task 8)
     screen = _screen("TQQQ", sizing=ctx(N, N, triggers={"TQQQ": ["recent_loss_exit"]}))
     c = screen.passed[0]
     assert c.contracts == 3 and c.sizing is not None and c.sizing.leverage_tier == "stressed"
@@ -226,7 +228,10 @@ def test_generator_rejects_with_regime_ceiling_when_the_ceiling_is_zero(monkeypa
     assert "regime_ceiling" in reasons
 
 
-def test_suspended_context_applies_no_regime_limit_but_keeps_the_leveraged_ceiling():
+def test_suspended_context_applies_no_regime_limit_but_keeps_the_leveraged_ceiling(
+    monkeypatch,
+):
+    set_risk(monkeypatch, leveraged_sizing={"csp_mode": "normal"})  # decision 32 (Task 8)
     assert _screen("NVDA", sizing=ctx(S, S, suspended=True)).passed[0].contracts == 10
     assert _screen("TQQQ", sizing=ctx(S, S, suspended=True)).passed[0].contracts == 6
 
@@ -484,7 +489,8 @@ def _card_text(cand: TradeCandidate) -> str:
     return format_candidate(cand, None).replace("\\", "")
 
 
-def test_the_card_says_why_the_size_was_cut():
+def test_the_card_says_why_the_size_was_cut(monkeypatch):
+    set_risk(monkeypatch, leveraged_sizing={"csp_mode": "normal"})  # decision 32 (Task 8)
     leveraged = _screen("TQQQ", sizing=ctx(N, N)).passed[0]
     assert "Size 6 of 10 (leveraged ETF, 3×, calm)" in _card_text(leveraged)
 

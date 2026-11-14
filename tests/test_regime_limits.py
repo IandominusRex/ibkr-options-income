@@ -12,7 +12,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
-from src.common.config import get_config
+from src.common.config import get_config, get_leveraged_sizing_cfg
 from src.common.schemas import (
     IndexRegime,
     MarketRegime,
@@ -51,6 +51,11 @@ def ctx(
         csp_opens_counted=opens or {},
         floor_lots_counted=floors or {},
     )
+
+
+def set_normal_csp_mode(monkeypatch) -> None:
+    """Restore decision 32: a leveraged ETF keeps its ``max(1, ...)`` lot (``csp_mode: normal``)."""
+    set_risk(monkeypatch, leveraged_sizing={"csp_mode": "normal"})
 
 
 def set_risk(monkeypatch, **blocks) -> None:
@@ -174,9 +179,41 @@ def test_scale_caps_scales_only_the_csp_budgets():
         ("BAC", S, [], 3),
     ],
 )
-def test_per_trade_cap_with_the_leveraged_tier(sym, regime, triggers, expected):
+def test_per_trade_cap_with_the_leveraged_tier(monkeypatch, sym, regime, triggers, expected):
+    set_normal_csp_mode(monkeypatch)  # decision 32's floor of one lot, now opt-in (Task 8)
     c = ctx(regime, regime, triggers={sym: triggers} if triggers else {})
     assert rl.per_trade_cap(c, sym, 10) == expected
+
+
+# --------------------------------------------------------------------------- #
+# Task 8: no leveraged CSP outside the drawdown sleeve (2026-11-14)
+# --------------------------------------------------------------------------- #
+
+
+def test_drawdown_only_gives_zero_outside_the_sleeve():
+    """The shipped ``csp_mode`` is ``drawdown_only``: a leveraged ETF gets no lot at all."""
+    assert get_leveraged_sizing_cfg().csp_mode == "drawdown_only"
+    for regime in (N, C, S, X):
+        assert rl.per_trade_cap(ctx(regime, regime), "TQQQ", 10) == 0
+        assert rl.per_trade_cap(ctx(regime, regime), "SOXL", 10) == 0
+        assert rl.per_trade_cap(ctx(regime, regime), "TSLL", 10) == 0
+    assert rl.per_trade_cap(ctx(N, N), "BAC", 10) == 10  # an unleveraged name is untouched
+    assert rl.per_trade_cap(None, "TQQQ", 10) == 10  # no context, no policy (as before)
+
+
+def test_a_sleeve_lot_keeps_the_leveraged_ceiling(monkeypatch):
+    monkeypatch.setattr(rl, "sleeve_lot", lambda ctx, symbol: symbol == "TQQQ")
+    assert rl.per_trade_cap(ctx(N, N), "TQQQ", 10) == 6  # the calm ceiling, as before
+    assert rl.per_trade_cap(ctx(N, N), "SOXL", 10) == 0
+
+
+def test_normal_mode_keeps_decision_32(monkeypatch):
+    set_normal_csp_mode(monkeypatch)
+    assert rl.per_trade_cap(ctx(N, N), "TQQQ", 10) == 6
+    assert (
+        rl.per_trade_cap(ctx(C, C), "TQQQ", 10) == 1
+    )  # stressed leveraged: max(1, floor(10 x 0.6 x 0.3))
+    assert rl.per_trade_cap(ctx(X, X), "TQQQ", 10) == 1  # max(1, floor(10 x 0.1 x 0.3)) = 1
 
 
 def test_leverage_tier_uses_the_stricter_index_for_tech_linked():
@@ -189,6 +226,7 @@ def test_leverage_tier_uses_the_stricter_index_for_tech_linked():
 
 
 def test_leveraged_cap_applies_when_the_regime_is_suspended_or_disabled(monkeypatch):
+    set_normal_csp_mode(monkeypatch)
     assert rl.per_trade_cap(ctx(N, N, suspended=True), "TQQQ", 10) == 6
     assert rl.per_trade_cap(ctx(S, S, suspended=True), "TQQQ", 10) == 6  # regime reads as normal
     trig = {"TQQQ": ["recent_loss_exit"]}
@@ -199,13 +237,17 @@ def test_leveraged_cap_applies_when_the_regime_is_suspended_or_disabled(monkeypa
 
 
 def test_leveraged_sizing_has_its_own_switch(monkeypatch):
-    set_risk(monkeypatch, leveraged_sizing={"enabled": False})
+    set_risk(monkeypatch, leveraged_sizing={"enabled": False, "csp_mode": "normal"})
     assert rl.per_trade_cap(ctx(N, N), "TQQQ", 10) == 10
     assert rl.per_trade_cap(ctx(S, S), "TQQQ", 10) == 3  # the regime ceiling is unaffected
 
 
 def test_leveraged_cap_is_zero_when_the_regime_ceiling_is_zero(monkeypatch):
-    set_risk(monkeypatch, regime={"csp": {"per_trade_fraction": {"crisis": 0.0}}})
+    set_risk(
+        monkeypatch,
+        regime={"csp": {"per_trade_fraction": {"crisis": 0.0}}},
+        leveraged_sizing={"csp_mode": "normal"},
+    )
     assert rl.per_trade_cap(ctx(X, X), "TQQQ", 10) == 0
     assert rl.per_trade_cap(ctx(X, X), "BAC", 10) == 0
 
@@ -233,7 +275,8 @@ def test_unmapped_leveraged_etf_is_treated_as_3x(tmp_path, monkeypatch, caplog):
     assert len(warnings) == 1  # said once, not on every scan
 
 
-def test_ceiling_kind_names_the_binding_factor():
+def test_ceiling_kind_names_the_binding_factor(monkeypatch):
+    set_normal_csp_mode(monkeypatch)
     assert rl.ceiling_kind(ctx(N, N), "TQQQ", 10, 10) == "leveraged_ceiling"
     assert rl.ceiling_kind(ctx(S, S), "BAC", 10, 10) == "regime_ceiling"
     assert rl.ceiling_kind(ctx(N, N), "BAC", 10, 10) is None
@@ -255,7 +298,8 @@ def test_floor_left_counts_sent_and_batch_lots():
     assert rl.floor_left(ctx(N, N), "BAC", {}) == 0  # normal has no floor (no limit to exceed)
 
 
-def test_sizing_note_carries_the_numbers_the_card_and_gate_need():
+def test_sizing_note_carries_the_numbers_the_card_and_gate_need(monkeypatch):
+    set_normal_csp_mode(monkeypatch)
     note = rl.sizing_note(ctx(N, S), "TQQQ", pre=10, hard_max=10)
     assert note is not None
     assert note.pre_regime_contracts == 10

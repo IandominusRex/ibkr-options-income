@@ -2469,11 +2469,16 @@ class LeveragedSizingCfg(_KeyedCfg):
     regime's own per-trade fraction: **calm** when the name's regime is normal and no ladder
     trigger holds on it, **stressed** otherwise. Not a regime limit: ``/regime off`` and
     ``regime.enabled: false`` leave it on; ``enabled: false`` here switches it off.
+
+    ``csp_mode`` (operator, 2026-11-14): ``drawdown_only`` (the default) gives a leveraged ETF
+    no cash-secured put at all outside the drawdown sleeve (``regime_limits.sleeve_lot``, Task
+    23); ``normal`` restores decision 32's ``max(1, ...)`` lot.
     """
 
-    KEYS: ClassVar[tuple[str, ...]] = ("enabled", "per_trade_fraction", "leverage")
+    KEYS: ClassVar[tuple[str, ...]] = ("enabled", "per_trade_fraction", "leverage", "csp_mode")
 
     enabled: bool = True
+    csp_mode: Literal["drawdown_only", "normal"] = "drawdown_only"
     per_trade_fraction: dict[Literal["calm", "stressed"], dict[int, float]] = Field(
         default_factory=lambda: _leveraged_fraction_defaults()
     )

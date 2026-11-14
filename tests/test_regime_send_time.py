@@ -350,6 +350,7 @@ async def test_send_time_daily_limit_counts_only_sent_orders(monkeypatch):
 
 
 async def test_leveraged_trim_at_send_time_is_recorded_as_leveraged_ceiling(monkeypatch):
+    set_risk(monkeypatch, leveraged_sizing={"csp_mode": "normal"})  # decision 32 (Task 8)
     # a calm 6-lot TQQQ card; QQQ escalates to stressed before the send -> the stressed tier
     seed_regime(N, S)
     _, order_id = queue("c-1", "TQQQ", 6, sizing=note(pre=10, leverage=3, tier="calm"))
@@ -362,6 +363,7 @@ async def test_leveraged_trim_at_send_time_is_recorded_as_leveraged_ceiling(monk
 
 
 async def test_leveraged_tier_never_loosens_at_send_time(monkeypatch):
+    set_risk(monkeypatch, leveraged_sizing={"csp_mode": "normal"})  # decision 32 (Task 8)
     # The card was cut under the stressed tier (a ladder trigger then); the send-time context has
     # no bars to recompute the trigger, so the snapshot's tier holds: a 5-lot that cannot be a
     # calm-tier size in the first place is cut to the stressed ceiling (3), never left at 5.

@@ -24,6 +24,18 @@ N = MarketRegime.NORMAL
 S = MarketRegime.STRESSED
 
 
+@pytest.fixture(autouse=True)
+def _decision_32_leveraged_floor(monkeypatch):
+    """The replayed week ran under decision 32 (a leveraged ETF keeps at least one lot).
+
+    Since 2026-11-14 the shipped `csp_mode` is `drawdown_only`; this file replays the ladder's
+    arithmetic on the week of 2026-10-13, so it runs under `normal`."""
+    cfg = get_config()
+    risk = dict(cfg.risk)
+    risk["leveraged_sizing"] = {"csp_mode": "normal"}
+    monkeypatch.setattr(cfg, "risk", risk)
+
+
 def at(month: int, day: int, hh: int, mm: int = 0) -> datetime:
     return datetime(2026, month, day, hh, mm, tzinfo=UTC)
 
