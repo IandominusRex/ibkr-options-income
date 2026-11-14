@@ -1915,8 +1915,12 @@ class SpreadRiskContext(BaseModel):
     trades_today: int
     realized_pnl_today_usd: float
     excess_liquidity_usd: float | None
-    capital_usd: float  # the book's capital: starting capital + realized P&L (sizing basis)
+    capital_usd: float  # the book's capital: starting capital + realized P&L (reporting only)
     sides_today: list[SpreadSide] = Field(default_factory=list)  # sides opened this ET day
+    # Risk in shares of net liquidation (risk-envelope Task 4): None = unknown, which blocks.
+    nlv_usd: float | None = None
+    open_pnl_today_usd: float = 0.0  # marked P&L of the book's open spreads
+    month_stop: bool = False  # the month stop is set and no human has reset it
     # The account's own stops (risk-envelope Task 3): the wheel's master halt and the slow
     # drawdown breaker spanning books, read by the service from system_settings each cycle.
     account_halted: bool = False

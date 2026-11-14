@@ -16,12 +16,18 @@ from src.common.schemas import SpreadCandidate, SpreadRiskContext, SpreadVerdict
 from src.spreads.pricing import ET, day_schedule
 
 
-def size(c: SpreadCandidate, cfg: SpreadsCfg, capital_usd: float) -> int:
-    """Contracts whose combined max loss stays within ``max_loss_pct_of_capital`` of the book."""
+def _known(nlv: float | None) -> float | None:
+    return nlv if nlv is not None and math.isfinite(nlv) and nlv > 0 else None
+
+
+def size(c: SpreadCandidate, cfg: SpreadsCfg, nlv_usd: float | None) -> int:
+    """Contracts whose combined max loss stays within ``max_loss_pct_of_nlv`` of the account's
+    net liquidation (risk-envelope Task 4); 0 when the NLV is unknown. Rounds down, never up."""
     per_contract = c.max_loss_per_contract
-    if per_contract <= 0 or c.credit_mid <= 0 or capital_usd <= 0:
+    nlv = _known(nlv_usd)
+    if per_contract <= 0 or c.credit_mid <= 0 or nlv is None:
         return 0
-    n = math.floor(cfg.risk.max_loss_pct_of_capital * capital_usd / per_contract)
+    n = math.floor(cfg.risk.max_loss_pct_of_nlv * nlv / per_contract)
     return max(0, min(n, cfg.risk.max_contracts))
 
 
@@ -92,24 +98,34 @@ def validate(c: SpreadCandidate, ctx: SpreadRiskContext, cfg: SpreadsCfg) -> Spr
     elif abs(c.short_delta) > s.short_delta_max:
         reasons.append("delta_too_high")
 
-    # --- Book-level limits, as shares of the book's capital (starting capital + realized P&L).
-    cap = ctx.capital_usd
+    # --- Book-level limits, as shares of the account's net liquidation (risk-envelope Task 4;
+    # ctx.capital_usd, the book's own capital, is reporting only and sizes nothing).
     if ctx.open_spreads >= r.max_open_spreads:
         reasons.append("max_open_spreads")
     if ctx.trades_today >= r.max_trades_per_day:
         reasons.append("max_trades_per_day")
     if r.one_side_per_day and any(side != c.side for side in ctx.sides_today):
         reasons.append("other_side_traded_today")
-    if ctx.realized_pnl_today_usd <= -r.max_daily_loss_pct_of_capital * cap:
-        reasons.append("daily_loss_limit")
-    n = size(c, cfg, cap)
-    if n < 1:
-        reasons.append("max_loss_per_trade")
-    elif ctx.open_risk_usd + n * c.max_loss_per_contract > r.max_total_risk_pct_of_capital * cap:
-        reasons.append("max_total_risk")
-    if ctx.excess_liquidity_usd is None:
-        reasons.append("account_unknown")
-    elif ctx.excess_liquidity_usd < r.min_excess_liquidity_usd:
+    if ctx.month_stop:
+        reasons.append("month_stop")
+    nlv = _known(ctx.nlv_usd)
+    n = 0
+    if nlv is None:
+        reasons.append("nlv_unknown")
+    else:
+        if (
+            ctx.realized_pnl_today_usd + ctx.open_pnl_today_usd
+            <= -r.max_daily_loss_pct_of_nlv * nlv
+        ):
+            reasons.append("daily_loss_limit")
+        n = size(c, cfg, nlv)
+        if n < 1:
+            reasons.append("max_loss_per_trade")
+        elif ctx.open_risk_usd + n * c.max_loss_per_contract > r.max_total_risk_pct_of_nlv * nlv:
+            reasons.append("max_total_risk")
+    if ctx.excess_liquidity_usd is None or nlv is None:
+        reasons.append("account_unknown")  # the floor cannot be measured
+    elif ctx.excess_liquidity_usd < r.min_excess_liquidity_pct_of_nlv * nlv:
         reasons.append("excess_liquidity_floor")
 
     approved = not reasons

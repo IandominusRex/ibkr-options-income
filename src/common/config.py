@@ -929,17 +929,24 @@ class SpreadsSelectionCfg(BaseModel):
 
 
 class SpreadsRiskCfg(BaseModel):
-    # Sizing (Design → "Position sizing"): the book's capital is starting_capital_usd plus the
-    # realized P&L of its closed spreads in the current mode, and every cap is a share of it.
+    # Sizing (risk-envelope Task 4, ruling E2): every cap is a share of the account's net
+    # liquidation, read from the process's own account stream each entry check.
+    max_loss_pct_of_nlv: float = 0.005  # one spread's full max loss; sets the contract count
+    max_total_risk_pct_of_nlv: float = 0.005  # every open spread together
+    max_daily_loss_pct_of_nlv: float = 0.01  # today's realised + open loss: no entries today
+    max_monthly_loss_pct_of_nlv: float = 0.02  # month to date: no entries until a human reset
+    min_excess_liquidity_pct_of_nlv: float = 0.40  # whole-account floor (the wheel shares margin)
+    # The book's own capital (starting capital + its realized P&L): the P&L report only.
     starting_capital_usd: float = 100_000.0
+    # Legacy (the caps before Task 4): read so an older private copy still loads, then ignored.
     max_loss_pct_of_capital: float = 0.10
     max_total_risk_pct_of_capital: float = 0.10
     max_daily_loss_pct_of_capital: float = 0.10
+    min_excess_liquidity_usd: float = 10_000.0
     max_contracts: int = 100  # sanity ceiling against a bad quote sizing to an absurd count
     max_open_spreads: int = 2
     max_trades_per_day: int = 2
     one_side_per_day: bool = True
-    min_excess_liquidity_usd: float = 10_000.0
     max_quote_age_seconds: float = 20.0
     events: list[SpreadsEventCfg] = Field(default_factory=list)
     # Kinds in config/macro_calendar.yaml (src/common/macro_calendar.py) that block new entries
@@ -959,6 +966,21 @@ class SpreadsRiskCfg(BaseModel):
         ):
             if not 0 < getattr(self, name) <= 1:
                 raise ValueError(f"spreads risk: {name} is a fraction in (0, 1], e.g. 0.10 for 10%")
+        return self
+
+    @model_validator(mode="after")
+    def _nlv_fractions(self) -> SpreadsRiskCfg:
+        for name in (
+            "max_loss_pct_of_nlv",
+            "max_total_risk_pct_of_nlv",
+            "max_daily_loss_pct_of_nlv",
+            "max_monthly_loss_pct_of_nlv",
+            "min_excess_liquidity_pct_of_nlv",
+        ):
+            if not 0 < getattr(self, name) <= 1:
+                raise ValueError(
+                    f"spreads risk: {name} is a fraction in (0, 1], e.g. 0.005 for 0.5%"
+                )
         return self
 
 

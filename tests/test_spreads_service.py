@@ -122,6 +122,7 @@ class FakeBroker:
         self.calls: list[str] = []
         self.legs: dict[int, float] = {}
         self.fail_requote = False
+        self.nlv: float | None = 650_000.0
         self.spx_down = False  # True: the SPX chain can't be built (no index price)
         self.spx_oi = {"P": 1_000, "C": 40_000}
         self.xsp_atm = {"C": (2.9, 3.1), "P": (2.7, 2.9)}
@@ -184,7 +185,10 @@ class FakeBroker:
         return 690.0
 
     async def excess_liquidity(self):
-        return 50_000.0
+        return 400_000.0  # above the 40%-of-NLV floor
+
+    async def net_liquidation(self):
+        return self.nlv
 
     def broker_legs(self):
         return self.legs
@@ -296,7 +300,9 @@ async def test_a_winner_whose_long_nobody_bids_takes_profit(tmp_path, spreads_db
     assert reason == "profit_take" and pnl > 0
 
 
-async def test_entries_are_sized_to_ten_percent_of_the_books_capital(tmp_path, spreads_db) -> None:
+async def test_entries_are_sized_to_half_a_percent_of_the_accounts_nlv(
+    tmp_path, spreads_db
+) -> None:
     roomy = ONE_A_DAY.model_copy(
         update={"risk": ONE_A_DAY.risk.model_copy(update={"max_contracts": 100})}
     )
@@ -306,7 +312,7 @@ async def test_entries_are_sized_to_ten_percent_of_the_books_capital(tmp_path, s
     clock[0] = T1005
     await svc.tick()
     (pos,) = spreads_db.open_positions("shadow")
-    assert pos.contracts == 22  # ⌊10% × $100,000 ÷ ((5 − 0.61) × 100)⌋
+    assert pos.contracts == 7  # ⌊0.5% × $650,000 ÷ ((5 − 0.61) × 100)⌋
 
 
 async def test_a_spread_still_open_after_the_time_stop_raises_the_assignment_alert(
@@ -1074,3 +1080,127 @@ async def test_the_calendar_reaches_the_gate_and_the_events_list(
         "FOMC 14:00 ET (no new entries today)",
         "CPI 08:30 ET (no block)",
     ]
+
+
+# ---------------------------------------------------------------- risk envelope Task 4
+
+
+def _month_loss(st, *, at: datetime, mode: str = "shadow") -> float:
+    """A spread opened and closed at a full loss on *at*: about −$13,200, past −2% of $650k."""
+    from src.common.schemas import SpreadCandidate
+
+    st.open_position(
+        SpreadCandidate(
+            spread_id=f"loss-{at:%Y%m%d}",
+            side="put",
+            expiry=at.date(),
+            short_strike=679.0,
+            long_strike=674.0,
+            width=5.0,
+            credit_mid=0.6,
+            credit_natural=0.55,
+            spot=690.0,
+            quote_time=at,
+        ),
+        mode=mode,
+        contracts=30,
+        credit=0.6,
+        commission=39.0,
+        now=at,
+        perm_id=None,
+    )
+    return st.close_position(
+        f"loss-{at:%Y%m%d}", contracts=30, debit=5.0, commission=39.0, reason="stop_loss", now=at
+    )
+
+
+async def test_a_two_percent_month_stops_entries_until_reset(tmp_path, spreads_db) -> None:
+    loss = _month_loss(spreads_db, at=datetime(2026, 10, 1, 15, 0, tzinfo=UTC))
+    assert loss <= -0.02 * 650_000
+    assert spreads_db.month_realized_pnl(2026, 10, "shadow") == pytest.approx(loss)
+    clock = [T0945]
+    svc, _, notifier = make(tmp_path, clock, ONE_A_DAY)
+    await svc.tick()
+    clock[0] = T1005
+    await svc.tick()
+    assert spreads_db.open_positions("shadow") == []
+    flag = spreads_db.month_stop_get()
+    assert flag is not None and flag["month"] == "2026-10"
+    assert sum("month" in m and "reset" in m for m in notifier.sent) == 1
+    with spreads_db.spreads_session() as s:
+        last = (
+            s.query(spreads_db.SpreadCandidateRow)
+            .order_by(spreads_db.SpreadCandidateRow.id.desc())
+            .first()
+        )
+        assert "month_stop" in last.reasons
+    # A reset inside the same month changes nothing: the month is still down 2%.
+    assert spreads_db.month_stop_clear() is not None
+    clock[0] = T1100
+    await svc.tick()
+    assert spreads_db.open_positions("shadow") == [] and spreads_db.month_stop_get() is not None
+
+
+async def test_the_month_stop_survives_a_new_month_until_a_human_resets(
+    tmp_path, spreads_db, capsys, monkeypatch
+) -> None:
+    import sys
+
+    from scripts import spreads_reset_month
+
+    _month_loss(spreads_db, at=datetime(2026, 10, 1, 15, 0, tzinfo=UTC))
+    spreads_db.month_stop_set("2026-10", pnl_usd=-13_278.0, nlv_usd=650_000.0)
+    monkeypatch.setattr(sys.modules[__name__], "TODAY", date(2026, 11, 4))  # the chain's expiry
+    nov_0945 = datetime(2026, 11, 4, 14, 45, tzinfo=UTC)  # Wed 09:45 EST
+    nov_1005 = datetime(2026, 11, 4, 15, 5, tzinfo=UTC)
+    clock = [nov_0945]
+    svc, _, _ = make(tmp_path, clock, ONE_A_DAY)
+    await svc.tick()
+    clock[0] = nov_1005
+    await svc.tick()
+    assert spreads_db.open_positions("shadow") == []  # November is flat, the stop still holds
+    assert spreads_db.month_realized_pnl(2026, 11, "shadow") == 0.0
+    assert spreads_db.month_stop_get() is not None
+    assert "2026-10" in (spreads_reset_month.clear() or "")
+    assert "cleared by hand" in capsys.readouterr().out
+    assert spreads_reset_month.clear() is None  # nothing left to clear
+    assert spreads_db.month_stop_get() is None
+    clock[0] = nov_1005 + timedelta(minutes=10)
+    await svc.tick()
+    assert len(spreads_db.open_positions("shadow")) == 1
+
+
+async def test_an_open_mark_counts_in_todays_loss(tmp_path, spreads_db) -> None:
+    clock = [T0945]
+    roomy = ONE_A_DAY.model_copy(
+        update={"risk": ONE_A_DAY.risk.model_copy(update={"max_contracts": 100})}
+    )
+    svc, broker, _ = make(tmp_path, clock, roomy)
+    await svc.tick()
+    clock[0] = T1005
+    await svc.tick()
+    (pos,) = spreads_db.open_positions("shadow")
+    broker.leg_quotes = {  # marked at 1.00 against a 0.57 credit, under the 2x stop (1.14)
+        (679.0, "P"): o(679, "P", 1.20, 1.30),
+        (674.0, "P"): o(674, "P", 0.24, 0.26),
+    }
+    clock[0] = T1005 + timedelta(minutes=1)
+    await svc._manage(clock[0])
+    assert len(spreads_db.open_positions("shadow")) == 1
+    open_pnl = spreads_db.open_pnl_usd("shadow")
+    assert open_pnl == pytest.approx((pos.entry_credit - 1.00) * 100 * pos.contracts)
+    ctx = svc._context(clock[0], svc.levels, 400_000.0, nlv=650_000.0)
+    assert ctx.open_pnl_today_usd == pytest.approx(open_pnl) and ctx.nlv_usd == 650_000.0
+
+
+async def test_an_unknown_nlv_blocks_entries(tmp_path, spreads_db) -> None:
+    clock = [T0945]
+    svc, broker, _ = make(tmp_path, clock, ONE_A_DAY)
+    broker.nlv = None
+    await svc.tick()
+    clock[0] = T1005
+    await svc.tick()
+    assert spreads_db.open_positions("shadow") == []
+    with spreads_db.spreads_session() as s:
+        last = s.query(spreads_db.SpreadCandidateRow).first()
+        assert "nlv_unknown" in last.reasons

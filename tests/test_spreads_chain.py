@@ -306,6 +306,26 @@ async def test_excess_liquidity_prefers_usd() -> None:
     assert await _broker(ib).excess_liquidity() is None
 
 
+# Risk envelope Task 4 — the gate sizes off the account's own net liquidation, in USD.
+async def test_net_liquidation_reads_the_same_stream_in_usd() -> None:
+    ib = FakeIB()
+    ib.values = [
+        SimpleNamespace(account="DU1", tag="NetLiquidation", value="650000", currency="USD"),
+        SimpleNamespace(account="DU1", tag="ExcessLiquidity", value="400000", currency="USD"),
+        SimpleNamespace(account="DU2", tag="NetLiquidation", value="1", currency="USD"),
+    ]
+    assert await _broker(ib).net_liquidation() == 650000.0
+    ib.values = [
+        SimpleNamespace(account="DU1", tag="NetLiquidation", value="866000", currency="SGD"),
+        SimpleNamespace(
+            account="DU1", tag="$LEDGER-ExchangeRate", value="1.332308", currency="USD"
+        ),
+    ]
+    assert await _broker(ib).net_liquidation() == pytest.approx(866000 / 1.332308)
+    ib.values = ib.values[:1]  # no rate: unknown, never a mislabelled number
+    assert await _broker(ib).net_liquidation() is None
+
+
 # Review I3 — a contract repeated in one batch is subscribed once (a second reqMktData would
 # overwrite the first's reqId and leak its line for the life of the connection).
 async def test_a_repeated_leg_is_subscribed_once_and_fanned_back_out() -> None:

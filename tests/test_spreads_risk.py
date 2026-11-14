@@ -32,14 +32,15 @@ CFG = _BASE.model_copy(
         "risk": _BASE.risk.model_copy(
             update={
                 "starting_capital_usd": 100_000.0,
-                "max_loss_pct_of_capital": 0.10,
-                "max_total_risk_pct_of_capital": 0.10,
-                "max_daily_loss_pct_of_capital": 0.10,
+                "max_loss_pct_of_nlv": 0.005,
+                "max_total_risk_pct_of_nlv": 0.005,
+                "max_daily_loss_pct_of_nlv": 0.01,
+                "max_monthly_loss_pct_of_nlv": 0.02,
+                "min_excess_liquidity_pct_of_nlv": 0.40,
                 "max_contracts": 100,
                 "max_open_spreads": 2,
                 "max_trades_per_day": 2,
                 "one_side_per_day": True,
-                "min_excess_liquidity_usd": 10_000.0,
                 "max_quote_age_seconds": 20.0,
                 "events": [],
                 "calendar_block": ["FOMC"],
@@ -86,27 +87,28 @@ def ctx(now: datetime = NOW, **kw) -> SpreadRiskContext:
         open_risk_usd=0.0,
         trades_today=0,
         realized_pnl_today_usd=0.0,
-        excess_liquidity_usd=50_000.0,
+        excess_liquidity_usd=400_000.0,
         capital_usd=100_000.0,
+        nlv_usd=650_000.0,
     )
     base.update(kw)
     return SpreadRiskContext(**base)
 
 
-def test_a_clean_candidate_passes_sized_to_ten_percent_of_capital() -> None:
+def test_a_clean_candidate_passes_sized_to_half_a_percent_of_nlv() -> None:
     v = validate(cand(), ctx(), CFG)
     assert v.approved and v.reasons == []
-    assert v.contracts == 22  # 10% of $100,000 ÷ (5 − 0.61) × 100 = 22.8
+    assert v.contracts == 7  # 0.5% of $650,000 ÷ (5 − 0.61) × 100 = 7.4
 
 
-def test_size_follows_the_books_capital_and_the_contract_ceiling() -> None:
-    assert size(cand(), CFG, 100_000.0) == 22
-    assert size(cand(), CFG, 120_000.0) == 27  # capital grew with realized wins
-    assert size(cand(), CFG, 90_000.0) == 20  # and shrank after losses
-    assert size(cand(), CFG, 4_000.0) == 0  # 10% = $400 cannot cover one $439 max loss
+def test_size_follows_the_nlv_and_the_contract_ceiling() -> None:
+    assert size(cand(), CFG, 650_000.0) == 7
+    assert size(cand(), CFG, 1_000_000.0) == 11
+    assert size(cand(), CFG, 80_000.0) == 0  # 0.5% = $400 cannot cover one $439 max loss
     capped = CFG.model_copy(update={"risk": CFG.risk.model_copy(update={"max_contracts": 5})})
-    assert size(cand(), capped, 100_000.0) == 5
-    assert size(cand(credit_mid=-0.1), CFG, 100_000.0) == 0
+    assert size(cand(), capped, 1_000_000.0) == 5
+    assert size(cand(credit_mid=-0.1), CFG, 650_000.0) == 0
+    assert size(cand(), CFG, None) == 0
 
 
 @pytest.mark.parametrize(
@@ -126,11 +128,13 @@ def test_size_follows_the_books_capital_and_the_contract_ceiling() -> None:
         ({"expiry": date(2026, 10, 8)}, {}, "not_0dte"),
         ({}, {"open_spreads": 2}, "max_open_spreads"),
         ({}, {"trades_today": 2}, "max_trades_per_day"),
-        ({}, {"realized_pnl_today_usd": -10_000.0}, "daily_loss_limit"),
-        ({}, {"open_risk_usd": 700.0}, "max_total_risk"),  # 700 + 22 × 439 > 10% of 100k
-        ({}, {"capital_usd": 4_000.0}, "max_loss_per_trade"),
+        ({}, {"realized_pnl_today_usd": -6_500.0}, "daily_loss_limit"),
+        ({}, {"open_risk_usd": 700.0}, "max_total_risk"),  # 700 + 7 × 439 > 0.5% of 650k
+        ({}, {"nlv_usd": 80_000.0, "excess_liquidity_usd": 40_000.0}, "max_loss_per_trade"),
         ({}, {"excess_liquidity_usd": None}, "account_unknown"),
         ({}, {"excess_liquidity_usd": 5_000.0}, "excess_liquidity_floor"),
+        ({}, {"nlv_usd": None}, "nlv_unknown"),
+        ({}, {"month_stop": True}, "month_stop"),
     ],
 )
 def test_each_gate_rejects(c_kw, ctx_kw, reason) -> None:
@@ -264,3 +268,59 @@ def test_account_halted_blocks_entries() -> None:
 def test_slow_breaker_blocks_entries() -> None:
     v = validate(cand(), ctx(slow_breaker=True), CFG)
     assert not v.approved and v.reasons == ["slow_breaker"]
+
+
+# Risk envelope Task 4 — every cap is a share of the account's net liquidation (ruling E2).
+def test_size_is_half_a_percent_of_nlv() -> None:
+    c = cand(credit_mid=0.70, credit_natural=0.65)  # 5-wide: $430 max loss per contract
+    assert c.max_loss_per_contract == pytest.approx(430.0)
+    assert size(c, CFG, 650_000.0) == 7  # 0.5% × 650k = $3,250 ÷ $430 = 7.56
+    v = validate(c, ctx(), CFG)
+    assert v.approved and v.contracts == 7
+
+
+def test_todays_loss_of_one_percent_stops_entries() -> None:
+    # Realised and open count together: −$4,000 booked and −$2,500 marked = −1% of $650k.
+    stopped = validate(
+        cand(), ctx(realized_pnl_today_usd=-4_000.0, open_pnl_today_usd=-2_500.0), CFG
+    )
+    assert "daily_loss_limit" in stopped.reasons
+    ok = validate(cand(), ctx(realized_pnl_today_usd=-4_000.0, open_pnl_today_usd=-2_400.0), CFG)
+    assert ok.approved
+    assert validate(cand(), ctx(realized_pnl_today_usd=-6_500.0), CFG).reasons == [
+        "daily_loss_limit"
+    ]
+
+
+def test_el_floor_is_forty_percent_of_nlv() -> None:
+    assert (
+        "excess_liquidity_floor"
+        in validate(cand(), ctx(excess_liquidity_usd=259_999.0), CFG).reasons
+    )
+    assert validate(cand(), ctx(excess_liquidity_usd=260_000.0), CFG).approved
+
+
+def test_unknown_nlv_blocks_entries() -> None:
+    for nlv in (None, 0.0, float("nan")):
+        v = validate(cand(), ctx(nlv_usd=nlv), CFG)
+        assert not v.approved and v.contracts == 0
+        # Without the NLV neither the size nor the excess-liquidity floor can be measured.
+        assert "nlv_unknown" in v.reasons and "account_unknown" in v.reasons
+
+
+def test_starting_capital_no_longer_sizes() -> None:
+    rich = CFG.model_copy(
+        update={
+            "risk": CFG.risk.model_copy(
+                update={"starting_capital_usd": 10_000_000.0, "max_loss_pct_of_capital": 1.0}
+            )
+        }
+    )
+    assert validate(cand(), ctx(capital_usd=10_000_000.0), rich).contracts == 7
+    assert validate(cand(), ctx(capital_usd=1_000.0), CFG).contracts == 7
+
+
+def test_total_risk_is_a_share_of_nlv() -> None:
+    # 0.5% of NLV for every open spread together: one full-size spread at a time.
+    one_open = 7 * 439.0
+    assert "max_total_risk" in validate(cand(), ctx(open_risk_usd=one_open), CFG).reasons

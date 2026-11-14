@@ -45,15 +45,42 @@ def test_shipped_config_is_disabled_shadow_spy() -> None:
     assert cfg.ibkr.client_ids["spreads"] == 30
 
 
-def test_shipped_sizing_is_ten_percent_of_a_100k_book() -> None:
+def test_shipped_sizing_is_in_shares_of_net_liquidation() -> None:
+    """Risk envelope Task 4 (ruling E2): 0.5% of NLV per trade and in total, 1% a day, 2% a
+    month, an excess-liquidity floor at 40% of NLV. starting_capital_usd only feeds the report."""
     r = get_config().spreads.risk
-    assert r.starting_capital_usd == 100_000.0
     assert (
-        r.max_loss_pct_of_capital,
-        r.max_total_risk_pct_of_capital,
-        r.max_daily_loss_pct_of_capital,
-    ) == (0.10, 0.10, 0.10)
+        r.max_loss_pct_of_nlv,
+        r.max_total_risk_pct_of_nlv,
+        r.max_daily_loss_pct_of_nlv,
+        r.max_monthly_loss_pct_of_nlv,
+        r.min_excess_liquidity_pct_of_nlv,
+    ) == (0.005, 0.005, 0.01, 0.02, 0.40)
+    assert r.starting_capital_usd == 100_000.0
     assert r.max_contracts == 100 and r.ex_dividend_dates == []
+
+
+def test_the_example_no_longer_carries_the_capital_caps() -> None:
+    text = (ROOT / "config" / "examples" / "spreads.yaml").read_text(encoding="utf-8")
+    for legacy in (
+        "max_loss_pct_of_capital",
+        "max_total_risk_pct_of_capital",
+        "max_daily_loss_pct_of_capital",
+        "min_excess_liquidity_usd",
+    ):
+        assert f"{legacy}:" not in text, legacy
+
+
+def test_a_private_copy_with_the_legacy_keys_still_loads() -> None:
+    from src.common.config import SpreadsRiskCfg
+
+    r = SpreadsRiskCfg(
+        max_loss_pct_of_capital=0.10,
+        max_total_risk_pct_of_capital=0.10,
+        max_daily_loss_pct_of_capital=0.10,
+        min_excess_liquidity_usd=10_000.0,
+    )
+    assert r.max_loss_pct_of_nlv == 0.005  # the legacy keys are read and ignored
 
 
 def test_risk_percentages_must_be_fractions() -> None:
@@ -63,6 +90,10 @@ def test_risk_percentages_must_be_fractions() -> None:
         SpreadsRiskCfg(max_loss_pct_of_capital=10)  # 10 means 1000%, not 10%
     with pytest.raises(ValidationError):
         SpreadsRiskCfg(starting_capital_usd=0)
+    with pytest.raises(ValidationError):
+        SpreadsRiskCfg(max_loss_pct_of_nlv=0.5 * 100)  # 50 means 5000%, not 0.5%
+    with pytest.raises(ValidationError):
+        SpreadsRiskCfg(min_excess_liquidity_pct_of_nlv=0)
 
 
 def test_client_ids_stay_unique() -> None:

@@ -131,6 +131,9 @@ class SpreadPositionRow(SpreadsBase):
     entry_context: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # the full context
     # Worst (highest) mid debit-to-close seen while open; MAE = (this − entry_credit) × 100 × qty.
     max_debit_seen: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # The latest mid debit-to-close (risk-envelope Task 4): the open P&L the daily and monthly
+    # loss stops and the wheel's daily loss leg (src/common/spreads_view.py) read.
+    last_mid_debit: Mapped[float | None] = mapped_column(Float, nullable=True)
     # Claude picks (ai.enabled): the pick that opened a main-book spread, and the trigger
     # episode of either book's spread — the comparison report lines the books up by these.
     pick_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -214,6 +217,18 @@ class SpreadPickRow(SpreadsBase):
     headline_sentiment_mean: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
+class SpreadFlagRow(SpreadsBase):
+    """A named, durable flag of the book (risk-envelope Task 4: ``month_stop``)."""
+
+    __tablename__ = "spread_flags"
+
+    key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSON)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+MONTH_STOP_KEY = "month_stop"
+
 _engine: Engine | None = None
 _SessionLocal: sessionmaker[Session] | None = None
 
@@ -243,7 +258,11 @@ def get_spreads_engine() -> Engine:
 
 # Columns added after a table's first release: create_all never ALTERs an existing table.
 _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
-    "spread_positions": (("pick_id", "INTEGER"), ("episode_key", "VARCHAR(64)")),
+    "spread_positions": (
+        ("pick_id", "INTEGER"),
+        ("episode_key", "VARCHAR(64)"),
+        ("last_mid_debit", "FLOAT"),
+    ),
 }
 
 
@@ -537,11 +556,99 @@ def open_risk_usd(mode: str) -> float:
 
 
 def note_mark(spread_id: str, mid_debit: float) -> None:
-    """Keep the worst (highest) debit-to-close seen while the spread is open — its MAE."""
+    """Keep the worst (highest) debit-to-close seen while the spread is open — its MAE — and
+    the latest one, its open P&L mark."""
     with spreads_session() as s:
         row = s.query(SpreadPositionRow).filter_by(spread_id=spread_id).one()
         if row.max_debit_seen is None or mid_debit > row.max_debit_seen:
             row.max_debit_seen = mid_debit
+        row.last_mid_debit = mid_debit
+
+
+def open_pnl_usd(mode: str) -> float:
+    """Marked P&L of *mode*'s open and expiring spreads: (entry credit − latest mid debit) × 100
+    × contracts still open. A spread not yet marked counts 0."""
+    with spreads_session() as s:
+        rows = (
+            s.query(SpreadPositionRow)
+            .filter(
+                SpreadPositionRow.mode == mode,
+                SpreadPositionRow.status.in_(("open", "expiring")),
+            )
+            .all()
+        )
+        return float(
+            sum(
+                (r.entry_credit - r.last_mid_debit) * 100.0 * r.contracts
+                for r in rows
+                if r.last_mid_debit is not None
+            )
+        )
+
+
+def month_realized_pnl(year: int, month: int, mode: str) -> float:
+    """Realized USD of *mode*'s spreads opened in ET month *year*-*month* (0DTE: opened and
+    closed the same day, so this is the month's booked P&L)."""
+    start = datetime(year, month, 1, tzinfo=ET) - timedelta(hours=1)
+    with spreads_session() as s:
+        rows = (
+            s.query(SpreadPositionRow)
+            .filter(SpreadPositionRow.mode == mode, SpreadPositionRow.opened_at >= _naive(start))
+            .all()
+        )
+        return float(
+            sum(
+                r.realized_pnl_usd or 0.0
+                for r in rows
+                if (et := r.opened_at.replace(tzinfo=UTC).astimezone(ET)).year == year
+                and et.month == month
+            )
+        )
+
+
+def month_stop_get() -> dict | None:
+    """The month stop's record (``month``, ``pnl_usd``, ``nlv_usd``, ``set_at``), or None when it
+    is not set. It stays set across months until a human clears it."""
+    with spreads_session() as s:
+        row = s.get(SpreadFlagRow, MONTH_STOP_KEY)
+        return dict(row.value) if row is not None else None
+
+
+def month_stop_set(
+    month: str,
+    *,
+    pnl_usd: float | None = None,
+    nlv_usd: float | None = None,
+    now: datetime | None = None,
+) -> None:
+    """Set the month stop for *month* (``YYYY-MM``); an existing record is left as it was."""
+    at = now or datetime.now(UTC)
+    with spreads_session() as s:
+        if s.get(SpreadFlagRow, MONTH_STOP_KEY) is not None:
+            return
+        s.add(
+            SpreadFlagRow(
+                key=MONTH_STOP_KEY,
+                value={
+                    "month": month,
+                    "pnl_usd": pnl_usd,
+                    "nlv_usd": nlv_usd,
+                    "set_at": at.astimezone(UTC).isoformat(),
+                },
+                updated_at=_naive(at),
+            )
+        )
+
+
+def month_stop_clear() -> dict | None:
+    """Clear the month stop (the human reset); returns the record it cleared, or None."""
+    with spreads_session() as s:
+        row = s.get(SpreadFlagRow, MONTH_STOP_KEY)
+        if row is None:
+            return None
+        cleared = dict(row.value)
+        s.delete(row)
+        return cleared
 
 
 def sides_opened(day: date, mode: str) -> list[str]:

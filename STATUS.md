@@ -360,6 +360,13 @@ the daemons run none of it until a merge and `./ibkr restart`.
   new entries too (`account_halted`, `slow_breaker`); an unreadable state blocks and alerts; exits keep
   running. Before this, the only spreads halt was `data/spreads.halt` and the Oct 28 FOMC day traded.
   The slow breaker itself is Task 22: until then its key is absent and reads as not tripped.
+- **Spreads risk in shares of net liquidation; the month stop (Task 4).** The spreads caps moved from
+  the book's notional `starting_capital_usd` ($100k, 10% a trade: ~$10k, 1.5% of NLV) to the account's
+  NetLiquidation: 0.5% of NLV per trade and in total, today's realised + open loss at 1% stops the day,
+  the month to date at −2% sets a month stop only `python -m scripts.spreads_reset_month` clears, and the
+  excess-liquidity floor is 40% of NLV. An unknown NLV blocks entries. `starting_capital_usd` only feeds
+  the P&L report; the old capital keys load and are ignored. **Known limitation:** the backtest still
+  sizes off its replayed capital as a stand-in for NLV until Task 7's `--nlv`.
 
 ## Bugs fixed (2026-11-12 — spreads late fill, regime flapping, roll noise)
 

@@ -396,6 +396,14 @@ class IbkrSpreadsBroker:
         322). A non-USD base account reports it in its base currency; that is converted with
         the stream's own ``ExchangeRate`` (or ``$LEDGER-ExchangeRate``) for USD (base units per
         USD). None if it can't be."""
+        return self._account_usd("ExcessLiquidity")
+
+    async def net_liquidation(self) -> float | None:
+        """The account's net liquidation in USD, read and converted exactly as
+        ``excess_liquidity`` is: every spreads cap is a share of it (risk-envelope Task 4)."""
+        return self._account_usd("NetLiquidation")
+
+    def _account_usd(self, tag: str) -> float | None:
         excess: dict[str, float] = {}
         usd_rate: float | None = None
         for v in self.ib.accountValues(self.account):
@@ -404,7 +412,7 @@ class IbkrSpreadsBroker:
             num = _num(v.value)
             if num is None:
                 continue
-            if v.tag == "ExcessLiquidity":
+            if v.tag == tag:
                 excess[v.currency] = num
             # A plain account-update stream sends ``ExchangeRate``; this account's (SGD base,
             # 2026-10-09) sends it only as ``$LEDGER-ExchangeRate``.

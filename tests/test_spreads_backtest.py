@@ -225,13 +225,13 @@ def test_the_move_trigger_sells_puts_after_a_stalled_flush() -> None:
     assert t.exit_reason == "profit_take" and t.hold_minutes == pytest.approx(70.0)
 
 
-def test_size_is_ten_percent_of_the_capital_it_is_given() -> None:
+def test_size_is_half_a_percent_of_the_capital_it_is_given() -> None:
     roomy = CFG.model_copy(update={"risk": CFG.risk.model_copy(update={"max_contracts": 100})})
     later = {M1100: {(6790.0, "P"): (1.0, 1.2), (6740.0, "P"): (0.2, 0.3)}}
-    (big,) = run_day(_day(later), roomy, capital_usd=100_000.0)
-    (small,) = run_day(_day(later), roomy, capital_usd=10_000.0)
+    (big,) = run_day(_day(later), roomy, capital_usd=2_000_000.0)
+    (small,) = run_day(_day(later), roomy, capital_usd=650_000.0)
     # Max loss per SPY-equivalent contract = (50 − 2.95) × 100 / 10 = $470.50.
-    assert (big.contracts, small.contracts) == (21, 2)
+    assert (big.contracts, small.contracts) == (21, 6)  # ⌊0.5% × capital ÷ $470.50⌋
     assert big.pnl_usd == pytest.approx(21 * ((2.95 - 0.925) * 100 / 10 - 4 * 0.65))
 
 

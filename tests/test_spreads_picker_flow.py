@@ -360,13 +360,14 @@ async def test_the_contract_count_comes_from_the_regate_not_the_menu(tmp_path, s
     roomy = AI.model_copy(update={"risk": AI.risk.model_copy(update={"max_contracts": 100})})
     clock = [T0945]
     svc, broker, _, _ = make(tmp_path, clock, cfg=roomy)
+    broker.nlv = 612_000.0  # 0.5% = $3,060 of max loss per trade
     await _to_pending(svc, clock)
-    assert svc._pending.menu[2].contracts == 22  # ⌊$10,000 ÷ ((5 − 0.56) × 100)⌋
-    _reprice_outer(broker, 0.80, 0.86)  # a richer credit risks less per contract: 23 fit
+    assert svc._pending.menu[2].contracts == 6  # ⌊$3,060 ÷ ((5 − 0.56) × 100)⌋
+    _reprice_outer(broker, 0.80, 0.86)  # a richer credit risks less per contract: 7 fit
     clock[0] = T1005 + timedelta(seconds=30)
     await svc.tick()
     (main,) = spreads_db.open_positions("shadow")
-    assert main.contracts == 23
+    assert main.contracts == 7
 
 
 # 09:47 ET arms the put side (low 689.80 stalled 11 min); the baseline book may take two trades
@@ -533,7 +534,7 @@ class DriftingExcessBroker(MenuBroker):
 
     def __init__(self, clock):
         super().__init__(clock)
-        self.excess: float | None = 50_000.0
+        self.excess: float | None = 400_000.0
         self.reads = 0
 
     async def excess_liquidity(self):
@@ -546,7 +547,7 @@ async def test_the_send_regates_on_fresh_excess_liquidity(tmp_path, spreads_db) 
     broker = DriftingExcessBroker(clock)
     svc, _, _, _ = make(tmp_path, clock, broker=broker)
     await _to_pending(svc, clock)
-    broker.excess = 1_000.0  # below the 10,000 floor now
+    broker.excess = 1_000.0  # below the floor (40% of NLV) now
     clock[0] = T1005 + timedelta(seconds=30)
     await svc.tick()
     (rec,) = spreads_db.picks()

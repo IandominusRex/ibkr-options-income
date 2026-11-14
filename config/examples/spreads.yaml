@@ -60,16 +60,17 @@ selection:
   strike_band_pct: 0.03
   menu_size: 4                # ai.enabled only: one strike inside the pick + the pick + up to 2 further out
 
-risk:
-  starting_capital_usd: 100000      # the book's own capital; grows/shrinks with its realized P&L (per mode)
-  max_loss_pct_of_capital: 0.10     # a spread's full max loss <= 10% of current capital: this sets the contract count
-  max_total_risk_pct_of_capital: 0.10  # all open spreads together (one full-size spread at a time)
-  max_daily_loss_pct_of_capital: 0.10  # no new entries once today's realized loss reaches this
+risk:                         # every cap is a share of the account's net liquidation (NLV), read each entry check
+  max_loss_pct_of_nlv: 0.005        # a spread's full max loss <= 0.5% of NLV: this sets the contract count (rounded down)
+  max_total_risk_pct_of_nlv: 0.005  # all open spreads together (one full-size spread at a time)
+  max_daily_loss_pct_of_nlv: 0.01   # no new entries today once today's realized + open loss reaches 1% of NLV
+  max_monthly_loss_pct_of_nlv: 0.02 # month to date at -2% of NLV: no new entries until a human runs python -m scripts.spreads_reset_month in a later month
+  min_excess_liquidity_pct_of_nlv: 0.40  # whole-account floor (the wheel shares the margin): excess liquidity >= 40% of NLV
+  starting_capital_usd: 100000      # the P&L report's starting point only; it sizes nothing
   max_contracts: 100          # sanity ceiling against a bad quote sizing to an absurd count
   max_open_spreads: 2
   max_trades_per_day: 2
   one_side_per_day: true      # after the day's first spread, only that side may be sold again
-  min_excess_liquidity_usd: 10000  # whole-account floor (the wheel shares the margin)
   max_quote_age_seconds: 20
   events: []                  # operator-maintained. Whole day: - {day: 2026-10-28, label: FOMC}
                               # Until a time (ET): - {day: 2026-08-28, until: "10:30", label: Fed chair speech}

@@ -114,6 +114,7 @@ class Broker(Protocol):
     async def spot(self) -> float | None: ...
     async def session_quote(self) -> SessionSnapshot | None: ...
     async def excess_liquidity(self) -> float | None: ...
+    async def net_liquidation(self) -> float | None: ...
     def broker_legs(self) -> dict[int, float]: ...
     def working_refs(self) -> set[str]: ...
 
@@ -626,8 +627,16 @@ class SpreadsService:
         self._tape_for(now).observe(snap)
 
     def _context(
-        self, now: datetime, levels: GexLevels, excess: float | None, mode: str | None = None
+        self,
+        now: datetime,
+        levels: GexLevels,
+        excess: float | None,
+        mode: str | None = None,
+        *,
+        nlv: float | None = None,
     ) -> SpreadRiskContext:
+        """The gate's view of *mode*'s book. *nlv* is the account's net liquidation in USD;
+        left out it is unknown and the gate refuses (``nlv_unknown``)."""
         mode = mode or self.cfg.mode
         today = now.astimezone(ET).date()
         trades, realized = store.day_stats(today, mode)
@@ -646,6 +655,32 @@ class SpreadsService:
             account_halted=halted,
             slow_breaker=slow,
             macro_events=sorted({e.kind for e in events_on(today)}),
+            nlv_usd=nlv,
+            open_pnl_today_usd=store.open_pnl_usd(mode),
+            month_stop=store.month_stop_get() is not None,
+        )
+
+    async def _check_month_stop(self, now: datetime, nlv: float | None) -> None:
+        """Set the month stop once the traded book's month to date (realised + open) reaches
+        −``max_monthly_loss_pct_of_nlv`` of NLV. Only a human clears it
+        (``scripts/spreads_reset_month.py``); a reset inside the same month trips again."""
+        if nlv is None or not nlv > 0:
+            return
+        mode = self.cfg.mode
+        et = now.astimezone(ET)
+        mtd = store.month_realized_pnl(et.year, et.month, mode) + store.open_pnl_usd(mode)
+        limit = self.cfg.risk.max_monthly_loss_pct_of_nlv * nlv
+        if mtd > -limit or store.month_stop_get() is not None:
+            return
+        month = f"{et.year:04d}-{et.month:02d}"
+        store.month_stop_set(month, pnl_usd=round(mtd, 2), nlv_usd=round(nlv, 2), now=now)
+        log.warning("spreads: month stop set for %s (month to date %.2f)", month, mtd)
+        await self.alert_once(
+            "month_stop",
+            f"[SPREADS] month stop: {mode} month to date ${mtd:,.0f} is past "
+            f"-{self.cfg.risk.max_monthly_loss_pct_of_nlv:.1%} of NLV (${nlv:,.0f}). No new "
+            "entries until a human resets it in a later month: "
+            "python -m scripts.spreads_reset_month",
         )
 
     def _account_state(self) -> tuple[bool, bool]:
@@ -752,15 +787,17 @@ class SpreadsService:
             }
         )
         excess = await self.broker.excess_liquidity()
+        nlv = await self.broker.net_liquidation()
+        await self._check_month_stop(now, nlv)
         gex_chain = self.gex_chain
         if self.picker is not None:
-            await self._decide(now, chain, levels, excess, allowed)
+            await self._decide(now, chain, levels, excess, allowed, nlv)
             return
         cands = select_candidates(chain, levels, self.cfg, now, sides=allowed.sides)
         await self._nothing_to_sell(now, chain, levels, allowed, {c.side for c in cands})
         for cand in cands:
             # Validated on the clock it runs at, so the quote's age (chain.as_of) is real.
-            verdict = validate(cand, self._context(self.now(), levels, excess), self.cfg)
+            verdict = validate(cand, self._context(self.now(), levels, excess, nlv=nlv), self.cfg)
             store.record_candidate(cand, verdict, levels.regime, now)
             if not verdict.approved:
                 continue
@@ -773,6 +810,7 @@ class SpreadsService:
                 mode=self.cfg.mode,
                 executor=self.executor,
                 gex_chain=gex_chain,
+                nlv=nlv,
             )
             if self.entries_blocked:
                 return
@@ -812,6 +850,7 @@ class SpreadsService:
         gex_chain: ChainSnapshot,
         pick_id: int | None = None,
         episode_key: str | None = None,
+        nlv: float | None = None,
     ) -> tuple[SpreadPosition | None, str | None]:
         """Send one approved spread through *executor* (whose paper path re-gates it on fresh
         quotes against *mode*'s book) and record it. Returns (position, why not filled)."""
@@ -824,7 +863,7 @@ class SpreadsService:
                     "regime": regime_at(gex_chain, fresh.spot, levels.scale, at),
                 }
             )
-            return validate(fresh, self._context(at, moved, excess, mode), self.cfg)
+            return validate(fresh, self._context(at, moved, excess, mode, nlv=nlv), self.cfg)
 
         result = await executor.open(cand, contracts, recheck)
         store.record_order(
@@ -1009,13 +1048,14 @@ class SpreadsService:
         levels: GexLevels,
         excess: float | None,
         allowed: SpreadTrigger,
+        nlv: float | None = None,
     ) -> None:
         """ai.enabled: the baseline book takes the baseline item on its own gate; the main book
         hands the items ITS gate approved to the picker. At most one spread per episode each."""
         assert self.picker is not None and self.gex_chain is not None
         gex_chain = self.gex_chain
         episode = self._episode_key(allowed, now)
-        main_ctx = self._context(self.now(), levels, excess)
+        main_ctx = self._context(self.now(), levels, excess, nlv=nlv)
         approved: list[tuple[SpreadCandidate, SpreadMenuPosition, int]] = []
         baseline_item: SpreadCandidate | None = None
         items = select_menu(chain, levels, self.cfg, now, sides=allowed.sides)
@@ -1031,7 +1071,9 @@ class SpreadsService:
             bl = baseline_item.model_copy(
                 update={"spread_id": baseline_item.spread_id + BASELINE_SUFFIX}
             )
-            v = validate(bl, self._context(self.now(), levels, excess, "baseline"), self.cfg)
+            v = validate(
+                bl, self._context(self.now(), levels, excess, "baseline", nlv=nlv), self.cfg
+            )
             if v.approved and self.baseline_executor is not None:
                 await self._open_candidate(
                     bl,
@@ -1043,6 +1085,7 @@ class SpreadsService:
                     executor=self.baseline_executor,
                     gex_chain=gex_chain,
                     episode_key=episode,
+                    nlv=nlv,
                 )
         if not approved or store.pick_exists(episode):
             return
@@ -1231,10 +1274,11 @@ class SpreadsService:
                 "regime": regime_at(p.gex_chain, fresh.spot, p.levels.scale, at),
             }
         )
-        # Excess liquidity is the one gate input the re-quote does not refresh: read it again, and
-        # let an unreadable account hit the gate's own ``account_unknown`` rule.
+        # The account values are the gate inputs the re-quote does not refresh: read them again,
+        # and let an unreadable account hit the gate's own ``account_unknown`` / ``nlv_unknown``.
         excess = await self.broker.excess_liquidity()
-        verdict = validate(fresh, self._context(at, moved, excess), self.cfg)
+        nlv = await self.broker.net_liquidation()
+        verdict = validate(fresh, self._context(at, moved, excess, nlv=nlv), self.cfg)
         if not verdict.approved:
             store.mark_pick_sent(
                 pick_id, send_rejected=True, send_reasons=list(verdict.reasons), filled=False
@@ -1257,6 +1301,7 @@ class SpreadsService:
             gex_chain=p.gex_chain,
             pick_id=pick_id,
             episode_key=p.episode,
+            nlv=nlv,
         )
         store.mark_pick_sent(
             pick_id,

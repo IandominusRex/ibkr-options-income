@@ -64,7 +64,7 @@ def main() -> None:
     start_cap = cfg.risk.starting_capital_usd
     end_cap = start_cap + sum(t.pnl_usd for t in trades)
     print(
-        f"  capital ${start_cap:,.0f} → ${end_cap:,.0f} ({(end_cap / start_cap - 1) * 100:+.1f}%), compounding at {cfg.risk.max_loss_pct_of_capital:.0%} max loss per trade"
+        f"  capital ${start_cap:,.0f} → ${end_cap:,.0f} ({(end_cap / start_cap - 1) * 100:+.1f}%), compounding at {cfg.risk.max_loss_pct_of_nlv:.1%} max loss per trade"
     )
     print("  " + format_extras(trades))
     for name, groups in tag_breakdowns(trades).items():

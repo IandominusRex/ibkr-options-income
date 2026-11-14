@@ -354,6 +354,9 @@ def run_day(
                 # moves with every spread closed earlier the same day.
                 capital_usd=capital * k + realized_scaled,
                 sides_today=list(sides_today),
+                # The caps are shares of net liquidation (risk-envelope Task 4); the replayed
+                # book's capital stands in for it.
+                nlv_usd=capital * k + realized_scaled,
             )
             v = validate(c, ctx, bcfg)
             if not v.approved:
