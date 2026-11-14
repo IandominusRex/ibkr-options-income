@@ -413,8 +413,10 @@ async def evaluate_roll(
         cand = None
     if decision.action == "roll" and cand is not None:
         account = await get_account_snapshot_async(ib, cfg.secrets.ibkr_account)
-        # Rolls are exempt from regime limits (spec section 5): sizing=None, on purpose.
-        verdict = validate_candidates([cand], account, positions, sizing=None)[0]
+        # Rolls are exempt from regime limits (spec section 5): sizing=None, on purpose. They are
+        # not tested against the risk envelope either (spec §3.4.1: rolls stay governed by
+        # `roll:`): envelope=None, on purpose; the gate never tests a roll against it.
+        verdict = validate_candidates([cand], account, positions, sizing=None, envelope=None)[0]
         if verdict.verdict != Verdict.PASS:
             decision = _gate_fallback(
                 decision, pos, cc_basis, list(verdict.reasons), on_no_roll=on_no_roll

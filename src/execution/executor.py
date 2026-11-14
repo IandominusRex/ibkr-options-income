@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from typing import cast
 
 from ib_async import IB, Contract
@@ -22,6 +23,7 @@ from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 from src.claude.memory import FILLED, record_outcome
 from src.common.config import get_config
+from src.common.envelope_types import EnvelopeRoom, ShockInputs
 from src.common.schemas import (
     OptionQuote,
     OrderState,
@@ -68,6 +70,58 @@ def _two_sided(ticker: object) -> bool:
     bid = _safe_float(getattr(ticker, "bid", None))
     ask = _safe_float(getattr(ticker, "ask", None))
     return bid is not None and ask is not None and ask > 0
+
+
+def _envelope_at_send(
+    candidate: TradeCandidate,
+    quote: OptionQuote,
+    envelope: tuple[EnvelopeRoom, ShockInputs] | None,
+) -> list[str]:
+    """The envelope reasons that refuse a cash-secured put at send time (``on`` only). Its own
+    line is repriced at the fresh quote's IV and underlying price (falling back to the card's
+    spot, never to the card's IV: a missing live IV is unmeasured). Covered calls and every other
+    order pass untested."""
+    if candidate.strategy != Strategy.CASH_SECURED_PUT:
+        return []
+    from src.engine.envelope import UNMEASURED, admits, candidate_line
+
+    if envelope is None:
+        from src.storage.envelope_switches import enforce_mode
+
+        return [UNMEASURED] if enforce_mode() == "on" else []
+    room, inputs = envelope
+    if room.enforce == "off":
+        return []
+    line = candidate_line(candidate, spot=quote.underlying_price)
+    line = replace(line, iv=quote.iv if quote.iv is not None and quote.iv > 0 else None)
+    found = admits(room, inputs, [line])
+    if room.enforce == "on":
+        return found
+    if found:
+        from src.regime.actions import record_action
+
+        record_action(
+            cand=candidate,
+            kind="envelope_record",
+            deterministic=candidate.contracts,
+            sent=candidate.contracts,
+            reason=f"send time would refuse ({', '.join(found)}) at live IV {quote.iv}",
+            key=f"{candidate.candidate_id}:send",
+        )
+    return []
+
+
+def _envelope_detail(reasons: list[str], envelope: tuple[EnvelopeRoom, ShockInputs] | None) -> str:
+    """The envelope's numbers for a send-time refusal (empty when it did not refuse)."""
+    if envelope is None or not any(
+        r in ("shock_budget", "gross_budget", "t20_budget") for r in reasons
+    ):
+        return ""
+    room = envelope[0]
+    return (
+        f"; S10 {room.s10_gross:.1f}% vs L(t) {room.s10_limit:.1f}%, "
+        f"U_ew {room.uew:.2f} vs {room.uew_limit:.2f}"
+    )
 
 
 def _live_regate_detail(candidate: TradeCandidate, quote: OptionQuote) -> str:
@@ -230,12 +284,19 @@ async def execute_candidate(
     candidate: TradeCandidate,
     *,
     sizing: SizingContext | None = None,
+    envelope: tuple[EnvelopeRoom, ShockInputs] | None = None,
 ) -> None:
     """Execute a single pre-validated TradeCandidate: qualify → quote → place → monitor → confirm.
 
     *sizing* is the send-time sizing context the order poll built (`approval._send_context`); it
     reaches the fresh-quote re-gate, which re-checks the scale-in ladder and the same-day
     loss-exit block against it. The poll passes it explicitly.
+
+    *envelope* is the send-time risk envelope (`approval._send_envelope`, with the puts sent
+    earlier in the same pass in its book). A cash-secured put's own line is re-tested with
+    ``envelope.admits`` at the **fresh** quote's IV and underlying price before ``placeOrder``
+    (risk-envelope Task 19, H7): ``on`` refuses it like the live-quote re-gate, ``record`` writes
+    ``sizing_actions`` kind ``envelope_record``. No envelope while the switch is ``on`` refuses.
     """
     cfg = get_config()
     fill_timeout = cfg.execution.fill_timeout_minutes * 60.0
@@ -300,8 +361,19 @@ async def execute_candidate(
 
         # Second Rules Engine pass — against the FRESH live quote (delta drift / collapsed mid).
         live_verdict = validate_live_quote(candidate, quote, sizing=sizing)
+        # The risk envelope against the fresh quote's IV (Task 19): added to the same verdict.
+        envelope_reasons = _envelope_at_send(candidate, quote, envelope)
+        if envelope_reasons:
+            live_verdict = live_verdict.model_copy(
+                update={
+                    "verdict": Verdict.REJECT,
+                    "reasons": [*live_verdict.reasons, *envelope_reasons],
+                }
+            )
         if live_verdict.verdict != Verdict.PASS:
-            live_detail = _live_regate_detail(candidate, quote)
+            live_detail = _live_regate_detail(candidate, quote) + _envelope_detail(
+                live_verdict.reasons, envelope
+            )
             log.warning(
                 "Live re-gate REJECT — order_id=%s candidate=%s reasons=%s "
                 "(bid=%s ask=%s delta=%s greeks_source=%s; %s)",

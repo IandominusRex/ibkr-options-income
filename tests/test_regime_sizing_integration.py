@@ -657,10 +657,10 @@ def test_an_accepted_lot_joins_the_book_for_the_next_candidate():
 def test_no_envelope_while_enforce_is_on_fails_closed(monkeypatch):
     import src.storage.envelope_switches as switches
 
-    monkeypatch.setattr(switches, "get_switch", lambda name: "on")
+    monkeypatch.setattr(switches, "enforce_mode", lambda: "on")
     out = _gate([_env_csp("a", "BAC")], sizing=ctx(N, N))
     assert out["a"].reasons == ["envelope_unmeasured"]
-    monkeypatch.setattr(switches, "get_switch", lambda name: "record")
+    monkeypatch.setattr(switches, "enforce_mode", lambda: "record")
     assert _gate([_env_csp("b", "BAC")], sizing=ctx(N, N))["b"].verdict == Verdict.PASS
 
 
@@ -738,17 +738,27 @@ def test_the_value_book_still_reads_it():
 
 
 def test_record_mode_records_and_admits(db):
+    """Record mode admits; the would-block reasons ride on the verdict and the caller writes them
+    (inside its own transaction: the approval poll's gate runs inside its write session)."""
+    from src.regime.actions import record_envelope_verdicts
     from src.storage.db import session_scope
     from src.storage.models import SizingActionRow
 
     room, inputs = _over_uew(enforce="record")
-    out = _gate([_env_csp("a", "BAC")], sizing=ctx(N, N), envelope=(room, inputs))
+    cand = _env_csp("a", "BAC")
+    out = _gate([cand], sizing=ctx(N, N), envelope=(room, inputs))
     assert out["a"].verdict == Verdict.PASS
+    assert out["a"].envelope_would == ["gross_budget"]
+    with session_scope() as s:
+        assert s.query(SizingActionRow).count() == 0  # the gate itself writes nothing
+    assert record_envelope_verdicts([cand], list(out.values()), where="scan") == 1
     with session_scope() as s:
         rows = s.query(SizingActionRow).filter_by(kind="envelope_record").all()
-        assert [(r.candidate_id, r.sent_contracts) for r in rows] == [("a", 1)]
+        assert [(r.record_key, r.deterministic_contracts, r.sent_contracts) for r in rows] == [
+            ("a:scan", 1, 0)
+        ]
         assert "gross_budget" in rows[0].reason
     off = _gate([_env_csp("b", "BAC")], sizing=ctx(N, N), envelope=_over_uew(enforce="off"))
-    assert off["b"].verdict == Verdict.PASS
+    assert off["b"].verdict == Verdict.PASS and off["b"].envelope_would == []
     with session_scope() as s:
         assert s.query(SizingActionRow).filter_by(kind="envelope_record").count() == 1

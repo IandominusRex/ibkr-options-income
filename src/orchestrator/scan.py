@@ -92,12 +92,12 @@ from src.orchestrator.scan_progress import (
     _Tracker,
     send_scan_results,
 )
-from src.regime.actions import record_cc_timing, record_scan_actions
+from src.regime.actions import record_cc_timing, record_envelope_verdicts, record_scan_actions
 from src.regime.context import build_sizing_context
 from src.regime.refresh import refresh_regime, refresh_regime_cached
 from src.storage.buy_candidates import save_buy_candidates
 from src.storage.db import session_scope
-from src.storage.envelope_switches import get_switch
+from src.storage.envelope_switches import enforce_mode
 from src.storage.models import CandidateRow, ClaudeMemoryRow, ClaudeReviewRow
 from src.storage.regime_state import load_regime_state
 from src.storage.risk_verdicts import record_assessments
@@ -1234,7 +1234,7 @@ async def _measure_envelope(
     """
     try:
         loop = asyncio.get_running_loop()
-        enforce = get_switch("envelope_enforce")
+        enforce = enforce_mode()
         exposure = value_exposure()
         value_by_name = dict(exposure.by_name) if exposure.active and exposure.readable else {}
         nlv = account.net_liquidation
@@ -1600,8 +1600,12 @@ async def _run_scan_body(
     # on stored IV for the display and on live IV for the Rules Engine. Its live-IV read opens
     # at most ten lines at a time and closes them before the chain batches below begin.
     envelope = await _measure_envelope(ib, account, positions, dict(probed_spots or {}))
+    gate_envelope: tuple[EnvelopeRoom, ShockInputs] | None = None
     if envelope is not None:
         result.envelope_inputs, result.envelope_room = envelope
+        # The generator and both gate calls read the same room and book (Task 19): the CSP screen
+        # trims to it (P3) and the Rules Engine tests every opening put against it.
+        gate_envelope = (result.envelope_room, result.envelope_inputs)
 
     # --- 4. Per-symbol: market data + analytics + strategy candidates ---
     cc_candidates: list[TradeCandidate] = []
@@ -1675,6 +1679,7 @@ async def _run_scan_body(
             symbol_timeout_seconds=cfg.market_data.symbol_timeout_seconds,
             deps=deps,
             sizing=sizing,
+            envelope=gate_envelope,
         )
 
         # Chain + Greeks provenance for this symbol.
@@ -1823,7 +1828,9 @@ async def _run_scan_body(
                     if iv.current_iv is not None
                 },
                 sizing=sizing,
+                envelope=gate_envelope,
             )
+            record_envelope_verdicts(scored, verdicts, where="scan")  # record mode only (P1)
             verdict_map = {v.candidate_id: v for v in verdicts}
             gate_passed = [
                 c
@@ -2230,6 +2237,14 @@ async def _price_and_gate_ticker(ib: IB, ticker: str) -> TickerPricingResult:
         )
     sizing = await loop.run_in_executor(None, _build_sizing, positions, [ticker])
 
+    # 4c. The risk envelope on live IV (Task 19), as the full scan measures it: the CSP screen
+    # trims to it and the gate tests every opening put against it. None when off or on failure
+    # (the gate then refuses every put while enforce is on).
+    measured = await _measure_envelope(
+        ib, account, positions, {ticker: tech_stats.price} if tech_stats.price else {}
+    )
+    gate_envelope = (measured[1], measured[0]) if measured is not None else None
+
     # 5. CC candidates — only if we hold the stock.
     cc_candidates: list[TradeCandidate] = []
     ticker_rejects: list[tuple[TradeCandidate, list[str]]] = []
@@ -2277,6 +2292,7 @@ async def _price_and_gate_ticker(ib: IB, ticker: str) -> TickerPricingResult:
             fund_stats,
             positions=positions,
             sizing=sizing,
+            envelope=gate_envelope,
         )
         csp_candidates = csp_screen.passed
         ticker_rejects.extend(csp_screen.rejected)
@@ -2297,8 +2313,14 @@ async def _price_and_gate_ticker(ib: IB, ticker: str) -> TickerPricingResult:
             # not an execution-committing one: anything promoted out of it is re-gated at
             # order-approval time (`execution/approval.py`), which keeps the dedupe ON.
             verdicts = validate_candidates(
-                scored, account, positions, dedupe_same_symbol=False, sizing=sizing
+                scored,
+                account,
+                positions,
+                dedupe_same_symbol=False,
+                sizing=sizing,
+                envelope=gate_envelope,
             )
+            record_envelope_verdicts(scored, verdicts, where="ticker_scan")
             verdict_map = {v.candidate_id: v for v in verdicts}
             min_score = get_config().weights.get("min_candidate_score", 0)
             passed = [

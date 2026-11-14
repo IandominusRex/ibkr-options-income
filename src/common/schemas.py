@@ -673,6 +673,11 @@ class SizingNote(BaseModel):
     vrp_waived: bool = False
     claude_suggested: int | None = None
     claude_reason: str | None = None
+    # The risk envelope trimmed this lot (risk-envelope Task 19, P3): the count before the trim
+    # and the reason that bound the next contract (``shock_budget``, ``gross_budget``,
+    # ``t20_budget``). Display and audit only; the gate re-tests the envelope itself.
+    envelope_from: int | None = None
+    envelope_binding: str | None = None
 
 
 class CcBreakout(BaseModel):
@@ -801,6 +806,10 @@ class RiskVerdict(BaseModel):
     candidate_id: str
     verdict: Verdict
     reasons: list[str] = Field(default_factory=list)  # why pass/reject
+    # The risk envelope's would-block reasons while ``envelope_enforce`` is ``record`` (risk-
+    # envelope Tasks 18-19, P1): they never refuse; the caller writes them to ``sizing_actions``
+    # (``regime.actions.record_envelope_verdicts``) inside its own transaction. Empty otherwise.
+    envelope_would: list[str] = Field(default_factory=list)
 
 
 class AssessmentStage(StrEnum):

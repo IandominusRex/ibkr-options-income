@@ -36,6 +36,7 @@ from enum import StrEnum
 from ib_async import IB
 
 from src.analytics.iv import infer_spot_from_quotes
+from src.common.envelope_types import EnvelopeRoom, ShockInputs
 from src.common.schemas import (
     AccountSnapshot,
     FundamentalStats,
@@ -201,6 +202,7 @@ async def scan_symbol(
     symbol_timeout_seconds: float,
     deps: SymbolDeps,
     sizing: SizingContext | None = None,
+    envelope: tuple[EnvelopeRoom, ShockInputs] | None = None,
 ) -> SymbolOutcome:
     """Run the full per-symbol pipeline and return what it produced.
 
@@ -220,6 +222,8 @@ async def scan_symbol(
             screen so the sizer applies the same regime limits the gate will, and to the
             covered-call screen, which reads only its breakout (strikes pushed out after an
             upside breakout; calls are not regime-limited). ``None`` means no such behaviour.
+        envelope: the risk envelope measured on live IV this cycle (risk-envelope Task 19),
+            handed to the CSP screen so it trims to the room the gate will test.
     """
     loop = asyncio.get_running_loop()
     errors: list[str] = []
@@ -317,6 +321,7 @@ async def scan_symbol(
             fund_stats,
             positions=positions,
             sizing=sizing,
+            envelope=envelope,
         )
         apply_sentiment(csp_screen, sentiment_detail)
         outcome.csp_passed.extend(csp_screen.passed)

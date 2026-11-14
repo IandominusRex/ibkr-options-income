@@ -115,7 +115,7 @@ def _size_line(c: TradeCandidate) -> str | None:
     if note is None:
         return None
     trimmed = note.pre_regime_contracts > c.contracts
-    if not trimmed and not note.floor_lot and not note.vrp_waived:
+    if not trimmed and not note.floor_lot and not note.vrp_waived and not note.envelope_binding:
         return None
     triggers = note.scale_in.triggers if note.scale_in is not None else []
     if note.ceiling_kind == "leveraged_ceiling" and note.leverage is not None:
@@ -135,6 +135,11 @@ def _size_line(c: TradeCandidate) -> str | None:
     if note.vrp_waived:
         waived = "bottoming-signal lot: fair-value floor waived"
         why = f"{why}; {waived}" if why else waived
+    if note.envelope_binding:
+        measure = {"shock_budget": "S10", "gross_budget": "U_ew", "t20_budget": "T20"}
+        env = f"risk envelope: {measure.get(note.envelope_binding, note.envelope_binding)}"
+        why = f"{why}; {env}" if why else env
+        trimmed = trimmed or (note.envelope_from or 0) > c.contracts
     size = (
         f"Size {c.contracts} of {note.pre_regime_contracts}" if trimmed else f"Size {c.contracts}"
     )

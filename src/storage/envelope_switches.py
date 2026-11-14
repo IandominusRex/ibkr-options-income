@@ -122,6 +122,28 @@ def get_switch(name: str) -> str:
     return resolve_switch(name, switch_record(name), live=live)
 
 
+def enforce_mode() -> str:
+    """``envelope_enforce`` as a gate must read it (risk-envelope Task 19, Review Focus 3): like
+    ``get_switch``, except that a settings table that cannot be read reads ``on`` in paper, so an
+    unreadable state fails closed (``get_switch`` would read the default, ``record``, and admit).
+    In live it is the default, as every switch."""
+    default, _allowed = _check("envelope_enforce")
+    try:
+        if get_config().is_live:
+            return default
+        from src.storage.system_settings import get_setting_strict
+
+        raw = get_setting_strict(_key("envelope_enforce"))
+    except Exception:
+        log.warning("envelope_enforce unreadable: the envelope fails closed (on)", exc_info=True)
+        return "on"
+    record = parse_record(raw)
+    if raw and record is None:
+        log.warning("envelope_enforce record unparseable: the envelope fails closed (on)")
+        return "on"
+    return resolve_switch("envelope_enforce", record, live=False)
+
+
 def set_switch(name: str, value: str, *, source: str, report: str | None = None) -> None:
     """Store a switch. Raises ``ValueError`` on an unknown name or a value outside its set."""
     _check(name, value)

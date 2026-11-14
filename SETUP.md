@@ -2242,8 +2242,20 @@ or by hand): its start is that session's live S10 rounded up to a whole percent 
 0.01, and the limits step down weekly to 15% and 1.25 over 13 weeks. A missing live IV, or an
 unreadable glide record while `on`, reads as unmeasured and fails closed. If T20 ever exceeds S10 by
 more than 3 points on a live measurement, switch `t20_limit` turns on once (paper) with a Telegram
-notice. The envelope does not gate anything yet: Tasks 18-20 wire it into the generator and the Rules
-Engine.
+notice.
+
+**What it gates once `on` (Tasks 18-19).** Every new cash-secured put is tested three times against the
+same room: the put generator trims its size to the most contracts that keep S10_gross under L(t) and
+U_ew under its limit (the card says "risk envelope: S10" or "U_ew"; no lot fits: the strike is
+rejected `shock_budget` / `gross_budget`), the Rules Engine refuses one still above them at scan time and
+again in the order poll (the poll measures the book on live IV itself), and the executor re-prices the
+put's own line at its fresh quote's IV just before it sends. Covered calls, rolls and closes are never
+tested. A missing live IV, a failed measurement or an unreadable switch refuses every new put
+`envelope_unmeasured`. While the switch reads `record` (the shipped value) nothing is refused: each place
+writes what it would have done to `sizing_actions`, kind `envelope_record` (keys ending `:generator`,
+`:scan`, `:ticker_scan`, `:send_gate`, `:send`), which `python -m scripts.sizing_report` lists with the
+regime's rows. The wheel no longer reads `portfolio.max_gross_notional_pct` (U_ew replaced it; the value
+book still does).
 
 **Where you see it (Task 14).** The EOD report ends with a **Risk envelope** block: S10 gross and net beside
 L(t), S10 at +10 vol points, S20, G10, P20, T20 and S-SMH (gross / net), U_ew beside its limit, *cash after

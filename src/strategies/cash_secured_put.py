@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 
 from src.analytics.fair_value import compute_ideal_zone, zone_for_contract
 from src.analytics.liquidity import (
@@ -12,6 +13,7 @@ from src.analytics.liquidity import (
 )
 from src.common.books import value_exposure
 from src.common.config import get_config
+from src.common.envelope_types import EnvelopeRoom, ShockInputs
 from src.common.schemas import (
     AccountSnapshot,
     FundamentalStats,
@@ -29,6 +31,7 @@ from src.common.schemas import (
 )
 from src.common.universe import effective_universe
 from src.engine.capital import Budgets, max_contracts, resolve_caps, scale_caps, seed_budgets
+from src.engine.envelope import candidate_line, max_contracts_under
 from src.engine.regime_limits import (
     active,
     bottoming_guard,
@@ -94,6 +97,7 @@ def generate_csp_candidates(
         tech_stats,
         fund_stats,
         sizing=None,  # callers that want the regime go through screen_csp_candidates
+        envelope=None,  # ... and the risk envelope
     ).passed
 
 
@@ -107,6 +111,7 @@ def screen_csp_candidates(
     *,
     positions: list[PositionSnapshot] | None = None,
     sizing: SizingContext | None = None,
+    envelope: tuple[EnvelopeRoom, ShockInputs] | None = None,
 ) -> ScreenResult:
     """Screen *symbol*'s put chain, returning both the passing and the rejected contracts.
 
@@ -124,6 +129,14 @@ def screen_csp_candidates(
     carries a ``SizingNote`` saying what changed. A name that fits the unscaled budgets but not the
     scaled ones takes a guaranteed-floor lot while the floor is open, else is rejected with
     ``regime_budget``. ``None`` is the unchanged, regime-free sizer.
+
+    *envelope* is the risk envelope measured on live IV this cycle (risk-envelope Task 19, P3).
+    A contract that passes every other check is trimmed to the largest count the envelope admits
+    (``envelope.max_contracts_under``, the function the gate's ``admits`` agrees with); a lower
+    count is recorded on the ``SizingNote`` (``envelope_from``, ``envelope_binding``) and zero is
+    rejected with the binding reason (``shock_budget``, ``gross_budget``, ``t20_budget`` or
+    ``envelope_unmeasured``). In ``record`` mode the size is unchanged and the would-be trim is
+    written to ``sizing_actions`` (kind ``envelope_record``); ``off`` changes nothing.
     """
     cfg = get_config()
     result = ScreenResult()
@@ -370,6 +383,11 @@ def screen_csp_candidates(
             sizing=note,
         )
 
+        if envelope is not None and not reasons:
+            candidate, refused = _envelope_trim(candidate, envelope)
+            if refused is not None:
+                reasons.append(refused)
+
         if reasons:
             rejected.append((candidate, reasons))
         else:
@@ -398,3 +416,46 @@ def screen_csp_candidates(
     result.passed.sort(key=lambda c: c.roc_pct, reverse=True)
     result.rejected = rank_rejects(rejected, delta_mid=(delta_min + delta_max) / 2)
     return result
+
+
+def _envelope_trim(
+    cand: TradeCandidate, envelope: tuple[EnvelopeRoom, ShockInputs]
+) -> tuple[TradeCandidate, str | None]:
+    """P3: *cand* trimmed to the most contracts the envelope admits, and the reason to reject it
+    with when not one lot fits (``on`` only). ``record`` leaves the size and records the trim."""
+    room, inputs = envelope
+    if room.enforce == "off" or cand.contracts < 1:
+        return cand, None
+    one = replace(candidate_line(cand), qty=1.0)
+    n, binding = max_contracts_under(room, inputs, one, cand.contracts)
+    if n >= cand.contracts:
+        return cand, None
+    if room.enforce != "on":
+        from src.regime.actions import record_action
+
+        record_action(
+            cand=cand,
+            kind="envelope_record",
+            deterministic=cand.contracts,
+            sent=n,
+            reason=(
+                f"generator would trim {cand.contracts} -> {n} ({binding}): S10 "
+                f"{room.s10_gross:.1f}% vs L(t) {room.s10_limit:.1f}%, U_ew {room.uew:.2f} vs "
+                f"{room.uew_limit:.2f}"
+            ),
+            key=f"{cand.candidate_id}:generator",
+        )
+        return cand, None
+    if n < 1:
+        return cand, binding
+    note = cand.sizing
+    if note is not None:
+        note = note.model_copy(
+            update={"envelope_from": cand.contracts, "envelope_binding": binding}
+        )
+    return (
+        cand.model_copy(
+            update={"contracts": n, "collateral": cand.strike * 100.0 * n, "sizing": note}
+        ),
+        None,
+    )

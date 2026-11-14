@@ -44,7 +44,7 @@ from src.storage.envelope_state import (
     start_glide,
     start_levels,
 )
-from src.storage.envelope_switches import get_switch, set_switch, switch_record
+from src.storage.envelope_switches import enforce_mode, get_switch, set_switch, switch_record
 
 log = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ def room(
 ) -> EnvelopeRoom:
     """The book against today's limits. *may_start* False never writes the glide record (the
     stored-IV display snapshot must not start the glide; only the live measurement may)."""
-    enforce = get_switch("envelope_enforce")
+    enforce = enforce_mode()
     res = result if result is not None else measure(inputs)
     cfg = get_envelope_cfg()
     reasons = [f"unmeasured:{s}" for s in res.unmeasured]
@@ -128,12 +128,30 @@ def max_contracts_under(
     room: EnvelopeRoom, inputs: ShockInputs, line_for_one: BookLine, hard_max: int
 ) -> tuple[int, str]:
     """P3: the largest n <= *hard_max* for which n x *line_for_one* is admitted, and the reason
-    that stops n + 1 (``""`` when *hard_max* fits)."""
-    for n in range(1, max(0, hard_max) + 1):
-        reasons = admits(room, inputs, [replace(line_for_one, qty=line_for_one.qty * n)])
-        if reasons:
-            return n - 1, reasons[0]
-    return max(0, hard_max), ""
+    that stops n + 1 (``""`` when *hard_max* fits).
+
+    A short line's loss and U_ew grow with its size, so admission is monotone in n and a binary
+    search finds the same n as counting up, in about log2(hard_max) measurements (the generator
+    runs this for every viable strike of every scan, Task 19)."""
+    top = max(0, hard_max)
+    if top == 0:
+        return 0, ""
+
+    def refused(n: int) -> list[str]:
+        return admits(room, inputs, [replace(line_for_one, qty=line_for_one.qty * n)])
+
+    stop = refused(top)
+    if not stop:
+        return top, ""
+    ok, bad = 0, top  # ok is admitted (0 trivially), bad is refused with *stop*
+    while bad - ok > 1:
+        mid = (ok + bad) // 2
+        found = refused(mid)
+        if found:
+            bad, stop = mid, found
+        else:
+            ok = mid
+    return ok, stop[0]
 
 
 def candidate_line(

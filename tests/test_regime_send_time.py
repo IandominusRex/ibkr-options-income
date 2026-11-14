@@ -57,6 +57,10 @@ def _env(monkeypatch, tmp_path):
     monkeypatch.setattr("src.execution.approval.is_rth", lambda: True)
     monkeypatch.setattr("src.execution.approval.evaluate_breakers", lambda positions, nlv: None)
     monkeypatch.setattr("src.execution.approval.remaining_entry_allowance", lambda s: None)
+    # The send-time risk envelope (risk-envelope Task 19) is not what this file tests: no
+    # envelope, and the shipped `record` switch, leaves the gate and the sizing record as they
+    # were (tests/test_envelope_gate.py covers the envelope at send time).
+    monkeypatch.setattr("src.execution.approval._send_envelope", AsyncMock(return_value=None))
 
 
 def seed_regime(spy: MarketRegime = N, qqq: MarketRegime = N) -> None:
@@ -182,7 +186,7 @@ async def run_poll(monkeypatch, *, acct: AccountSnapshot | None = None, position
     """Run one order-poll pass; return the (order_id, candidate) pairs handed to the executor."""
     executed: list[tuple[int, object]] = []
 
-    async def fake_execute(ib, bot, chat_id, order_id, candidate, sizing=None):
+    async def fake_execute(ib, bot, chat_id, order_id, candidate, sizing=None, envelope=None):
         executed.append((order_id, candidate))
 
     monkeypatch.setattr("src.execution.approval.execute_candidate", fake_execute)
@@ -1347,3 +1351,97 @@ async def test_a_market_eased_or_ordinary_lot_after_a_signal_lot_is_not_refused(
     executed, _ = await run_poll(monkeypatch)
 
     assert sorted(c.candidate_id for _, c in executed) == ["mkt", "plain"]  # type: ignore[attr-defined]
+
+
+# --------------------------------------------------------------------------- #
+# the risk envelope at send time (risk-envelope Task 19)
+# --------------------------------------------------------------------------- #
+
+
+def _send_env(enforce: str, *, s10_limit: float):
+    from src.analytics.shock import measure
+    from src.common.envelope_types import BookLine, EnvelopeRoom, ShockInputs
+
+    names = {"BOOK", "NVDA", "WFC", "BAC"}
+    inputs = ShockInputs(
+        lines=(BookLine(symbol="BOOK", kind="stock", qty=4_000.0, spot=100.0),),
+        betas={s: 1.0 for s in names},
+        betas_smh={s: 1.0 for s in names},
+        leverage={},
+        governing={},
+        tech_linked=frozenset(),
+        semis=frozenset(),
+        nlv=500_000.0,
+    )
+    res = measure(inputs)
+    room = EnvelopeRoom(
+        s10_gross=res.s10,
+        s10_limit=s10_limit,
+        uew=res.uew,
+        uew_limit=9.0,
+        t20_gross=res.t20,
+        t20_limit=None,
+        enforce=enforce,
+        measured=True,
+    )
+    return room, inputs
+
+
+def _queue_env(cid: str, underlying: str) -> int:
+    _, order_id = queue(cid, underlying, 1, sizing=note(pre=1))
+    from src.storage.db import session_scope
+
+    with session_scope() as s:  # the card's own IV and spot, as the generator sets them
+        row = s.get(OrderRow, order_id)
+        assert row is not None
+        row.snapshot = {**row.snapshot, "quote_iv": 0.30, "underlying_price": 200.0}
+    return order_id
+
+
+async def test_the_order_poll_gates_puts_on_the_send_time_envelope(monkeypatch):
+    """The poll measures the envelope at send time and its batch gate refuses a put above L(t)
+    (`on`)."""
+    seed_regime(N, N)
+    env = _send_env("on", s10_limit=8.0)  # the book is at 8%: no put raising S10 passes
+    monkeypatch.setattr("src.execution.approval._send_envelope", AsyncMock(return_value=env))
+    order_id = _queue_env("env-1", "NVDA")
+    executed, _ = await run_poll(monkeypatch)
+    assert executed == []
+    row = order_row(order_id)
+    assert row.state == OrderState.CANCELLED and "shock_budget" in (row.detail or "")
+
+
+async def test_the_order_poll_hands_the_executor_the_book_with_earlier_puts(monkeypatch):
+    seed_regime(N, N)
+    env = _send_env("on", s10_limit=99.0)
+    monkeypatch.setattr("src.execution.approval._send_envelope", AsyncMock(return_value=env))
+    _queue_env("env-a", "NVDA")
+    _queue_env("env-b", "WFC")
+    seen: list[int] = []
+
+    async def fake_execute(ib, bot, chat_id, order_id, candidate, sizing=None, envelope=None):
+        assert envelope is not None
+        seen.append(len(envelope[1].lines))
+
+    monkeypatch.setattr("src.execution.approval.execute_candidate", fake_execute)
+    monkeypatch.setattr(
+        "src.execution.approval.get_account_snapshot_async", AsyncMock(return_value=account())
+    )
+    monkeypatch.setattr("src.execution.approval.get_positions", lambda ib: [])
+    from src.execution.approval import process_queued_orders
+
+    ib = MagicMock()
+    ib.managedAccounts.return_value = ["DU1"]
+    await process_queued_orders(ib, AsyncMock(), "1")
+    assert seen == [1, 2]  # the second put is re-tested with the first in the book
+
+
+async def test_record_mode_at_send_time_admits_and_records_in_the_poll_session(monkeypatch):
+    seed_regime(N, N)
+    env = _send_env("record", s10_limit=8.0)
+    monkeypatch.setattr("src.execution.approval._send_envelope", AsyncMock(return_value=env))
+    order_id = _queue_env("env-r", "NVDA")
+    executed, _ = await run_poll(monkeypatch)
+    assert [oid for oid, _ in executed] == [order_id]
+    (row,) = actions(kind="envelope_record")
+    assert row.record_key == "env-r:send_gate" and "shock_budget" in row.reason

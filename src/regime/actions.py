@@ -120,6 +120,40 @@ def record_action(
         log.warning("sizing action not recorded (%s %s)", kind, cand.candidate_id, exc_info=True)
 
 
+def record_envelope_verdicts(
+    candidates: list[TradeCandidate],
+    verdicts: list[Any],
+    *,
+    where: str,
+    session: Session | None = None,
+) -> int:
+    """Write each verdict's record-mode envelope reasons (``RiskVerdict.envelope_would``,
+    risk-envelope Task 19, P1) as a ``sizing_actions`` row of kind ``envelope_record`` keyed
+    ``<candidate id>:<where>`` (``scan``, ``ticker_scan`` or ``send``): one row per card, place
+    and ET day. ``sent_contracts`` is the count ``on`` would have sent (0) and the reason names
+    what else refused the card. Returns the rows written. Never raises."""
+    by_id = {c.candidate_id: c for c in candidates}
+    written = 0
+    for v in verdicts:
+        would = list(getattr(v, "envelope_would", []) or [])
+        cand = by_id.get(getattr(v, "candidate_id", ""))
+        if not would or cand is None:
+            continue
+        other = [r for r in getattr(v, "reasons", []) if r not in would]
+        also = f"; also refused: {', '.join(other)}" if other else ""
+        record_action(
+            cand=cand,
+            kind="envelope_record",
+            deterministic=cand.contracts,
+            sent=0,
+            reason=f"{where}: the envelope would refuse ({', '.join(would)}){also}",
+            key=f"{cand.candidate_id}:{where}",
+            session=session,
+        )
+        written += 1
+    return written
+
+
 def link_order(candidate_id: str, order_id: int, *, session: Session | None = None) -> None:
     """Attach *order_id* to the not-yet-linked action rows of *candidate_id*. Never raises."""
     try:

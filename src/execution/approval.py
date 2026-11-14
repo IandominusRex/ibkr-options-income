@@ -28,6 +28,7 @@ from src.common.config import (
     get_leveraged_sizing_cfg,
     get_regime_cfg,
 )
+from src.common.envelope_types import EnvelopeRoom, ShockInputs
 from src.common.market_hours import is_rth
 from src.common.schemas import (
     AccountSnapshot,
@@ -51,7 +52,7 @@ from src.engine.risk_engine import validate_candidates
 from src.execution.circuit_breakers import evaluate_breakers, remaining_entry_allowance
 from src.execution.executor import execute_candidate
 from src.ibkr.portfolio import get_account_snapshot_async, get_positions
-from src.regime.actions import link_order, record_action
+from src.regime.actions import link_order, record_action, record_envelope_verdicts
 from src.regime.context import build_sizing_context
 from src.regime.refresh import refresh_regime_cached
 from src.storage.db import session_scope
@@ -364,6 +365,59 @@ def _persist_gate_tags(
         )
 
 
+async def _send_envelope(
+    ib: IB, account: AccountSnapshot, positions: list[PositionSnapshot]
+) -> tuple[EnvelopeRoom, ShockInputs] | None:
+    """The risk envelope at send time (risk-envelope Task 19; H7, Q4): the fresh positions with
+    every option repriced at its **live** IBKR model IV (``live_option_ivs`` on this connection,
+    at most ten lines at a time), the value book's holdings, the glide's limits for today.
+
+    None when the ``envelope_enforce`` switch is off, or when the measurement fails (logged): the
+    gate then refuses every opening put while the switch is on (fail closed). A missing live IV
+    is not a failure here: it leaves the room unmeasured and the gate refuses
+    ``envelope_unmeasured``. Reads the database and IBKR before the write session opens.
+    """
+    from src.storage.envelope_switches import enforce_mode
+
+    if enforce_mode() == "off":
+        return None
+    try:
+        from src.analytics.shock_inputs import build_inputs
+        from src.common.books import value_exposure
+        from src.common.market_hours import today_et
+        from src.engine.envelope import room as envelope_room
+        from src.ibkr.live_iv import live_option_ivs
+
+        exposure = value_exposure()
+        value_by_name = dict(exposure.by_name) if exposure.active and exposure.readable else {}
+        live = await live_option_ivs(ib, positions)
+        inputs = await asyncio.to_thread(
+            build_inputs,
+            positions,
+            nlv=account.net_liquidation,
+            value_by_name=value_by_name,
+            ivs=live,
+        )
+        return envelope_room(inputs, today=today_et()), inputs
+    except Exception:
+        log.exception("send-time risk envelope could not be measured; puts fail closed when on")
+        return None
+
+
+def _queued_csp_count() -> int:
+    """QUEUED orders whose frozen snapshot is a cash-secured put."""
+    with session_scope() as s:
+        return int(
+            s.query(OrderRow)
+            .filter(
+                OrderRow.state == OrderState.QUEUED,
+                func.json_extract(OrderRow.snapshot, "$.strategy")
+                == Strategy.CASH_SECURED_PUT.value,
+            )
+            .count()
+        )
+
+
 def _is_roll_order() -> ColumnElement[bool]:
     """SQL predicate: the order's frozen snapshot is a roll candidate."""
     return func.json_extract(OrderRow.snapshot, "$.strategy") == Strategy.ROLL.value
@@ -470,6 +524,13 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
             _sizing_hold_text("; ".join(problems) or _one_line(exc), config=bool(problems)),
             now.astimezone(_ET).date().isoformat(),
         )
+
+    # The risk envelope at send time (Task 19): built only when a cash-secured put is queued,
+    # before the write session opens (it reads live IV on this connection). The batch gate below
+    # tests every queued put against it; the executor re-tests each at its fresh quote's IV.
+    send_envelope: tuple[EnvelopeRoom, ShockInputs] | None = None
+    if not rolls_only and _queued_csp_count():
+        send_envelope = await _send_envelope(ib, account_snap, positions)
 
     # ------------------------------------------------------------------ #
     # Phase 1: synchronous classification                                  #
@@ -604,7 +665,15 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
         # instead — it is a browse/compare view, and this gate is its backstop.
         ordered = sorted(pending, key=lambda pc: pc[1].blended_score, reverse=True)
         verdicts = validate_candidates(
-            [c for _, c in ordered], account_snap, positions, sizing=sizing
+            [c for _, c in ordered],
+            account_snap,
+            positions,
+            sizing=sizing,
+            envelope=send_envelope,
+        )
+        # record mode (P1): the would-block reasons join this write session, never a second one
+        record_envelope_verdicts(
+            [c for _, c in ordered], verdicts, where="send_gate", session=session
         )
         verdict_map = {v.candidate_id: v for v in verdicts}
 
@@ -759,9 +828,24 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
                 "Failed to send thread-58 failure notification for order_id=%s", fail_order_id
             )
 
+    from src.engine.envelope import candidate_line, with_added
+
+    env = send_envelope
     for order_id, candidate in to_execute:
+        is_csp = candidate.strategy == Strategy.CASH_SECURED_PUT
         try:
-            await execute_candidate(ib, bot, chat_id, order_id, candidate, sizing=sizing)
+            await execute_candidate(
+                ib,
+                bot,
+                chat_id,
+                order_id,
+                candidate,
+                sizing=sizing,
+                envelope=env if is_csp else None,
+            )
+            if is_csp and env is not None:
+                # the next put of this pass is re-tested against a book that holds this one
+                env = with_added(env[0], env[1], [candidate_line(candidate)])
         except Exception:
             log.exception("Execution error for order_id=%s", order_id)
             with session_scope() as session:

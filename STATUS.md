@@ -367,6 +367,17 @@ until the switch is `on` (paper only; live always reads `record`).
   the per-ticker collateral tally (and so the large-position slot) and the CSP budget, in the generator, the
   gate and the send-time regime fit; cash and risk units stay at face. A held leveraged position above a third
   of the per-ticker cap now occupies a large slot.
+- **S10_gross <= L(t) at the generator, the gate and send time (Task 19, P3, H7, Q4).** The CSP generator
+  trims to the room (`envelope.max_contracts_under`), the scan's and the order poll's Rules Engine refuse a put
+  still above it, and the executor re-prices the put's own line at the fresh quote's IV before `placeOrder`.
+  The order poll measures the book on live IV itself. Covered calls, rolls and closes are never tested; a long
+  option never makes room (gross). Missing live IV, a failed measurement or an unreadable switch fails closed
+  (`envelope_unmeasured`). In `record` each of the five places writes an `envelope_record` row.
+- **Known limitations (Task 19):** a candidate's own line is priced at the IV its chain quote carried, which on a
+  delayed-data paper account can be Yahoo's (the book's lines are always live IBKR IV); the generator and the
+  gate run on the cycle's one measurement, so a strike sized early in a long scan meets a book that moved
+  minutes later only at the order poll and the executor. With no envelope at all in `record` (a failed
+  measurement), nothing is recorded (an unmeasured room is).
 
 ## Built (2026-11-14 — risk envelope Section B: the spreads book's fixes)
 

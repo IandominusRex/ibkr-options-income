@@ -243,8 +243,9 @@ def validate_candidates(
     budgets is tested with ``envelope.admits``: ``shock_budget`` (S10_gross after the lot above
     L(t)), ``gross_budget`` (U_ew above its limit), ``t20_budget`` (when the ``t20_limit`` switch is
     on) or ``envelope_unmeasured``. Covered calls and rolls are never tested. The room's
-    ``enforce`` decides: ``on`` appends the reasons, ``record`` writes them to ``sizing_actions``
-    (kind ``envelope_record``) and admits, ``off`` does nothing. With no envelope and the
+    ``enforce`` decides: ``on`` appends the reasons, ``record`` returns them on the verdict's
+    ``envelope_would`` (the caller writes them to ``sizing_actions``, kind ``envelope_record``, in
+    its own transaction: the gate writes nothing) and admits, ``off`` does nothing. With no envelope and the
     ``envelope_enforce`` switch ``on``, every opening CSP is refused ``envelope_unmeasured`` (fail
     closed). A lot accepted in the batch joins the book, so later lots are measured with it.
 
@@ -567,7 +568,7 @@ def validate_candidates(
             ):
                 hard_reasons.append("combined_name_cap")
         if is_csp:
-            hard_reasons.extend(env_check.reasons(cand, other=reasons))
+            hard_reasons.extend(env_check.reasons(cand))
 
         took_floor = False
         if regime_active:
@@ -672,6 +673,7 @@ def validate_candidates(
             candidate_id=cand.candidate_id,
             verdict=Verdict.PASS if not candidate_reasons[cand.candidate_id] else Verdict.REJECT,
             reasons=candidate_reasons[cand.candidate_id],
+            envelope_would=env_check.would.get(cand.candidate_id, []),
         )
         for cand in candidates
     ]
@@ -680,9 +682,9 @@ def validate_candidates(
 class _EnvelopeCheck:
     """The risk envelope inside one ``validate_candidates`` batch (risk-envelope Tasks 18-19).
 
-    Holds the room and the book, applies ``enforce`` (``on`` refuses, ``record`` writes the
-    would-block reasons to ``sizing_actions`` kind ``envelope_record`` and admits, ``off`` does
-    nothing) and adds each accepted lot to the book. With no envelope the ``envelope_enforce``
+    Holds the room and the book, applies ``enforce`` (``on`` refuses, ``record`` keeps the
+    would-block reasons in ``would`` for the verdicts and admits, ``off`` does nothing) and adds
+    each accepted lot to the book. With no envelope the ``envelope_enforce``
     switch is read once, and only when an opening CSP reaches the shared budgets: ``on`` refuses
     every such CSP ``envelope_unmeasured`` (fail closed); ``record`` and ``off`` have nothing to
     record or test.
@@ -698,6 +700,7 @@ class _EnvelopeCheck:
         self.inputs: ShockInputs | None = None
         self.mode = "off"
         self._found: dict[str, list[str]] = {}
+        self.would: dict[str, list[str]] = {}  # record mode: what ``on`` would have refused
         has_csp = any(
             c.strategy == Strategy.CASH_SECURED_PUT and c.candidate_id in representative_ids
             for c in candidates
@@ -706,13 +709,12 @@ class _EnvelopeCheck:
             self.room, self.inputs = envelope
             self.mode = self.room.enforce
         elif has_csp:
-            from src.storage.envelope_switches import get_switch
+            from src.storage.envelope_switches import enforce_mode
 
-            self.mode = get_switch("envelope_enforce")
+            self.mode = enforce_mode()
 
-    def reasons(self, cand: TradeCandidate, *, other: list[str]) -> list[str]:
-        """The envelope reasons to append for *cand* (``on`` only); *other* is what else refused
-        it so far, for the record."""
+    def reasons(self, cand: TradeCandidate) -> list[str]:
+        """The envelope reasons to append for *cand* (``on`` only)."""
         from src.engine.envelope import UNMEASURED, admits, candidate_line
 
         if self.mode == "off":
@@ -724,20 +726,7 @@ class _EnvelopeCheck:
         if self.mode == "on":
             return found
         if found:
-            from src.regime.actions import record_action
-
-            also = f"; also refused: {', '.join(other)}" if other else ""
-            record_action(
-                cand=cand,
-                kind="envelope_record",
-                deterministic=cand.contracts,
-                sent=cand.contracts,
-                reason=(
-                    f"would refuse ({', '.join(found)}): S10 {self.room.s10_gross:.1f}% vs "
-                    f"L(t) {self.room.s10_limit:.1f}%, U_ew {self.room.uew:.2f} vs "
-                    f"{self.room.uew_limit:.2f}{also}"
-                ),
-            )
+            self.would[cand.candidate_id] = found
         return []
 
     def accept(self, cand: TradeCandidate) -> None:
