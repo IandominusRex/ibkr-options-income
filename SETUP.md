@@ -2319,6 +2319,19 @@ for the name's own budget and the total CSP allocation. It applies only while th
 itself the first session T20 exceeds S10 by 3 points; once on, a put that would raise T20_gross above L(t) is refused
 `t20_budget`.
 
+### The tech-linked cap and the stacking rule (Task 25, 2026-11-15)
+
+Two more switches, both `off` until a replay passes (or you set them: `python -m scripts.envelope switch tech_cap on`,
+`... switch stacking_rule on`; always off in live). **`tech_cap`:** the book's tech-linked exposure (stock plus short-put
+strike x 100 over the `regime.tech_linked` names, TQQQ and SOXL counted at 3x, the value book's stock included) may not
+pass `envelope.tech_cap_pct` (60%) of net liquidation for a new tech-linked put: the scan trims the put to the room or
+refuses it (`tech_linked_cap`). **`stacking_rule`:** a new put is cut to half size (rounded down; a one-lot put is refused,
+`stacking_halve`) when the name already has a short put expiring within 7 days of it, and blocked (`stacking_block`) when
+the name has an in-the-money short put or 2 puts were already sent today. The `envelope:` block of
+`config/examples/risk_limits.yaml` carries `tech_cap_pct` and `stacking:`; your private copy needs them added by hand (the
+code defaults match). While a switch is off, `python -m scripts.sizing_report` shows rows of kind `tech_cap_record` and
+`stacking_record`: what it would have done.
+
 ### Quote capture (Section E, 2026-11-14)
 
 **Hedge-menu quotes (Task 16).** From the first restart on this code, the trading service quotes the index

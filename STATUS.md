@@ -377,6 +377,15 @@ unmerged. Every limit is a deterministic reason in the Rules Engine or the sizer
   while off; off in live). It eases both the name's budget and the total CSP allocation. The research report that
   turns it on (Task 29's replay) is not built yet. The T20 limit was already wired in Task 13; Task 24 adds its
   end-to-end tests (`t20_limit` off: T20 is displayed only; on: `t20_budget` at the generator and the gate).
+- **The tech-linked cap and the stacking rule (Task 25, E15).** `tech_cap` (ships off, off in live): leverage-weighted
+  tech-linked exposure (stock + short-put strike x 100, TQQQ and SOXL at 3x, value-book stock added) may not exceed
+  `envelope.tech_cap_pct` (60%) of NLV for a new tech-linked put (`tech_linked_cap`; the generator trims, the gate
+  refuses). `stacking_rule` (ships off, off in live): halve a new put (rounded down; one lot is refused) when the name
+  has an open short put within 7 days of the new expiry (`stacking_halve`); block it (`stacking_block`) on an ITM
+  short put or 2 same-day sends. Off, each records what it would have done (`tech_cap_record`, `stacking_record`).
+  The replay that turns each on (Task 27, E15: it must block or halve at least 6 of the 10 `claude_cut` rows and block
+  at most 25% of profitable uncut opens) is not built yet. The halving counts short puts only (a covered call is not
+  stacking) and the gate's halved size is half the card's capital-fitted base, so a card the generator halved always passes.
 
 ## Built (2026-11-15 — risk envelope Section F: the envelope gate)
 

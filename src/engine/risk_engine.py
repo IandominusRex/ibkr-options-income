@@ -15,7 +15,7 @@ the cumulative budgets are consumed greedily in that order.
 from __future__ import annotations
 
 from src.common.books import ValueExposure, is_spreads_underlying, value_exposure
-from src.common.config import RollCfg, get_config
+from src.common.config import RollCfg, get_config, get_envelope_cfg
 from src.common.envelope_types import EnvelopeRoom, ShockInputs
 from src.common.market_hours import today_et
 from src.common.schemas import (
@@ -65,6 +65,10 @@ from src.engine.regime_limits import (
     sleeve_path,
     sleeve_room_usd,
     sleeve_window_reason,
+    stacking_for,
+    switch_on,
+    tech_cap_reason,
+    tech_exposure,
     vrp_waiver,
 )
 from src.storage.slow_breaker import csp_budget_fraction as slow_breaker_fraction
@@ -307,6 +311,9 @@ def validate_candidates(
     # --- Pass 1: per-candidate gates. No shared budget is read or written here, so these
     # can run in any order and never depend on what else is in *candidates*.
     candidate_reasons: dict[str, list[str]] = {}
+    # What the tech-linked cap and the stacking rule would refuse while their switch is off (Task 25):
+    # never a reason, returned on the verdict and written to ``sizing_actions`` by the caller.
+    limits_would: dict[str, list[str]] = {}
     vrp_waived_ids: set[str] = set()  # name-level signal lots the fair-value floor would refuse
     for cand in candidates:
         reasons: list[str] = []
@@ -466,6 +473,30 @@ def validate_candidates(
             if recent is not None:
                 reasons.append(recent)
 
+        # --- The stacking rule (Task 25): a new put on a name with an in-the-money short or too many
+        # sends today is blocked; one near an open short's expiry is halved. The halved size is
+        # half the per-trade ceiling's base (the capital-fitted size on the card, up to the regime
+        # ceiling), which the sizer's halving of its own smaller size can never exceed.
+        if sizing is not None and cand.strategy == Strategy.CASH_SECURED_PUT:
+            spot = cand.underlying_price or (cand.ideal.spot if cand.ideal is not None else None)
+            stack = stacking_for(
+                sizing, cand.underlying, expiry=cand.expiry, spot=spot, positions=positions
+            )
+            found_stack: str | None = None
+            if stack == "block":
+                found_stack = "stacking_block"
+            elif stack == "halve":
+                hard = int(limits.get("max_contracts", 10)) if limits else 10
+                pre = cand.sizing.pre_regime_contracts if cand.sizing is not None else hard
+                base = min(pre, per_trade_cap(sizing, cand.underlying, hard, cand.sizing))
+                if cand.contracts > base // 2:
+                    found_stack = "stacking_halve"
+            if found_stack is not None:
+                if switch_on(sizing, "stacking_rule"):
+                    reasons.append(found_stack)
+                else:
+                    limits_would.setdefault(cand.candidate_id, []).append(found_stack)
+
         # --- Covered-call breakout (spec section 17): after an upside breakout on a held name
         # a call must sit at or above the strike floor and under the delta cap. A call is
         # pushed out (when nothing on the chain clears both, none is sold on the name that
@@ -607,6 +638,23 @@ def validate_candidates(
                 hard_reasons.append("combined_name_cap")
         if is_csp:
             hard_reasons.extend(env_check.reasons(cand))
+        # The tech-linked cap (Task 25): leverage-weighted tech-linked exposure, after this put,
+        # against ``envelope.tech_cap_pct`` of net liquidation. The tally already carries the
+        # positions, the value book's stock and every lot accepted earlier in this batch.
+        if is_csp and sizing is not None:
+            capped = tech_cap_reason(
+                sizing,
+                cand.underlying,
+                tech_exposure=tech_exposure(sizing, budgets.ticker_collateral),
+                new_weighted=cand.collateral * lev,
+                net_liq=net_liq,
+                cap_pct=get_envelope_cfg().tech_cap_pct,
+            )
+            if capped is not None:
+                if switch_on(sizing, "tech_cap"):
+                    hard_reasons.append(capped)
+                else:
+                    limits_would.setdefault(cand.candidate_id, []).append(capped)
         # The leveraged sleeve's pace and cap (Task 23): the LES tier's room, leverage-weighted with
         # everything else the sleeve holds and the lots accepted earlier in this batch, in whole lots.
         sleeve_p = sleeve_path(sizing, cand.underlying, cand.sizing) if is_csp else None
@@ -734,6 +782,7 @@ def validate_candidates(
             verdict=Verdict.PASS if not candidate_reasons[cand.candidate_id] else Verdict.REJECT,
             reasons=candidate_reasons[cand.candidate_id],
             envelope_would=env_check.would.get(cand.candidate_id, []),
+            limits_would=limits_would.get(cand.candidate_id, []),
         )
         for cand in candidates
     ]

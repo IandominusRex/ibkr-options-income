@@ -2775,6 +2775,18 @@ class SlowBreakerCfg(_KeyedCfg):
     csp_budget_fraction: float = Field(default=0.5, gt=0, le=1)
 
 
+class StackingCfg(_KeyedCfg):
+    """The stacking rule's thresholds (risk-envelope Task 25; spec §3.4.4, ruling E15): a new
+    cash-secured put is halved when the name has an open short put whose expiry is within
+    ``overlap_days`` of the new one, and blocked when the name has an in-the-money short put or
+    ``same_day_fills`` or more cash-secured puts sent today."""
+
+    KEYS: ClassVar[tuple[str, ...]] = ("overlap_days", "same_day_fills")
+
+    overlap_days: int = Field(default=7, ge=0)
+    same_day_fills: int = Field(default=2, ge=1)
+
+
 class RiskEnvelopeCfg(_KeyedCfg):
     """The risk envelope (risk-envelope plan Tasks 12-13; spec §3.4, rulings E4, E5, P5, H7, H8).
 
@@ -2786,7 +2798,7 @@ class RiskEnvelopeCfg(_KeyedCfg):
     until SOXX has its own history. Live IV is read in chunks of ``live_iv_batch`` lines (at most
     10), each waited on for ``live_iv_timeout_seconds``. ``t20_trigger_points`` is H8's trigger:
     the first measured session on which T20_gross - S10_gross exceeds it turns the ``t20_limit``
-    switch on (paper), once (Task 13). ``slow_breaker`` is Task 22's. Lives in
+    switch on (paper), once (Task 13). ``slow_breaker`` is Task 22's; ``tech_cap_pct`` and ``stacking`` are Task 25's. Lives in
     ``config/risk_limits.yaml -> envelope:``; a missing block means these defaults.
     """
 
@@ -2804,6 +2816,8 @@ class RiskEnvelopeCfg(_KeyedCfg):
         "live_iv_timeout_seconds",
         "t20_trigger_points",
         "slow_breaker",
+        "tech_cap_pct",
+        "stacking",
     )
 
     s10_target_pct: float = Field(default=15.0, gt=0, lt=100)
@@ -2821,6 +2835,12 @@ class RiskEnvelopeCfg(_KeyedCfg):
     live_iv_timeout_seconds: float = Field(default=8.0, gt=0)
     t20_trigger_points: float = Field(default=3.0, gt=0)
     slow_breaker: SlowBreakerCfg = Field(default_factory=SlowBreakerCfg)
+    # E15: leverage-weighted tech-linked exposure (stock market value + short-put strike x 100) may not
+    # exceed this % of net liquidation for a new tech-linked put (behind the ``tech_cap`` switch).
+    tech_cap_pct: float = Field(default=60.0, gt=0)
+    stacking: StackingCfg = Field(
+        default_factory=StackingCfg
+    )  # behind the ``stacking_rule`` switch
 
     @field_validator("semis_names")
     @classmethod

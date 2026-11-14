@@ -61,6 +61,7 @@ by the breakout rule: callers apply the other functions to cash-secured puts onl
 from __future__ import annotations
 
 import math
+from datetime import date
 from typing import Literal
 
 from src.common.books import les_exposure, value_exposure
@@ -68,6 +69,7 @@ from src.common.config import (
     ClaudeCutCfg,
     get_cc_timing_cfg,
     get_config,
+    get_envelope_cfg,
     get_leveraged_sizing_cfg,
     get_regime_cfg,
 )
@@ -406,6 +408,127 @@ def sleeve_contracts(room_usd: float, strike: float, leverage: int) -> int:
     """Whole lots of ``strike x 100 x leverage`` that fit *room_usd*: rounded down, never up to one."""
     unit = strike * 100.0 * max(1, leverage)
     return 0 if unit <= 0 else max(0, _floor(room_usd / unit))
+
+
+# --------------------------------------------------------------------------- #
+# The tech-linked cap and the stacking rule (risk-envelope Task 25; spec §3.4.4, ruling E15)
+# --------------------------------------------------------------------------- #
+
+Stacking = Literal["none", "halve", "block"]
+REASON_TECH_CAP = "tech_linked_cap"
+REASON_STACKING_BLOCK = "stacking_block"
+REASON_STACKING_HALVE = "stacking_halve"
+
+
+def tech_exposure(ctx: SizingContext | None, ticker_collateral: dict[str, float]) -> float:
+    """The book's tech-linked exposure from a per-name collateral tally (``Budgets.ticker_collateral``:
+    stock market value plus short-put strike x 100, a leveraged ETF counted at its leverage, the value
+    book's stock added): the sum over ``regime.tech_linked``."""
+    if ctx is None:
+        return 0.0
+    tech = {t.upper() for t in ctx.tech_linked}
+    return sum(v for name, v in ticker_collateral.items() if name.upper() in tech)
+
+
+def _tech_cap_applies(ctx: SizingContext | None, symbol: str, net_liq: float) -> bool:
+    return (
+        ctx is not None and net_liq > 0 and symbol.upper() in {t.upper() for t in ctx.tech_linked}
+    )
+
+
+def tech_cap_reason(
+    ctx: SizingContext | None,
+    symbol: str,
+    *,
+    tech_exposure: float,
+    new_weighted: float,
+    net_liq: float,
+    cap_pct: float,
+) -> str | None:
+    """``"tech_linked_cap"`` when a new put on tech-linked *symbol* would take the tech-linked
+    exposure (*tech_exposure*, plus *new_weighted*, the put's collateral at its leverage) over
+    *cap_pct* of net liquidation. Only a tech-linked name is held to it (a put always adds)."""
+    if not _tech_cap_applies(ctx, symbol, net_liq):
+        return None
+    over = tech_exposure + new_weighted > cap_pct / 100.0 * net_liq + 1e-6
+    return REASON_TECH_CAP if over else None
+
+
+def tech_cap_contracts(
+    ctx: SizingContext | None,
+    symbol: str,
+    *,
+    tech_exposure: float,
+    unit_weighted: float,
+    net_liq: float,
+    cap_pct: float,
+) -> int | None:
+    """The most whole lots (each *unit_weighted* dollars at leverage) that keep the tech-linked
+    exposure within the cap, or None when the cap does not apply to *symbol*. The sizer trims to it
+    so it agrees with `tech_cap_reason`."""
+    if not _tech_cap_applies(ctx, symbol, net_liq) or unit_weighted <= 0:
+        return None
+    room = max(0.0, cap_pct / 100.0 * net_liq - tech_exposure)
+    return max(0, _floor(room / unit_weighted))
+
+
+def open_short_puts(positions: list[PositionSnapshot], symbol: str) -> list[tuple[float, date]]:
+    """``(strike, expiry)`` of every open short put on *symbol*."""
+    return [
+        (p.strike, p.expiry)
+        for p in positions
+        if p.sec_type == "OPT"
+        and p.right == OptionRight.PUT
+        and p.position < 0
+        and p.strike is not None
+        and p.expiry is not None
+        and (p.underlying or p.symbol).upper() == symbol.upper()
+    ]
+
+
+def stacking_action(
+    *,
+    expiry: date,
+    spot: float | None,
+    shorts: list[tuple[float, date]],
+    same_day_fills: int,
+    overlap_days: int,
+    fills_limit: int,
+) -> Stacking:
+    """What the stacking rule does to a new put expiring *expiry* on a name whose open short puts
+    are *shorts*: ``"block"`` when one of them is in the money (its strike above *spot*; an unknown
+    spot judges none) or *same_day_fills* has reached *fills_limit*; ``"halve"`` when one expires
+    within *overlap_days* of *expiry*; else ``"none"``. Pure."""
+    if same_day_fills >= fills_limit:
+        return "block"
+    if spot is not None and any(strike > spot for strike, _ in shorts):
+        return "block"
+    if any(abs((exp - expiry).days) <= overlap_days for _, exp in shorts):
+        return "halve"
+    return "none"
+
+
+def stacking_for(
+    ctx: SizingContext | None,
+    symbol: str,
+    *,
+    expiry: date,
+    spot: float | None,
+    positions: list[PositionSnapshot],
+) -> Stacking:
+    """`stacking_action` for *symbol* with the book's open shorts, today's sent puts on the name
+    (``ctx.csp_fills_by_name``) and the thresholds of ``envelope.stacking``."""
+    if ctx is None:
+        return "none"
+    cfg = get_envelope_cfg().stacking
+    return stacking_action(
+        expiry=expiry,
+        spot=spot,
+        shorts=open_short_puts(positions, symbol),
+        same_day_fills=ctx.csp_fills_by_name.get(symbol.upper(), 0),
+        overlap_days=cfg.overlap_days,
+        fills_limit=cfg.same_day_fills,
+    )
 
 
 def ceiling_kind(

@@ -12,7 +12,7 @@ from src.analytics.liquidity import (
     volume_gate_active,
 )
 from src.common.books import value_exposure
-from src.common.config import get_config
+from src.common.config import get_config, get_envelope_cfg
 from src.common.envelope_types import EnvelopeRoom, ShockInputs
 from src.common.schemas import (
     AccountSnapshot,
@@ -50,7 +50,10 @@ from src.engine.regime_limits import (
     sleeve_path,
     sleeve_room_usd,
     sleeve_window_reason,
+    stacking_for,
     switch_on,
+    tech_cap_contracts,
+    tech_exposure,
     vrp_waiver,
 )
 from src.storage.slow_breaker import csp_budget_fraction as slow_breaker_fraction
@@ -69,6 +72,9 @@ from src.strategies._evaluation import (
     REASON_ROC,
     REASON_SCALE_IN_ZONE,
     REASON_SLEEVE_CAP,
+    REASON_STACKING_BLOCK,
+    REASON_STACKING_HALVE,
+    REASON_TECH_CAP,
     REASON_YIELD,
     ScreenResult,
     display_premium,
@@ -204,6 +210,14 @@ def screen_csp_candidates(
     sleeve_room = sleeve_room_usd(sizing, symbol, account, positions or []) if sleeve else 0.0
     sleeve_pace = sleeve_pace_reason(sizing, symbol, positions or []) if sleeve else None
 
+    # The tech-linked cap and the stacking rule (Task 25), each behind its switch: on they trim or
+    # refuse, off they only record what they would have done. The cap reads the same per-name
+    # tally the gate does (leverage-weighted stock + short-put collateral, the value book added).
+    tech_on = switch_on(sizing, "tech_cap")
+    stack_on = switch_on(sizing, "stacking_rule")
+    tech_held = tech_exposure(sizing, budgets.ticker_collateral)
+    tech_pct = get_envelope_cfg().tech_cap_pct
+
     enforce_volume = volume_gate_active()  # N19: skip the volume gate before the morning cutoff
     rejected: list[tuple[TradeCandidate, list[str]]] = []
     # The ideal zone depends on (symbol, right, DTE) — not on the strike — so memoize per
@@ -305,15 +319,55 @@ def screen_csp_candidates(
                 sleeve_from, contracts = contracts, room_lots
             if sleeve_pace is not None:
                 reasons.append(sleeve_pace)
+        limit_from, limit_binding = sleeve_from, (REASON_SLEEVE_CAP if sleeve_from else None)
+        would_limits: list[tuple[str, str, int]] = []  # (sizing_actions kind, what, would-be lots)
+        if sizing is not None and contracts >= 1:
+            action = stacking_for(
+                sizing,
+                symbol,
+                expiry=quote.expiry,
+                spot=tech_stats.price,
+                positions=positions or [],
+            )
+            if action == "block":
+                if stack_on:
+                    reasons.append(REASON_STACKING_BLOCK)
+                else:
+                    would_limits.append(("stacking_record", "block", 0))
+            elif action == "halve":
+                half = contracts // 2
+                if not stack_on:
+                    would_limits.append(("stacking_record", "halve", half))
+                elif half < 1:
+                    reasons.append(REASON_STACKING_HALVE)
+                else:
+                    limit_from = limit_from or contracts
+                    limit_binding, contracts = REASON_STACKING_HALVE, half
+            tech_lots = tech_cap_contracts(
+                sizing,
+                symbol,
+                tech_exposure=tech_held,
+                unit_weighted=per_contract * leverage,
+                net_liq=account.net_liquidation,
+                cap_pct=tech_pct,
+            )
+            if tech_lots is not None and tech_lots < contracts:
+                if not tech_on:
+                    would_limits.append(("tech_cap_record", "trim", tech_lots))
+                elif tech_lots < 1:
+                    reasons.append(REASON_TECH_CAP)
+                else:
+                    limit_from = limit_from or contracts
+                    limit_binding, contracts = REASON_TECH_CAP, tech_lots
         note = sizing_note(sizing, symbol, max(unscaled, 1), hard_max)
         if note is not None and floor_lot:
             note = note.model_copy(update={"floor_lot": True})
         if note is not None and sleeve:
             note = note.model_copy(update={"sleeve": sleeve})
-            if sleeve_from is not None:
-                note = note.model_copy(
-                    update={"limit_from": sleeve_from, "limit_binding": REASON_SLEEVE_CAP}
-                )
+        if note is not None and limit_from is not None:
+            note = note.model_copy(
+                update={"limit_from": limit_from, "limit_binding": limit_binding}
+            )
         # The scale-in ladder (same functions as the gate): a loss exit on the name earlier today
         # blocks it; a name under the ladder waits for its zone. The zone travels on the card.
         if loss_exit_reason(sizing, symbol) is not None:
@@ -431,6 +485,8 @@ def screen_csp_candidates(
         if reasons:
             rejected.append((candidate, reasons))
         else:
+            for kind, what, would_n in would_limits:
+                _record_limit(candidate, kind, what, would_n)
             if class_caps is not None:
                 _record_index_1x(
                     candidate, class_caps, budgets, symbol, sector, leverage, hard_max, ceiling
@@ -544,5 +600,22 @@ def _record_index_1x(
             f"index_1x multipliers would size {cand.contracts} -> {would} "
             f"({cand.sizing.regime.value if cand.sizing else 'normal'} regime)"
         ),
+        key=f"{cand.candidate_id}:generator",
+    )
+
+
+def _record_limit(cand: TradeCandidate, kind: str, what: str, would: int) -> None:
+    """Task 25, switch off: write to ``sizing_actions`` what the tech-linked cap (``tech_cap_record``)
+    or the stacking rule (``stacking_record``) would have done to this put (*what*: ``trim``,
+    ``halve`` or ``block``; *would* the lots it would have sent). ``deterministic_contracts`` is the
+    size proposed. Nothing changes; a human reads the record before a replay turns the rule on."""
+    from src.regime.actions import record_action
+
+    record_action(
+        cand=cand,
+        kind=kind,
+        deterministic=cand.contracts,
+        sent=would,
+        reason=f"{kind.removesuffix('_record')} would {what}: {cand.contracts} -> {would} (switch off)",
         key=f"{cand.candidate_id}:generator",
     )

@@ -120,6 +120,40 @@ def record_action(
         log.warning("sizing action not recorded (%s %s)", kind, cand.candidate_id, exc_info=True)
 
 
+# The limits behind switches (risk-envelope Tasks 24-25) that are off: gate reason -> the
+# ``sizing_actions`` kind its would-be refusal is recorded under.
+LIMIT_RECORD_KINDS: dict[str, str] = {
+    "tech_linked_cap": "tech_cap_record",
+    "stacking_block": "stacking_record",
+    "stacking_halve": "stacking_record",
+}
+
+
+def _record_limit_verdict(
+    cand: TradeCandidate, verdict: Any, where: str, session: Session | None
+) -> int:
+    """One ``sizing_actions`` row per kind for a verdict's ``limits_would`` (the tech-linked cap and
+    the stacking rule while their switch is off). Returns the rows written."""
+    written = 0
+    done: set[str] = set()
+    for reason in list(getattr(verdict, "limits_would", []) or []):
+        kind = LIMIT_RECORD_KINDS.get(reason)
+        if kind is None or kind in done:
+            continue
+        done.add(kind)
+        record_action(
+            cand=cand,
+            kind=kind,
+            deterministic=cand.contracts,
+            sent=0,
+            reason=f"{where}: {reason} would refuse this card (switch off)",
+            key=f"{cand.candidate_id}:{where}",
+            session=session,
+        )
+        written += 1
+    return written
+
+
 def record_envelope_verdicts(
     candidates: list[TradeCandidate],
     verdicts: list[Any],
@@ -128,15 +162,18 @@ def record_envelope_verdicts(
     session: Session | None = None,
 ) -> int:
     """Write each verdict's record-mode envelope reasons (``RiskVerdict.envelope_would``,
-    risk-envelope Task 19, P1) as a ``sizing_actions`` row of kind ``envelope_record`` keyed
+    risk-envelope Task 19, P1) as a ``sizing_actions`` row of kind ``envelope_record`` (and, Task 25, its
+    ``limits_would`` as ``tech_cap_record`` / ``stacking_record`` rows) keyed
     ``<candidate id>:<where>`` (``scan``, ``ticker_scan`` or ``send``): one row per card, place
     and ET day. ``sent_contracts`` is the count ``on`` would have sent (0) and the reason names
     what else refused the card. Returns the rows written. Never raises."""
     by_id = {c.candidate_id: c for c in candidates}
     written = 0
     for v in verdicts:
-        would = list(getattr(v, "envelope_would", []) or [])
         cand = by_id.get(getattr(v, "candidate_id", ""))
+        if cand is not None:
+            written += _record_limit_verdict(cand, v, where, session)
+        would = list(getattr(v, "envelope_would", []) or [])
         if not would or cand is None:
             continue
         other = [r for r in getattr(v, "reasons", []) if r not in would]

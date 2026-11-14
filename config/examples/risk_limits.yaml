@@ -81,6 +81,18 @@ envelope:
   slow_breaker:
     window_sessions: 20         # the rolling net-liquidation high the drawdown is measured from (20 sessions, E14)
     csp_budget_fraction: 0.5    # the total CSP allocation (max_csp_collateral) is multiplied by this while tripped
+  # The tech-linked group cap (Task 25, E15; engine/regime_limits.py tech_cap_reason), behind the `tech_cap` switch
+  # (ships off, off in live; off = recorded as tech_cap_record). Leverage-weighted tech-linked exposure (stock market
+  # value + short-put strike x 100 over regime.tech_linked, TQQQ and SOXL at 3x, the value book's stock added) may not
+  # exceed this % of net liquidation for a new tech-linked put; the generator trims to the room, the gate refuses.
+  tech_cap_pct: 60.0
+  # The stacking rule (Task 25, E15; regime_limits.stacking_action), behind the `stacking_rule` switch (ships off, off in
+  # live; off = recorded as stacking_record). A new put is halved (rounded down, a one-lot size is refused) when the name
+  # has an open short put expiring within overlap_days of it, and blocked when the name has an in-the-money short put or
+  # same_day_fills puts already sent today.
+  stacking:
+    overlap_days: 7             # halve when an open short put on the name expires within this many days of the new expiry
+    same_day_fills: 2           # block when this many cash-secured puts on the name were already sent today
 
 # --- Index-hedge quote capture (risk-envelope Task 16, 2026-11-14) ---
 # Until the buy-to-open build (Task 33) this block only drives the twice-a-session capture of bid, ask and

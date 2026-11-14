@@ -45,6 +45,10 @@ REASON_SCALE_IN_ZONE = "scale_in_zone_not_reached"
 REASON_LOSS_EXIT_COOLDOWN = "loss_exit_cooldown"
 # The leveraged sleeve (engine/regime_limits.py, Task 23): the LES tier's room is used up.
 REASON_SLEEVE_CAP = "sleeve_cap"
+# The tech-linked cap and the stacking rule (Task 25), each behind its switch.
+REASON_TECH_CAP = "tech_linked_cap"
+REASON_STACKING_BLOCK = "stacking_block"
+REASON_STACKING_HALVE = "stacking_halve"
 REASON_ROC = "roc_below_minimum"
 REASON_YIELD = "yield_below_minimum"
 REASON_PHASE_DOWNTREND = "phase_downtrend"
