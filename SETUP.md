@@ -1225,6 +1225,8 @@ SQLite, fetching only the missing tail instead of full per-symbol histories. `/h
 "IV history" line and warns if any symbol's latest observation is older than 5 days (i.e. an
 appender or backfill has stopped) — re-run the backfills to recover.
 
+**Breadth data (risk envelope, 2026-11-14).** The EOD run also records a Nasdaq-100 breadth oscillator and the Leveraged Entry Signal for QQQ and SOXX (recorded only: nothing trades on it yet). After the first restart on this code run `python -m scripts.breadth backfill` once: it loads the thetrading.tools advance/decline history (free, personal-use licence, from 2016-11) and computes the oscillator and today's signals. The system also wants its own nightly count from the Nasdaq-100 constituent list, `config/breadth_constituents.yaml` (committed reference data). `python -m scripts.breadth refresh-constituents` rewrites it from the Wikipedia Nasdaq-100 article, **but it refuses to write unless it finds 100-102 tickers, and that article had no components table when this was built (2026-11-14)**: if it refuses, write the file by hand from the index provider's list (`as_of`, `source`, `ndx: [...]`) and commit it. Without the file the oscillator runs on the history alone. Repeat the refresh each quarter (the index rebalances in March, June, September and December). `python -m scripts.breadth status` shows what is stored.
+
 ---
 
 ## 9. Run the test suite

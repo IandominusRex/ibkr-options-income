@@ -44,10 +44,15 @@ DETERMINISTIC = sorted(
                 "bottoming",
                 "seasonality",
                 "breakout",
+                # risk-envelope Task 10a: the breadth oscillator and the Leveraged Entry Signal
+                "breadth",
+                "leveraged_entry",
             )
         ),
         *(SRC / "regime").glob("*.py"),
         SRC / "storage" / "regime_state.py",
+        SRC / "storage" / "les_state.py",
+        SRC / "data" / "breadth_backend.py",
         SRC / "engine" / "regime_limits.py",
     }
 )
@@ -62,6 +67,31 @@ def test_the_deterministic_list_is_not_empty_and_exists() -> None:
     assert len(existing) >= 9, "the fence must cover the regime modules it names"
     for must in ("regime.py", "scale_in.py", "regime_limits.py", "regime_state.py", "context.py"):
         assert any(p.name == must for p in existing), must
+
+
+def test_the_les_modules_exist_and_are_on_the_deterministic_list() -> None:
+    for rel in (
+        "analytics/breadth.py",
+        "analytics/leveraged_entry.py",
+        "storage/les_state.py",
+        "data/breadth_backend.py",
+    ):
+        assert (SRC / rel).exists(), rel
+        assert SRC / rel in DETERMINISTIC, rel
+
+
+def test_the_breadth_backend_is_reachable_only_through_the_data_factory() -> None:
+    """The thetrading.tools fetch is a data backend: callers ask `get_breadth_provider()`."""
+    offenders = []
+    for p in sorted(SRC.rglob("*.py")):
+        if p.name in ("breadth_backend.py", "factory.py") and p.parent == SRC / "data":
+            continue
+        if _reaches(imported_modules(p), "src.data.breadth_backend"):
+            offenders.append(str(p.relative_to(ROOT)))
+    for p in sorted((ROOT / "scripts").glob("*.py")):
+        if _reaches(imported_modules(p), "src.data.breadth_backend"):
+            offenders.append(str(p.relative_to(ROOT)))
+    assert offenders == []
 
 
 def test_regime_modules_never_import_enrichment() -> None:

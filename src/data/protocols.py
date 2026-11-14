@@ -20,6 +20,8 @@ from typing import Protocol, runtime_checkable
 import pandas as pd
 from pydantic import BaseModel
 
+from src.common.schemas import BreadthCount
+
 
 @runtime_checkable
 class PriceProvider(Protocol):
@@ -268,3 +270,26 @@ class IntradayPriceProvider(Protocol):
     Empty DataFrame when unavailable. Never raises."""
 
     def get_intraday(self, symbol: str, *, interval: str = "1m", days: int = 1) -> pd.DataFrame: ...
+
+
+@runtime_checkable
+class BreadthProvider(Protocol):
+    """Nasdaq-100 advance/decline history (risk-envelope Task 10a).
+
+    ``history()`` returns every day with a usable advancing and declining count, ascending, as
+    ``BreadthCount`` (source ``tt``). Empty list when unavailable. Never raises.
+    """
+
+    def history(self) -> list[BreadthCount]: ...
+
+
+@runtime_checkable
+class ClosesProvider(Protocol):
+    """Recent daily closes for many symbols in one batched call (the breadth oscillator's own count).
+
+    ``closes(symbols, days)`` returns ``{session date: {symbol: close}}`` for the last *days*
+    sessions; a symbol with no usable close on a date is absent from that date's map. Empty dict
+    when unavailable. Never raises.
+    """
+
+    def closes(self, symbols: list[str], days: int = 3) -> dict[date, dict[str, float]]: ...

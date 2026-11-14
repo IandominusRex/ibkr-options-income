@@ -173,6 +173,67 @@ class YFinanceEarningsHistory:
         return days[:limit]
 
 
+def _download_closes(symbols: list[str], period: str) -> pd.DataFrame:
+    """One batched yfinance download of daily bars (the seam tests replace)."""
+    return yf.download(
+        symbols,
+        period=period,
+        interval="1d",
+        auto_adjust=False,
+        progress=False,
+        group_by="column",
+        threads=True,
+    )
+
+
+def closes(symbols: list[str], days: int = 3) -> dict[date, dict[str, float]]:
+    """Daily closes for *symbols* over the last *days* sessions, from one batched download.
+
+    ``{session date: {symbol: close}}``; a NaN, non-finite or non-positive close is a missing close
+    (the symbol is absent from that date). Empty dict when the breaker is open, the download fails
+    or returns nothing. Never raises. This is the nightly breadth count's input (Task 10a).
+    """
+    if not symbols:
+        return {}
+    breaker = get_breaker("yfinance_prices")
+    if not breaker.allow():
+        return {}
+    try:
+        frame = _download_closes(symbols, "10d")
+    except Exception:
+        log.warning("yfinance_backend: closes download failed", exc_info=True)
+        breaker.record_failure()
+        return {}
+    if frame is None or frame.empty:
+        breaker.record_failure()
+        return {}
+    breaker.record_success()
+    try:
+        close = frame["Close"]
+    except KeyError:
+        return {}
+    if isinstance(close, pd.Series):
+        close = close.to_frame(symbols[0])
+    out: dict[date, dict[str, float]] = {}
+    for idx, row in close.tail(days).iterrows():
+        day = idx.date() if hasattr(idx, "date") else idx
+        values = {
+            str(sym): float(v)
+            for sym, v in row.items()
+            if pd.notna(v) and float(v) > 0.0 and float(v) != float("inf")
+        }
+        if values:
+            out[day] = values
+    return out
+
+
+class YFinanceClosesProvider:
+    """``ClosesProvider`` backed by one batched yfinance download."""
+
+    def closes(self, symbols: list[str], days: int = 3) -> dict[date, dict[str, float]]:
+        return closes(symbols, days)
+
+
 class YFinanceIntradayProvider:
     """``IntradayPriceProvider``: 1-minute bars incl. pre/post market. yfinance futures/index
     quotes can lag ~10 min (spec §6.4) — callers window on bar timestamps, never wall clock."""

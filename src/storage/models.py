@@ -213,6 +213,46 @@ class IVHistoryRow(Base):
     flagged: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
 
+class BreadthCountRow(Base):
+    """One day's Nasdaq-100 advancing / declining / unchanged counts from one source (Task 10a).
+
+    ``source`` is ``tt`` (thetrading.tools history) or ``own`` (the nightly count from the
+    constituent list's closes). ``osc`` is the merged series' breadth oscillator on the row the merge
+    picked; ``flagged`` marks a day on which the two sources disagreed. Written only through
+    `src.storage.les_state`.
+    """
+
+    __tablename__ = "breadth_counts"
+    __table_args__ = (UniqueConstraint("day", "source", name="uq_breadth_counts_day_source"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    day: Mapped[date] = mapped_column(Date, index=True)
+    source: Mapped[str] = mapped_column(String(4))
+    adv: Mapped[int] = mapped_column(Integer)
+    dec: Mapped[int] = mapped_column(Integer)
+    unch: Mapped[int] = mapped_column(Integer, default=0)
+    osc: Mapped[float | None] = mapped_column(Float, nullable=True)
+    flagged: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class LesSignalRow(Base):
+    """The Leveraged Entry Signal for one governing index on one close (Task 10a): one row per
+    (asof, index_symbol), the `LesSignal` fields and the reasons as JSON. Record only."""
+
+    __tablename__ = "les_signals"
+    __table_args__ = (UniqueConstraint("asof", "index_symbol", name="uq_les_signals_asof_index"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asof: Mapped[date] = mapped_column(Date, index=True)
+    index_symbol: Mapped[str] = mapped_column(String(8))
+    trend_up: Mapped[bool] = mapped_column(Boolean, default=False)
+    pullback: Mapped[bool] = mapped_column(Boolean, default=False)
+    washout: Mapped[bool] = mapped_column(Boolean, default=False)
+    trend_break: Mapped[bool] = mapped_column(Boolean, default=False)
+    tier_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    reasons: Mapped[list] = mapped_column(JSON, default=list)
+
+
 class PriceHistoryRow(Base):
     """Daily OHLCV bars (one settled session per row) backing the technical indicators
     and HV30. Bootstrapped by scripts/backfill_prices.py and kept fresh by a daily append;

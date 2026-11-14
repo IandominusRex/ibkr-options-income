@@ -2216,3 +2216,36 @@ class EnvelopeReportResult(BaseModel):
     switch: str  # the switch a PASS sets
     value_on_pass: str  # the value it sets
     written_at: datetime
+
+
+class BreadthCount(BaseModel):
+    """One day's Nasdaq-100 advancing / declining / unchanged counts (risk-envelope Task 10a).
+
+    ``source`` is ``tt`` for the thetrading.tools history and ``own`` for the system's nightly count
+    from the constituent list's closes. Input to `analytics.breadth` (the breadth oscillator).
+    """
+
+    day: _date
+    adv: int = Field(ge=0)
+    dec: int = Field(ge=0)
+    unch: int = Field(default=0, ge=0)
+    source: Literal["tt", "own"] = "tt"
+
+
+class LesSignal(BaseModel):
+    """The Leveraged Entry Signal for one governing index on one completed daily close (Task 10a).
+
+    ``tier_pct`` is the leverage-weighted share of net liquidation the signal opens (6.0 with the
+    breadth washout, 3.0 on a pullback, else 0.0); ``reasons`` names each part. ``asof`` is None
+    for a no-signal result with no usable bars. Record only until the sleeve and the LES share buys
+    (Tasks 23, 32a) read it behind the ``leveraged_entry`` switch.
+    """
+
+    asof: _date | None = None
+    index: str
+    trend_up: bool
+    pullback: bool
+    washout: bool
+    trend_break: bool
+    tier_pct: float
+    reasons: list[str] = Field(default_factory=list)

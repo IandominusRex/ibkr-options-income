@@ -240,8 +240,9 @@ Engine is what refuses the order. The Rules Engine remains the sole path to an o
 ### Regime sizing — a deterministic module family
 
 The market regime, the scale-in ladder, the bottoming signal and the regime limits are
-**deterministic tier**: `src/analytics/{regime,support_levels,scale_in,bottoming,seasonality,breakout}.py`,
-`src/regime/`, `src/storage/regime_state.py` and `src/engine/regime_limits.py`. They may feed the
+**deterministic tier**: `src/analytics/{regime,support_levels,scale_in,bottoming,seasonality,breakout,breadth,leveraged_entry}.py`,
+`src/regime/`, `src/storage/regime_state.py`, `src/storage/les_state.py`, `src/data/breadth_backend.py` and
+`src/engine/regime_limits.py`. They may feed the
 sizer, the gate and sizing, and **none of them may import enrichment**: `src.claude`, `src.news`,
 `src.spreads_ai`, `src.analytics.market_conditions`, `src.analytics.sentiment` or
 `src.analytics.sector_context`. The news process reads the regime record only through

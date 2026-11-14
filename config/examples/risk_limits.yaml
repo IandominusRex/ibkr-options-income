@@ -256,6 +256,21 @@ regime:
     rsi_lookback: 5
     signal_delta_max: 0.25       # must be above cash_secured_put.delta_min (0.20): checked at load
     signal_lot_every_sessions: 3
+  # The Leveraged Entry Signal, LES (risk-envelope Task 10a, 2026-11-14; analytics/leveraged_entry.py).
+  # Computed each night per governing index and RECORDED only: nothing trades on it until the sleeve and
+  # the LES share buys read it behind the `leveraged_entry` switch (ships `record`).
+  leveraged_entry:
+    governing: {TQQQ: QQQ, SOXL: SOXX}  # the unleveraged index the signal is computed on, per leveraged ETF
+    sma_trend: 200                # trend gate: close above its 200-day average
+    sma_pullback: 50              # pullback: close under its 50-day average...
+    rsi_n: 2                      # ...or RSI(rsi_n) under rsi_max
+    rsi_max: 5
+    washout_osc: -40              # washout: Nasdaq-100 breadth oscillator at or under this on any of the last washout_sessions
+    washout_sessions: 5
+    tiers: {pullback: 3.0, washout: 6.0, below_trend: 1.5}  # leverage-weighted % of NLV; below_trend is the sleeve's (bottoming path only)
+    break_closes: 2               # trend break: this many consecutive closes under the 200-day
+    pace_sessions: 3              # one LES buy per ETF per this many sessions (read by Task 32a)
+    source_gap_flag: 10           # breadth sources (thetrading.tools vs our own count) differing by more RANA points are flagged
 
 # --- Leveraged-ETF size ceiling (engine/regime_limits.py) ---
 # A smaller per-trade size for 2x and 3x leveraged ETFs in EVERY regime. The ceiling is

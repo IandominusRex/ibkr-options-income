@@ -158,6 +158,29 @@ def _mock_telegram_sender(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_network_for_breadth(monkeypatch):
+    """The Nasdaq-100 breadth feed and the own-count download answer "no data" in every test.
+
+    The EOD run records the breadth oscillator and the Leveraged Entry Signal (risk-envelope
+    Task 10a). The two network touch points are the thetrading.tools fetch (the backend module's
+    own ``httpx`` name is replaced by a stub that refuses, so the real ``httpx`` is untouched) and
+    the batched yfinance download (``_download_closes``, answering an empty frame). A test that
+    needs data patches the same seam itself; tests never reach the network.
+    """
+    from types import SimpleNamespace
+
+    import pandas as pd
+
+    def refuse(*args, **kwargs):
+        raise ConnectionError("tests never touch the network")
+
+    monkeypatch.setattr("src.data.breadth_backend.httpx", SimpleNamespace(get=refuse))
+    monkeypatch.setattr(
+        "src.data.yfinance_backend._download_closes", lambda symbols, period: pd.DataFrame()
+    )
+
+
+@pytest.fixture(autouse=True)
 def _no_network_for_regime(monkeypatch):
     """The market regime's two network touch points answer "no data" in every test.
 

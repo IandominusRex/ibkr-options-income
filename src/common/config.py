@@ -2414,6 +2414,66 @@ _DEFAULT_TECH_LINKED = [
 ]
 
 
+class LesTiersCfg(_KeyedCfg):
+    """The Leveraged Entry Signal's tiers, as a leverage-weighted share of net liquidation (L4).
+
+    ``pullback`` 3.0 and ``washout`` 6.0 are what `analytics.leveraged_entry.les_signal` returns;
+    ``below_trend`` 1.5 is applied by the sleeve only on the bottoming path below the 200-day
+    (Task 23), never by the signal.
+    """
+
+    KEYS: ClassVar[tuple[str, ...]] = ("pullback", "washout", "below_trend")
+
+    pullback: float = Field(default=3.0, ge=0)
+    washout: float = Field(default=6.0, ge=0)
+    below_trend: float = Field(default=1.5, ge=0)
+
+
+class LesCfg(_KeyedCfg):
+    """The Leveraged Entry Signal (``regime.leveraged_entry``; risk-envelope Task 10a, ruling L1).
+
+    ``governing`` maps each leveraged ETF to the unleveraged index the signal is computed on.
+    ``trend`` = close above its ``sma_trend``-day average; ``pullback`` = trend and (RSI(``rsi_n``)
+    under ``rsi_max`` or close under the ``sma_pullback``-day average); ``washout`` = pullback and the
+    Nasdaq-100 breadth oscillator at or under ``washout_osc`` on any of the last ``washout_sessions``
+    sessions; ``trend break`` = ``break_closes`` consecutive closes under the 200-day. ``pace_sessions``
+    (one LES buy per ETF per that many sessions) is read by the share buys (Task 32a);
+    ``source_gap_flag`` is the RANA-point gap at which the two breadth sources are flagged.
+    Record only: the signal is stored by the EOD run and nothing trades on it yet.
+    """
+
+    KEYS: ClassVar[tuple[str, ...]] = (
+        "governing",
+        "sma_trend",
+        "sma_pullback",
+        "rsi_n",
+        "rsi_max",
+        "washout_osc",
+        "washout_sessions",
+        "tiers",
+        "break_closes",
+        "pace_sessions",
+        "source_gap_flag",
+    )
+
+    governing: dict[str, str] = Field(default_factory=lambda: {"TQQQ": "QQQ", "SOXL": "SOXX"})
+    sma_trend: int = Field(default=200, ge=2)
+    sma_pullback: int = Field(default=50, ge=2)
+    rsi_n: int = Field(default=2, ge=2)
+    rsi_max: float = Field(default=5.0, gt=0, lt=100)
+    washout_osc: float = -40.0
+    washout_sessions: int = Field(default=5, ge=1)
+    tiers: LesTiersCfg = Field(default_factory=LesTiersCfg)
+    break_closes: int = Field(default=2, ge=1)
+    pace_sessions: int = Field(default=3, ge=1)
+    source_gap_flag: float = Field(default=10.0, gt=0)
+
+    @field_validator("governing")
+    @classmethod
+    def _upper(cls, v: dict[str, str]) -> dict[str, str]:
+        return {str(k).upper(): str(s).upper() for k, s in v.items()}
+
+
 class RegimeCfg(_KeyedCfg):
     """The deterministic market regime and what it does to CSP sizing (spec sections 4-5).
 
@@ -2428,6 +2488,7 @@ class RegimeCfg(_KeyedCfg):
         "thresholds",
         "ladder",
         "bottoming",
+        "leveraged_entry",
     )
 
     enabled: bool = True
@@ -2438,6 +2499,7 @@ class RegimeCfg(_KeyedCfg):
     thresholds: RegimeThresholdsCfg = Field(default_factory=RegimeThresholdsCfg)
     ladder: RegimeLadderCfg = Field(default_factory=RegimeLadderCfg)
     bottoming: RegimeBottomingCfg = Field(default_factory=RegimeBottomingCfg)
+    leveraged_entry: LesCfg = Field(default_factory=LesCfg)
 
     @field_validator("tech_linked")
     @classmethod

@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from src.claude.eval.assignment import assigned_shorts
@@ -453,6 +454,86 @@ async def _send_eod_telegram(summary: EODSummary, narrative: str | None) -> None
         logger.exception("Failed to send EOD Telegram message")
 
 
+_OWN_COUNT_MIN_COVERAGE = 0.9  # share of the constituents that must have a close on both days
+
+
+def record_breadth_and_les() -> dict[str, Any]:
+    """Store the Nasdaq-100 breadth counts and the Leveraged Entry Signal (risk-envelope Task 10a).
+
+    Blocking (network and SQLite): the EOD run calls it in a worker thread, and
+    ``python -m scripts.breadth backfill`` calls it directly. Every insert is idempotent, so it is
+    safe to repeat. Steps: (1) the thetrading.tools history through
+    ``factory.get_breadth_provider``; (2) our own count for the latest session from the committed
+    constituent list's closes (skipped when the list is missing or fewer than 90% of the names have
+    a close on either of the last two days); (3) merge the two (our own wins, and the day is flagged,
+    where they differ by more than ``source_gap_flag`` RANA points), compute and store the
+    oscillator; (4) compute and store ``les_signal`` for each governing index (QQQ, SOXX) from the
+    price store. **Record only:** nothing reads the result for sizing yet. Returns a small summary.
+    """
+    import pandas as pd
+
+    from src.analytics.breadth import count_from_closes, merge_counts, oscillator
+    from src.analytics.leveraged_entry import les_signal
+    from src.common.config import get_regime_cfg
+    from src.common.schemas import BreadthCount
+    from src.data.factory import get_breadth_provider, get_closes_provider
+    from src.storage import les_state
+    from src.storage.price_history import load_bars
+
+    cfg = get_regime_cfg().leveraged_entry
+    summary: dict[str, Any] = {"tt_new": 0, "own_new": 0, "signals": {}}
+    summary["tt_new"] = les_state.record_counts(get_breadth_provider().history())
+
+    constituents = les_state.load_constituents()
+    if constituents:
+        closes = get_closes_provider().closes(constituents, days=3)
+        days = sorted(closes)
+        if len(days) >= 2:
+            prev, latest = closes[days[-2]], closes[days[-1]]
+            need = _OWN_COUNT_MIN_COVERAGE * len(constituents)
+            if len(prev) >= need and len(latest) >= need:
+                adv, dec, unch = count_from_closes(prev, latest)
+                summary["own_new"] = les_state.record_counts(
+                    [BreadthCount(day=days[-1], adv=adv, dec=dec, unch=unch, source="own")]
+                )
+            else:
+                logger.warning(
+                    "EOD: own breadth count skipped: %d and %d of %d constituents have a close",
+                    len(prev),
+                    len(latest),
+                    len(constituents),
+                )
+
+    merged, flagged = merge_counts(
+        les_state.load_counts("tt"), les_state.load_counts("own"), gap=cfg.source_gap_flag
+    )
+    if merged:
+        les_state.record_oscillator(merged, oscillator(merged), flagged)
+    recent = les_state.latest_osc(cfg.washout_sessions + 5)
+
+    for index in sorted(set(cfg.governing.values())):
+        bars = load_bars(index, limit=400)
+        if not bars:
+            continue
+        frame = pd.DataFrame(
+            {"Close": [b.close for b in bars]},
+            index=pd.DatetimeIndex([b.obs_date for b in bars]),
+        )
+        sig = les_signal(frame, recent, cfg, index=index)
+        les_state.record_signal(sig)
+        summary["signals"][index] = {"asof": str(sig.asof), "tier_pct": sig.tier_pct}
+    return summary
+
+
+async def _record_breadth_and_les() -> None:
+    """Run `record_breadth_and_les` in a worker thread. Never raises: record-only data."""
+    try:
+        summary = await asyncio.to_thread(record_breadth_and_les)
+        logger.info("EOD: breadth and LES recorded: %s", summary)
+    except Exception:
+        logger.exception("EOD: breadth / LES recording failed — continuing")
+
+
 async def _apply_envelope_reports() -> None:
     """Apply the PASSed result files (``src.storage.envelope_switches.apply_reports``) and send one
     notice per switch change. Never raises: a report or Telegram failure is logged only."""
@@ -545,6 +626,10 @@ async def run() -> None:
         await _append_daily_prices(_universe_symbols())
     except Exception:
         logger.exception("EOD: daily price append failed — price_history may age")
+
+    # The Nasdaq-100 breadth counts and the Leveraged Entry Signal (Task 10a), after the settled
+    # closes are in. Record only; a failure just means no row tonight.
+    await _record_breadth_and_les()
 
     # 2. Compute realized P&L from DB fills (anchored to the ET trading day).
     today = datetime.now(_ET).date()

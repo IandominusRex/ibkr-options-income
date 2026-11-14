@@ -17,7 +17,9 @@ from typing import TYPE_CHECKING
 
 from src.common.config import get_config
 from src.data.protocols import (
+    BreadthProvider,
     BulkPriceProvider,
+    ClosesProvider,
     EarningsCalendarProvider,
     EconActualsProvider,
     EconScheduleProvider,
@@ -220,6 +222,25 @@ def get_earnings_history() -> YFinanceEarningsHistory:
     from src.data.yfinance_backend import YFinanceEarningsHistory
 
     return YFinanceEarningsHistory()
+
+
+@functools.lru_cache(maxsize=1)
+def get_breadth_provider() -> BreadthProvider:
+    """The Nasdaq-100 advance/decline history (thetrading.tools; risk-envelope Task 10a).
+
+    The only way to reach `src.data.breadth_backend` (asserted by `tests/test_regime_fence.py`).
+    """
+    from src.data.breadth_backend import TheTradingToolsBreadth
+
+    return TheTradingToolsBreadth()
+
+
+@functools.lru_cache(maxsize=1)
+def get_closes_provider() -> ClosesProvider:
+    """Batched daily closes (yfinance), the input to the system's own nightly breadth count."""
+    from src.data.yfinance_backend import YFinanceClosesProvider
+
+    return YFinanceClosesProvider()
 
 
 @functools.lru_cache(maxsize=1)
