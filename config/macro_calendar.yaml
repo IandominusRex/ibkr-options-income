@@ -1,0 +1,76 @@
+# Static macro calendar: FOMC decision days and the US data releases that move the market.
+# Committed reference data (like news_playbook.yaml), read by src/common/macro_calendar.py.
+# Covers 2026-11-14 to 2027-12-31. One row per event: day (ET calendar date), kind
+# (FOMC | CPI | PPI | NFP | PCE), time_et (HH:MM ET), source (the agency page the date was read from).
+# Sources, read 2026-11-14 (never copied from an aggregator):
+#   FOMC  https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm  (the decision day is the second day of each meeting; the page lists no
+#         December 2027 meeting yet, so none is recorded; "tentative until confirmed at the meeting
+#         immediately preceding it")
+#   CPI   https://www.bls.gov/schedule/news_release/cpi.htm
+#   PPI   https://www.bls.gov/schedule/news_release/ppi.htm
+#   NFP   https://www.bls.gov/schedule/news_release/empsit.htm   (Employment Situation)
+#   PCE   https://www.bea.gov/news/schedule (2026) and https://www.bea.gov/news/schedule/next-year (2027)   (BEA Personal Income and Outlays)
+# Refresh when the agencies publish more (BLS and BEA schedules are fixed a year ahead; the Fed
+# adds a year each summer). Rows must stay sorted by day.
+- {day: "2026-11-25", kind: PCE, time_et: "08:30", source: "https://www.bea.gov/news/schedule"}
+- {day: "2026-12-04", kind: NFP, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/empsit.htm"}
+- {day: "2026-12-09", kind: FOMC, time_et: "14:00", source: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+- {day: "2026-12-10", kind: CPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/cpi.htm"}
+- {day: "2026-12-15", kind: PPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/ppi.htm"}
+- {day: "2026-12-23", kind: PCE, time_et: "08:30", source: "https://www.bea.gov/news/schedule"}
+- {day: "2027-01-08", kind: NFP, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/empsit.htm"}
+- {day: "2027-01-13", kind: CPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/cpi.htm"}
+- {day: "2027-01-14", kind: PPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/ppi.htm"}
+- {day: "2027-01-27", kind: FOMC, time_et: "14:00", source: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+- {day: "2027-01-28", kind: PCE, time_et: "08:30", source: "https://www.bea.gov/news/schedule/next-year"}
+- {day: "2027-02-05", kind: NFP, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/empsit.htm"}
+- {day: "2027-02-11", kind: CPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/cpi.htm"}
+- {day: "2027-02-12", kind: PPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/ppi.htm"}
+- {day: "2027-02-25", kind: PCE, time_et: "08:30", source: "https://www.bea.gov/news/schedule/next-year"}
+- {day: "2027-03-05", kind: NFP, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/empsit.htm"}
+- {day: "2027-03-10", kind: CPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/cpi.htm"}
+- {day: "2027-03-12", kind: PPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/ppi.htm"}
+- {day: "2027-03-17", kind: FOMC, time_et: "14:00", source: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+- {day: "2027-03-31", kind: PCE, time_et: "08:30", source: "https://www.bea.gov/news/schedule/next-year"}
+- {day: "2027-04-02", kind: NFP, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/empsit.htm"}
+- {day: "2027-04-13", kind: CPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/cpi.htm"}
+- {day: "2027-04-14", kind: PPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/ppi.htm"}
+- {day: "2027-04-28", kind: FOMC, time_et: "14:00", source: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+- {day: "2027-04-29", kind: PCE, time_et: "08:30", source: "https://www.bea.gov/news/schedule/next-year"}
+- {day: "2027-05-07", kind: NFP, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/empsit.htm"}
+- {day: "2027-05-12", kind: CPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/cpi.htm"}
+- {day: "2027-05-13", kind: PPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/ppi.htm"}
+- {day: "2027-05-27", kind: PCE, time_et: "08:30", source: "https://www.bea.gov/news/schedule/next-year"}
+- {day: "2027-06-04", kind: NFP, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/empsit.htm"}
+- {day: "2027-06-09", kind: FOMC, time_et: "14:00", source: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+- {day: "2027-06-10", kind: CPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/cpi.htm"}
+- {day: "2027-06-11", kind: PPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/ppi.htm"}
+- {day: "2027-06-25", kind: PCE, time_et: "08:30", source: "https://www.bea.gov/news/schedule/next-year"}
+- {day: "2027-07-02", kind: NFP, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/empsit.htm"}
+- {day: "2027-07-14", kind: CPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/cpi.htm"}
+- {day: "2027-07-15", kind: PPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/ppi.htm"}
+- {day: "2027-07-28", kind: FOMC, time_et: "14:00", source: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+- {day: "2027-07-29", kind: PCE, time_et: "08:30", source: "https://www.bea.gov/news/schedule/next-year"}
+- {day: "2027-08-06", kind: NFP, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/empsit.htm"}
+- {day: "2027-08-10", kind: PPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/ppi.htm"}
+- {day: "2027-08-11", kind: CPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/cpi.htm"}
+- {day: "2027-08-25", kind: PCE, time_et: "08:30", source: "https://www.bea.gov/news/schedule/next-year"}
+- {day: "2027-09-03", kind: NFP, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/empsit.htm"}
+- {day: "2027-09-10", kind: PPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/ppi.htm"}
+- {day: "2027-09-14", kind: CPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/cpi.htm"}
+- {day: "2027-09-15", kind: FOMC, time_et: "14:00", source: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+- {day: "2027-09-30", kind: PCE, time_et: "08:30", source: "https://www.bea.gov/news/schedule/next-year"}
+- {day: "2027-10-08", kind: NFP, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/empsit.htm"}
+- {day: "2027-10-14", kind: CPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/cpi.htm"}
+- {day: "2027-10-15", kind: PPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/ppi.htm"}
+- {day: "2027-10-27", kind: FOMC, time_et: "14:00", source: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+- {day: "2027-10-28", kind: PCE, time_et: "08:30", source: "https://www.bea.gov/news/schedule/next-year"}
+- {day: "2027-11-05", kind: NFP, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/empsit.htm"}
+- {day: "2027-11-10", kind: CPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/cpi.htm"}
+- {day: "2027-11-12", kind: PPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/ppi.htm"}
+- {day: "2027-11-17", kind: FOMC, time_et: "14:00", source: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"}
+- {day: "2027-11-24", kind: PCE, time_et: "08:30", source: "https://www.bea.gov/news/schedule/next-year"}
+- {day: "2027-12-03", kind: NFP, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/empsit.htm"}
+- {day: "2027-12-10", kind: CPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/cpi.htm"}
+- {day: "2027-12-15", kind: PPI, time_et: "08:30", source: "https://www.bls.gov/schedule/news_release/ppi.htm"}
+- {day: "2027-12-22", kind: PCE, time_et: "08:30", source: "https://www.bea.gov/news/schedule/next-year"}
