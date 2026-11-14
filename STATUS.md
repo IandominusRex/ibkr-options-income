@@ -365,8 +365,8 @@ the daemons run none of it until a merge and `./ibkr restart`.
   NetLiquidation: 0.5% of NLV per trade and in total, today's realised + open loss at 1% stops the day,
   the month to date at −2% sets a month stop only `python -m scripts.spreads_reset_month` clears, and the
   excess-liquidity floor is 40% of NLV. An unknown NLV blocks entries. `starting_capital_usd` only feeds
-  the P&L report; the old capital keys load and are ignored. **Known limitation:** the backtest still
-  sizes off its replayed capital as a stand-in for NLV until Task 7's `--nlv`.
+  the P&L report; the old capital keys load and are ignored. (The backtest sized off its replayed
+  capital as an NLV stand-in until Task 7 gave it `--nlv`.)
 - **The cost standard (Task 5).** Per leg: the measured median crossing ($0.01) plus a stated margin
   ($0.01), and IBKR's commission ($0.65) plus the class's exchange fee; the executor's shadow fills,
   the menu's break-evens (`be_nominal_exits`) and the picker's round-trip cost all read
@@ -387,6 +387,15 @@ the daemons run none of it until a merge and `./ibkr restart`.
   through `src/common/books.py`"; `src/common/spreads_view.py` is now a second, read-only window
   (fenced in `tests/test_web_fence.py`). CLAUDE.md was not edited in this section (left to the
   operator / Task 38's doc sweep).
+- **Shadow until the paper bar; the backtest on the new standard (Task 7).** `mode: paper` trades paper
+  only while the data-gated switch `spreads_paper` is `on`; otherwise the service trades the shadow
+  book (day card: *shadow until the backtest passes*) and winds down any paper spread still open. The
+  backtest sizes at the live shares of `--nlv` (default: the latest portfolio snapshot), fills on the
+  cost standard, and `--report` writes the P8 paper bar to `data/envelope_reports/spreads_paper.json`,
+  which the EOD run applies (a PASS turns the switch on, in paper only). **Owed by the operator:** the
+  ThetaData run itself (Operator to-do 6): the harness has still never touched a real Theta Terminal,
+  so expect fixes on first contact; until a PASS, the spreads book records shadow only. The switch is
+  read at service start: `./ibkr restart` after it changes.
 
 ## Bugs fixed (2026-11-12 — spreads late fill, regime flapping, roll noise)
 

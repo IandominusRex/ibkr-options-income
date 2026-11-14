@@ -101,6 +101,9 @@ class DayCard:
     assessments: int = 0  # entry checks that fetched the chain and weighed candidates
     assessed_at: datetime | None = None
     watch_note: str | None = None  # what the entry loop is doing right now
+    # Why the traded book differs from the configured one (risk-envelope Task 7), e.g. a paper
+    # config trading shadow "until the backtest passes".
+    mode_note: str | None = None
 
 
 def _hm(t: datetime) -> str:
@@ -130,6 +133,8 @@ def _assess_line(card: DayCard) -> str:
 
 def fmt_day_card(card: DayCard) -> str:
     head = f"🟦 <b>{esc(card.underlying)} 0DTE · {card.day:%a %d %b}</b> · {esc(card.mode.upper())}"
+    if card.mode_note:
+        head += f" <i>({esc(card.mode_note)})</i>"
     if card.updated_at is not None:
         head += f" · <i>updated {_hm(card.updated_at)}</i>"
     parts = [head, _map_line(card), _assess_line(card)]

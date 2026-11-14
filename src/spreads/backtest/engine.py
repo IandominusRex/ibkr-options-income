@@ -32,6 +32,7 @@ from src.common.schemas import (
 )
 from src.spreads.gex import build_levels, expected_move, regime_at
 from src.spreads.manager import debit_to_close, evaluate_exit, intrinsic_debit
+from src.spreads.menu import cost_per_contract, slippage_per_leg
 from src.spreads.pricing import ET, day_schedule, delta, implied_vol, years_to_close
 from src.spreads.risk import validate
 from src.spreads.selector import select_candidates
@@ -160,7 +161,11 @@ def chain_at(data: DayData, minute: datetime, symbol: str) -> ChainSnapshot | No
 
 
 def backtest_cfg(cfg: SpreadsCfg) -> SpreadsCfg:
-    """The live rules restated in SPX units (every dollar/point threshold × trade_scale)."""
+    """The live rules restated in SPX units (every dollar/point threshold × trade_scale).
+
+    The risk caps are shares of net liquidation (risk-envelope Task 4), so they need no
+    scaling: run_day passes the stated NLV itself in SPX dollars (× trade_scale). The cost
+    standard (Task 5) is applied in run_day's fills and commissions."""
     k = cfg.backtest.trade_scale
     return cfg.model_copy(
         update={
@@ -168,11 +173,7 @@ def backtest_cfg(cfg: SpreadsCfg) -> SpreadsCfg:
             "mode": "shadow",
             "gex": cfg.gex.model_copy(update={"scale_to_underlying": 1.0}),
             "selection": cfg.selection.model_copy(update={"width": cfg.selection.width * k}),
-            # The risk caps are shares of capital, so they need no scaling; run_day passes the
-            # capital itself in SPX dollars (× trade_scale).
-            "risk": cfg.risk.model_copy(
-                update={"min_excess_liquidity_usd": 0.0, "max_quote_age_seconds": 1e9}
-            ),
+            "risk": cfg.risk.model_copy(update={"max_quote_age_seconds": 1e9}),
             "exits": cfg.exits.model_copy(
                 update={"let_expire_max_debit": cfg.exits.let_expire_max_debit * k}
             ),
@@ -215,14 +216,23 @@ def _fill(mid: float, natural: float, haircut: float) -> float:
     return mid + haircut * (natural - mid)
 
 
-def run_day(
-    data: DayData, cfg: SpreadsCfg, capital_usd: float | None = None
-) -> list[BacktestTrade]:
-    """One day of the live rules. *capital_usd* (default: the starting capital) sizes every trade."""
+def run_day(data: DayData, cfg: SpreadsCfg, nlv_usd: float | None = None) -> list[BacktestTrade]:
+    """One day of the live rules, sized at the live shares of *nlv_usd* (the stated net
+    liquidation; default ``risk.starting_capital_usd`` as a stand-in). Fills pay the worse of
+    the ``fill_haircut`` of the mid→natural gap and the cost standard's slippage, and every
+    leg pays the standard's commission plus exchange fee (risk-envelope Tasks 5, 7)."""
     bcfg = backtest_cfg(cfg)
     k, h = cfg.backtest.trade_scale, cfg.backtest.fill_haircut
-    capital = cfg.risk.starting_capital_usd if capital_usd is None else capital_usd
-    comm = cfg.execution.commission_per_contract
+    capital = cfg.risk.starting_capital_usd if nlv_usd is None else nlv_usd
+    comm = cost_per_contract(cfg)  # USD per SPY-equivalent contract per leg
+    slip = 2 * slippage_per_leg(cfg) * k  # SPX points per spread side (two legs)
+
+    def credit_fill(mid: float, natural: float) -> float:
+        return min(_fill(mid, natural, h), mid - slip)
+
+    def debit_fill(mid: float, natural: float, width: float) -> float:
+        return min(width, max(_fill(mid, natural, h), mid + slip))
+
     s = day_schedule(cfg.schedule, data.day)
     symbol = cfg.backtest.option_symbol
     refresh = timedelta(minutes=s.map_refresh_minutes)
@@ -314,7 +324,7 @@ def run_day(
                 expiring.append(held)
                 continue
             base = mid if mid is not None else nat if nat is not None else pos.width
-            debit = min(pos.width, _fill(base, nat if nat is not None else base, h))
+            debit = debit_fill(base, nat if nat is not None else base, pos.width)
             trade = book(held, m, debit, decision.reason, 2)
             trades.append(trade)
             realized_scaled += trade.pnl_usd * k
@@ -350,18 +360,16 @@ def run_day(
                 trades_today=len(sides_today),
                 realized_pnl_today_usd=realized_scaled,
                 excess_liquidity_usd=1e12,
-                # SPX-scale dollars, like every other amount here; and, as live, the capital
-                # moves with every spread closed earlier the same day.
+                # SPX-scale dollars, like every other amount here; and, as live, the NLV moves
+                # with every spread closed earlier the same day. capital_usd is reporting only.
                 capital_usd=capital * k + realized_scaled,
                 sides_today=list(sides_today),
-                # The caps are shares of net liquidation (risk-envelope Task 4); the replayed
-                # book's capital stands in for it.
                 nlv_usd=capital * k + realized_scaled,
             )
             v = validate(c, ctx, bcfg)
             if not v.approved:
                 continue
-            credit = _fill(c.credit_mid, c.credit_natural, h)
+            credit = credit_fill(c.credit_mid, c.credit_natural)
             pos = SpreadPosition(
                 spread_id=c.spread_id,
                 mode="shadow",
@@ -406,7 +414,7 @@ def run_day(
             )
         last = last_mid if last_mid is not None else last_nat
         if last is not None:
-            debit = min(pos.width, _fill(last, last_nat if last_nat is not None else last, h))
+            debit = debit_fill(last, last_nat if last_nat is not None else last, pos.width)
         else:
             debit = intrinsic_debit(pos, last_spot) if last_spot is not None else pos.width
         trades.append(book(held, end or held.opened, debit, "data_end", 2))
@@ -419,15 +427,21 @@ def run_backtest(
     start: date,
     end: date,
     skipped: list[tuple[date, str]] | None = None,
+    *,
+    nlv_usd: float | None = None,
+    sessions: list[date] | None = None,
 ) -> list[BacktestTrade]:
-    """Every trading day in [start, end]; each day sizes off the capital the days before left.
+    """Every trading day in [start, end], sized at the live shares of the stated *nlv_usd*
+    (default ``risk.starting_capital_usd``); each day's NLV is the stated one plus what the
+    days before realised.
 
     A day whose data can't be loaded (a 4xx for a missing day, a Terminal hiccup) is skipped
     and listed in *skipped* instead of ending the run; if no day loads at all, the last error
-    is raised so a misconfigured Terminal is not mistaken for an empty month.
+    is raised so a misconfigured Terminal is not mistaken for an empty month. Every day that
+    loaded quotes is appended to *sessions*, traded or not: the paper bar's session count.
     """
     trades: list[BacktestTrade] = []
-    capital = cfg.risk.starting_capital_usd
+    capital = cfg.risk.starting_capital_usd if nlv_usd is None else nlv_usd
     day = start
     loaded = 0
     last_error: Exception | None = None
@@ -444,6 +458,8 @@ def run_backtest(
                 continue
             loaded += 1
             if data.quotes:
+                if sessions is not None:
+                    sessions.append(day)
                 today = run_day(data, cfg, capital)
                 capital += sum(t.pnl_usd for t in today)
                 trades.extend(today)

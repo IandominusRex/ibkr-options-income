@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
+import src.spreads.service as _service_mod
 from src.common.config import get_config
 from src.common.schemas import ChainOption, ChainSnapshot, SessionSnapshot
 from src.spreads.executor import SpreadExecutor
@@ -220,6 +221,7 @@ class FakeNotifier:
 
 
 REAL_ACCOUNT_STATE = SpreadsService._account_state  # the service's own system_settings reader
+REAL_PAPER_SWITCH = _service_mod._paper_switch_on  # the spreads_paper switch, read for real
 
 
 @pytest.fixture()
@@ -230,6 +232,9 @@ def spreads_db(tmp_path, monkeypatch):
     # never reads the checkout's trading DB (risk-envelope Task 3). The account-stop tests put
     # the real reader back on an isolated trading DB.
     monkeypatch.setattr(SpreadsService, "_account_state", lambda self: (False, False))
+    # Likewise the spreads_paper switch (Task 7) reads "on" here, so a paper-configured test
+    # trades paper as it always did; the switch's own tests put the real reader back.
+    monkeypatch.setattr(_service_mod, "_paper_switch_on", lambda: True)
     monkeypatch.setattr(st, "_engine", None)
     monkeypatch.setattr(st, "_SessionLocal", None)
     monkeypatch.setattr(st, "_resolve_url", lambda: f"sqlite:///{tmp_path / 'spreads.db'}")
@@ -1268,3 +1273,81 @@ async def test_a_broker_db_mismatch_blocks_entries(tmp_path, spreads_db) -> None
     assert svc.entries_blocked and "reconcile" in svc.entries_blocked
     assert _candidate_count(spreads_db) == 0
     assert any("disagree" in m for m in notifier.sent)
+
+
+# ---------------------------------------------------------------- risk envelope Task 7
+# Shadow until the paper bar (ruling E1, P8): config mode "paper" trades paper only while the
+# data-gated switch spreads_paper is "on"; a PASSed backtest report turns it on (in paper only).
+
+
+async def test_paper_config_trades_shadow_until_the_switch(
+    tmp_path, spreads_db, db, monkeypatch
+) -> None:
+    monkeypatch.setattr(_service_mod, "_paper_switch_on", REAL_PAPER_SWITCH)
+    clock = [T0945]
+    # The paper executor run() would have built; the service swaps it for a simulated one.
+    svc, _, notifier = make(tmp_path, clock, ONE_A_DAY.model_copy(update={"mode": "paper"}))
+    assert svc.effective_mode() == "shadow" and svc.configured_mode == "paper"
+    assert svc.executor.cfg.mode == "shadow"  # type: ignore[attr-defined]
+    await svc.tick()
+    clock[0] = T1005
+    await svc.tick()
+    assert len(spreads_db.open_positions("shadow")) == 1
+    assert spreads_db.open_positions("paper") == []
+    assert any("shadow until the backtest passes" in m for m in notifier.seen)
+
+
+async def test_the_switch_on_lets_paper_trade(tmp_path, spreads_db, db, monkeypatch) -> None:
+    from src.storage.envelope_switches import set_switch
+
+    monkeypatch.setattr(_service_mod, "_paper_switch_on", REAL_PAPER_SWITCH)
+    set_switch("spreads_paper", "on", source="cli")
+    svc, _, _ = _paper(tmp_path, [T0945], RecordingExecutor())
+    assert svc.effective_mode() == "paper" and svc.configured_mode == "paper"
+    assert svc.books[0][0] == "paper"
+
+
+async def test_shadow_config_never_trades_paper(tmp_path, spreads_db, db, monkeypatch) -> None:
+    from src.storage.envelope_switches import set_switch
+
+    monkeypatch.setattr(_service_mod, "_paper_switch_on", REAL_PAPER_SWITCH)
+    set_switch("spreads_paper", "on", source="cli")
+    svc, _, _ = make(tmp_path, [T0945], ONE_A_DAY)  # mode: shadow
+    assert svc.effective_mode() == "shadow"
+
+
+async def test_an_unreadable_switch_reads_shadow(tmp_path, spreads_db, monkeypatch) -> None:
+    import src.storage.envelope_switches as sw
+
+    def broken(name):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(_service_mod, "_paper_switch_on", REAL_PAPER_SWITCH)
+    monkeypatch.setattr(sw, "get_switch", broken)
+    assert _service_mod.resolve_mode(PAPER) == "shadow"
+
+
+async def test_paper_spreads_open_at_a_downgrade_are_still_closed(
+    tmp_path, spreads_db, db, monkeypatch
+) -> None:
+    """A restart onto the switch (off) with a paper spread still open: new entries go to the
+    shadow book, and the open paper spread is managed to its close by the wind-down executor."""
+    monkeypatch.setattr(_service_mod, "_paper_switch_on", REAL_PAPER_SWITCH)
+    _paper_spread(spreads_db, contracts=1)
+    clock = [T1100]
+    wind_down = RecordingExecutor()
+    broker = PaperBroker(clock)
+    broker.legs = {6790: -1.0, 6740: 1.0}
+    svc = SpreadsService(
+        broker,
+        SpreadExecutor(None, broker, PAPER, now=lambda: clock[0]),
+        FakeNotifier(),
+        PAPER,
+        halt_path=tmp_path / "halt",
+        now=lambda: clock[0],
+        wind_down_executor=wind_down,
+    )
+    assert svc.effective_mode() == "shadow"
+    await svc.tick()  # profit-take quotes: the paper spread closes through the paper executor
+    assert wind_down.closes == [1]
+    assert spreads_db.open_positions("paper") == []

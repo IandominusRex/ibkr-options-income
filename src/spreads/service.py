@@ -181,6 +181,30 @@ def _right(side: str) -> Literal["C", "P"]:
     return "P" if side == "put" else "C"
 
 
+DOWNGRADE_NOTE = "shadow until the backtest passes"
+
+
+def _paper_switch_on() -> bool:
+    """The data-gated switch ``spreads_paper`` (risk-envelope Task 7, ruling E1) reads "on". A
+    PASSed backtest report turns it on in paper; it reads its default (off) in live. Imported
+    lazily: ``src.storage`` stays this module's one allowance and loads only when called."""
+    from src.storage.envelope_switches import get_switch
+
+    return get_switch("spreads_paper") == "on"
+
+
+def resolve_mode(cfg: SpreadsCfg) -> str:
+    """The book that actually trades: ``paper`` only when the config says paper **and** the
+    switch is on; anything else, an unreadable switch included, is ``shadow``."""
+    if cfg.mode != "paper":
+        return cfg.mode
+    try:
+        return "paper" if _paper_switch_on() else "shadow"
+    except Exception:
+        log.exception("spreads: the spreads_paper switch is unreadable, trading shadow")
+        return "shadow"
+
+
 class SpreadsService:
     def __init__(
         self,
@@ -193,11 +217,28 @@ class SpreadsService:
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         picker: Picker | None = None,
         baseline_executor: Executor | None = None,
+        mode: str | None = None,
+        wind_down_executor: Executor | None = None,
     ) -> None:
+        # Shadow until the paper bar (risk-envelope Task 7): *mode* is the book run() resolved
+        # (resolve_mode), else it is resolved here once. A downgraded paper config trades the
+        # shadow book: self.cfg carries the effective mode, so every use of cfg.mode below is
+        # the traded book's, and a paper SpreadExecutor handed in is swapped for a simulated one.
+        self.configured_mode = cfg.mode
+        effective = mode or resolve_mode(cfg)
+        if effective != cfg.mode:
+            cfg = cfg.model_copy(update={"mode": effective})
+            if isinstance(executor, SpreadExecutor) and executor.cfg.mode != effective:
+                executor = SpreadExecutor(None, broker, cfg, now=now)
         self.broker = broker
         self.executor = executor
         self.notifier = notifier
         self.cfg = cfg
+        # Paper spreads still open when the book was downgraded are closed by this executor
+        # (exits keep running); it never opens anything.
+        self.wind_down_executor: Executor | None = (
+            wind_down_executor if self.configured_mode == "paper" and effective != "paper" else None
+        )
         self.halt_path = halt_path
         self.now = now
         self.gex_chain: ChainSnapshot | None = None
@@ -220,6 +261,12 @@ class SpreadsService:
             self.baseline_executor = baseline_executor or SpreadExecutor(
                 None, broker, cfg.model_copy(update={"mode": "shadow"}), now=now
             )
+        log.info(
+            "spreads: trading %s (configured %s)%s",
+            effective,
+            self.configured_mode,
+            f", {DOWNGRADE_NOTE}" if self.downgraded else "",
+        )
         self._pending: _PendingPick | None = None
         self._brief_task: asyncio.Task[SpreadBriefResult] | None = None
         self._brief_day: date | None = None
@@ -227,6 +274,21 @@ class SpreadsService:
         # An opening order that may still fill (cancel unconfirmed): what is needed to book it.
         self._late_open: dict[str, tuple[SpreadCandidate, str, Any, int | None, str | None]] = {}
         self._account_unreadable = False  # set by _account_state when its read failed
+
+    def effective_mode(self) -> str:
+        """The traded book: ``paper`` only when configured paper and ``spreads_paper`` is on."""
+        return self.cfg.mode
+
+    @property
+    def downgraded(self) -> bool:
+        return self.configured_mode != self.cfg.mode
+
+    def _managed_books(self) -> list[tuple[str, Executor]]:
+        """Every book whose exits run: the traded books, plus the paper wind-down."""
+        out = list(self.books)
+        if self.wind_down_executor is not None:
+            out.append(("paper", self.wind_down_executor))
+        return out
 
     @property
     def books(self) -> list[tuple[str, Executor]]:
@@ -310,7 +372,7 @@ class SpreadsService:
         """Book what an unresolved order filled after the executor reported it, so spreads.db
         follows the broker instead of blocking entries on a mismatch nobody can clear."""
         prefix = self.cfg.order_ref_prefix
-        for mode, executor in self.books:
+        for mode, executor in self._managed_books():
             read = getattr(executor, "late_fills", None)
             if read is None:
                 continue
@@ -462,6 +524,7 @@ class SpreadsService:
                 mode=self.cfg.mode,
                 underlying=self.cfg.underlying,
                 map_retry_min=int(_MAP_RETRY.total_seconds() // 60),
+                mode_note=DOWNGRADE_NOTE if self.downgraded else None,
             )
         return self._card
 
@@ -1318,6 +1381,10 @@ class SpreadsService:
             await self._guard(
                 "manage" if i == 0 else f"manage:{mode}", self._manage_book(now, mode, executor)
             )
+        if self.wind_down_executor is not None:
+            await self._guard(
+                "manage:wind_down", self._manage_book(now, "paper", self.wind_down_executor)
+            )
 
     async def _manage_book(self, now: datetime, mode: str, executor: Executor) -> None:
         positions = store.open_positions(mode)
@@ -1547,8 +1614,15 @@ async def run(
 
     store.init_spreads_db()
     client_id = cfg.ibkr.client_ids["spreads"]
+    # Shadow until the paper bar (risk-envelope Task 7): resolved once, here, so the executor
+    # and the service agree on the book for the life of the process.
+    mode = resolve_mode(sc)
+    traded = sc.model_copy(update={"mode": mode})
     log.warning(
-        "=" * 60 + "\n  SPREADS SERVICE  |  mode=%s  port=%s  clientId=%s  ai=%s\n" + "=" * 60,
+        "=" * 60
+        + "\n  SPREADS SERVICE  |  mode=%s (configured %s)  port=%s  clientId=%s  ai=%s\n"
+        + "=" * 60,
+        mode,
         sc.mode,
         cfg.ibkr_port,
         client_id,
@@ -1585,11 +1659,16 @@ async def run(
         )
     service = SpreadsService(
         broker,
-        SpreadExecutor(ib, broker, sc),
+        SpreadExecutor(ib, broker, traded),
         notifier,
         sc,
         halt_path=cfg.spreads_halt_path(),
         picker=picker,
+        mode=mode,
+        # Closes only, for paper spreads left open by a paper run before the downgrade.
+        wind_down_executor=(
+            SpreadExecutor(ib, broker, sc) if sc.mode == "paper" and mode != "paper" else None
+        ),
     )
     # One attempt per pass at startup: this loop is the retry, and the full backoff (about
     # 105 s with the defaults) would hold off the open-spreads alert for that long.

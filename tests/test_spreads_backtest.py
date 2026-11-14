@@ -76,7 +76,15 @@ CFG = _BASE.model_copy(
                 "let_expire_max_debit": 0.05,
             }
         ),
-        "execution": _BASE.execution.model_copy(update={"commission_per_contract": 0.65}),
+        # The fill mechanics are the haircut's: the cost standard's slippage is pinned at 0 here
+        # and exercised by its own test below.
+        "execution": _BASE.execution.model_copy(
+            update={
+                "commission_per_contract": 0.65,
+                "shadow_slippage_per_leg": 0.0,
+                "slippage_margin_per_leg": 0.0,
+            }
+        ),
         "backtest": _BASE.backtest.model_copy(update={"trade_scale": 10.0, "fill_haircut": 0.5}),
         "gex": _BASE.gex.model_copy(
             update={"negative_gamma_action": "skip", "flip_buffer_pct": 0.002}
@@ -225,28 +233,127 @@ def test_the_move_trigger_sells_puts_after_a_stalled_flush() -> None:
     assert t.exit_reason == "profit_take" and t.hold_minutes == pytest.approx(70.0)
 
 
-def test_size_is_half_a_percent_of_the_capital_it_is_given() -> None:
+def test_the_backtest_sizes_at_half_a_percent_of_the_stated_nlv() -> None:
     roomy = CFG.model_copy(update={"risk": CFG.risk.model_copy(update={"max_contracts": 100})})
     later = {M1100: {(6790.0, "P"): (1.0, 1.2), (6740.0, "P"): (0.2, 0.3)}}
-    (big,) = run_day(_day(later), roomy, capital_usd=2_000_000.0)
-    (small,) = run_day(_day(later), roomy, capital_usd=650_000.0)
+    (big,) = run_day(_day(later), roomy, nlv_usd=2_000_000.0)
+    (small,) = run_day(_day(later), roomy, nlv_usd=650_000.0)
     # Max loss per SPY-equivalent contract = (50 − 2.95) × 100 / 10 = $470.50.
-    assert (big.contracts, small.contracts) == (21, 6)  # ⌊0.5% × capital ÷ $470.50⌋
+    assert (big.contracts, small.contracts) == (21, 6)  # ⌊0.5% × NLV ÷ $470.50⌋
     assert big.pnl_usd == pytest.approx(21 * ((2.95 - 0.925) * 100 / 10 - 4 * 0.65))
+    # The book's notional starting capital no longer sizes anything.
+    rich = roomy.model_copy(
+        update={"risk": roomy.risk.model_copy(update={"starting_capital_usd": 10_000_000.0})}
+    )
+    (same,) = run_day(_day(later), rich, nlv_usd=650_000.0)
+    assert same.contracts == 6
 
 
-def test_run_backtest_compounds_realized_pnl_into_the_next_days_capital(monkeypatch) -> None:
+def test_run_backtest_compounds_realized_pnl_into_the_next_days_nlv(monkeypatch) -> None:
     import src.spreads.backtest.engine as engine
 
     seen: list[float | None] = []
 
-    def fake_run_day(data, cfg, capital_usd=None):
-        seen.append(capital_usd)
+    def fake_run_day(data, cfg, nlv_usd=None):
+        seen.append(nlv_usd)
         return [SimpleNamespace(pnl_usd=500.0)]
 
     monkeypatch.setattr(engine, "run_day", fake_run_day)
-    engine.run_backtest(FakeClient(), CFG, date(2026, 10, 9), date(2026, 10, 12))
-    assert seen == [100_000.0, 100_500.0]
+    sessions: list[date] = []
+    engine.run_backtest(
+        FakeClient(),
+        CFG,
+        date(2026, 10, 9),
+        date(2026, 10, 12),
+        nlv_usd=650_000.0,
+        sessions=sessions,
+    )
+    assert seen == [650_000.0, 650_500.0]
+    assert sessions == [date(2026, 10, 9), date(2026, 10, 12)]
+
+
+def test_the_backtest_pays_the_cost_standard_when_it_is_wider_than_the_haircut() -> None:
+    # $0.025 + $0.025 a leg on SPY = 0.5 SPX point a leg, 1.0 a side (two legs); the 0.5
+    # haircut of the 0.30 entry gap is only 0.15.
+    wide = CFG.model_copy(
+        update={
+            "execution": CFG.execution.model_copy(
+                update={"shadow_slippage_per_leg": 0.025, "slippage_margin_per_leg": 0.025}
+            )
+        }
+    )
+    later = {M1100: {(6790.0, "P"): (1.0, 1.2), (6740.0, "P"): (0.2, 0.3)}}
+    (t,) = run_day(_day(later), wide)
+    assert t.entry_credit == pytest.approx(3.10 - 1.0)  # mid less the standard, not 2.95
+    assert t.exit_debit == pytest.approx(0.85 + 1.0)
+
+
+def _bt_trade(day: date, pnl: float):
+    return SimpleNamespace(
+        day=day,
+        pnl_usd=pnl,
+        regime="positive",
+        side="put",
+        trigger="move",
+        gap_day=False,
+        exit_reason="profit_take" if pnl > 0 else "stop_loss",
+        hold_minutes=30.0,
+        mae_usd=0.0,
+    )
+
+
+def _sessions(n: int) -> list[date]:
+    from src.common.market_hours import is_trading_day
+
+    out, d = [], date(2025, 1, 2)
+    while len(out) < n:
+        if is_trading_day(d):
+            out.append(d)
+        d = d.fromordinal(d.toordinal() + 1)
+    return out
+
+
+def test_the_report_writes_a_result_file(tmp_path) -> None:
+    from scripts.spreads_backtest import write_report
+    from src.common.schemas import EnvelopeReportResult
+    from src.spreads.report import paper_bar
+
+    days = _sessions(80)
+    good = [_bt_trade(d, 120.0 if i % 5 else -150.0) for i, d in enumerate(days)]
+    result = paper_bar(good, days, 650_000.0, seed=1)
+    assert result.id == "spreads_paper" and result.switch == "spreads_paper"
+    assert result.value_on_pass == "on" and result.passed is True
+    m = result.metrics
+    assert m["sessions"] == 80 and m["trades"] == 80
+    assert m["mean_pnl_per_session"] == pytest.approx((64 * 120.0 - 16 * 150.0) / 80)
+    assert m["bootstrap_p5_mean"] is not None and m["bootstrap_p5_mean"] > 0
+    assert m["worst_day"] == -150.0 and m["worst_20_sessions"] > -0.02 * 650_000.0
+    assert m["breakeven_win_rate"] == pytest.approx(150 / 270, abs=1e-3)
+    assert "regime" in str(m["tags"])
+    path = write_report(result, tmp_path)
+    assert path == tmp_path / "spreads_paper.json"
+    back = EnvelopeReportResult.model_validate_json(path.read_text())
+    assert back.passed is True and back.metrics["sessions"] == 80
+    # A book that loses on average fails the bar.
+    bad = [_bt_trade(d, -40.0 if i % 2 else 30.0) for i, d in enumerate(days)]
+    assert paper_bar(bad, days, 650_000.0, seed=1).passed is False
+    # So does one whose worst 20 sessions lose more than 2% of NLV, however good the mean.
+    deep = [_bt_trade(d, -1_000.0 if 10 <= i < 30 else 2_000.0) for i, d in enumerate(days)]
+    deep_bar = paper_bar(deep, days, 650_000.0, seed=1)
+    assert deep_bar.metrics["worst_20_sessions"] == pytest.approx(-20_000.0)
+    assert deep_bar.passed is False
+
+
+def test_too_few_sessions_is_insufficient() -> None:
+    from src.spreads.report import paper_bar
+
+    days = _sessions(59)
+    result = paper_bar([_bt_trade(d, 100.0) for d in days], days, 650_000.0, seed=1)
+    assert result.passed is None and result.metrics["sessions"] == 59
+    # A session with no trade counts as a zero day, not as missing.
+    quiet = paper_bar([_bt_trade(days[0], 100.0)], _sessions(60), 650_000.0, seed=1)
+    assert quiet.metrics["sessions"] == 60
+    assert quiet.metrics["mean_pnl_per_session"] == pytest.approx(100.0 / 60)
 
 
 def test_overrides_change_only_what_is_asked() -> None:

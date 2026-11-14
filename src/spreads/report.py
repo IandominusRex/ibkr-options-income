@@ -8,14 +8,20 @@ side, trigger, gap day, exit reason), for live trade logs and backtests alike.
 
 from __future__ import annotations
 
+import random
 from collections import defaultdict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from statistics import mean
 from typing import Protocol
 
-from src.common.schemas import SpreadMenuItem, SpreadPickRecord, SpreadTradeRecord
+from src.common.schemas import (
+    EnvelopeReportResult,
+    SpreadMenuItem,
+    SpreadPickRecord,
+    SpreadTradeRecord,
+)
 
 
 @dataclass(frozen=True)
@@ -125,6 +131,86 @@ def format_extras(trades: Sequence[TaggedTrade]) -> str:
     return (
         f"avg hold {hold} · avg MAE {_usd(mean(maes) if maes else None)}"
         f" · worst MAE {_usd(max(maes) if maes else None)}"
+    )
+
+
+# --- The spreads paper bar (risk-envelope Task 7, ruling P8): the backtest decides paper.
+
+PAPER_BAR_CRITERION = (
+    "P8: the 5th percentile of 10,000 session-clustered bootstrap means of per-session P&L "
+    "after measured costs > 0, and the worst 20-session loss <= 2% of the stated NLV "
+    "(fewer than 60 sessions: insufficient data)"
+)
+PAPER_BAR_MIN_SESSIONS = 60
+
+
+class _DatedTrade(TaggedTrade, Protocol):
+    @property
+    def day(self) -> date: ...
+
+
+def paper_bar(
+    trades: Sequence[_DatedTrade],
+    sessions: Sequence[date],
+    nlv_usd: float,
+    *,
+    draws: int = 10_000,
+    seed: int = 0,
+    now: datetime | None = None,
+) -> EnvelopeReportResult:
+    """The P8 verdict on a backtest, as the result file ``scripts.envelope`` applies: a PASS sets
+    switch ``spreads_paper`` on (paper only). *sessions* are every day the backtest replayed,
+    traded or not (a session with no trade is a zero day, never a missing one). Deterministic
+    for a given *seed*."""
+    days = sorted(set(sessions))
+    by_day: dict[date, float] = dict.fromkeys(days, 0.0)
+    for t in trades:
+        by_day[t.day] = by_day.get(t.day, 0.0) + t.pnl_usd
+    series = [by_day[d] for d in sorted(by_day)]
+    n = len(series)
+    stats = compute_stats([t.pnl_usd for t in trades])
+    p5: float | None = None
+    if n:
+        rng = random.Random(seed)
+        means = sorted(sum(rng.choices(series, k=n)) / n for _ in range(draws))
+        p5 = means[int(0.05 * (draws - 1))]
+    window = min(20, n)
+    worst_20 = min((sum(series[i : i + window]) for i in range(n - window + 1)), default=None)
+    limit = -0.02 * nlv_usd
+    passed: bool | None
+    if n < PAPER_BAR_MIN_SESSIONS:
+        passed = None
+    else:
+        passed = p5 is not None and p5 > 0 and worst_20 is not None and worst_20 >= limit
+    tags = "; ".join(
+        f"{name}: "
+        + ", ".join(f"{v}={s.n} trades exp {_usd(s.expectancy)}" for v, s in groups.items())
+        for name, groups in tag_breakdowns(trades).items()
+    )
+    metrics: dict[str, float | str | None] = {
+        "sessions": n,
+        "trades": len(trades),
+        "nlv_usd": nlv_usd,
+        "mean_pnl_per_session": sum(series) / n if n else None,
+        "bootstrap_p5_mean": p5,
+        "bootstrap_draws": draws,
+        "win_rate": stats.win_rate,
+        "breakeven_win_rate": stats.breakeven_win_rate,
+        "worst_day": min(series) if series else None,
+        "worst_20_sessions": worst_20,
+        "worst_20_limit": limit,
+        "first_session": days[0].isoformat() if days else None,
+        "last_session": days[-1].isoformat() if days else None,
+        "tags": tags,
+    }
+    return EnvelopeReportResult(
+        id="spreads_paper",
+        passed=passed,
+        criterion=PAPER_BAR_CRITERION,
+        metrics=metrics,
+        switch="spreads_paper",
+        value_on_pass="on",
+        written_at=now or datetime.now(UTC),
     )
 
 
