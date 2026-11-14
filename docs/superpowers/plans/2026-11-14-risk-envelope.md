@@ -106,8 +106,9 @@ and the spec note). A review fix pass adds one commit.
 |---|---|---|---|---|---|
 | **Plan written** | done | (plan file + spec note, uncommitted) | not prototyped; anchors read against `main` at 854d493 and DB copies of 2026-11-13 | 2026-11-14 | Rulings section below; code facts C1-C8 |
 | **LES added** (spec rev 3) | done | (uncommitted) | scratch study only (spec §2.7) | 2026-11-14 | OR13-OR17 → L1-L8; Tasks 10a, 29a, 32a; Task 23 and P10 changed |
-| A0 setup | todo | | | | |
-| Section A entry / Tasks 1-2 / exit | todo | | | | |
+| A0 setup | done | eeab726 (on `main`, already committed: plan + spec rev 3) | 11 GiB free; worktree `.claude/worktrees/risk-envelope` on `feat/risk-envelope`, `.venv` + `web/node_modules` symlinked, `init_db()` run | 2026-11-14 | Ruling: A1 reads "A0 over 854d493"; HEAD is eeab726 (docs-only, one commit over 854d493) so the plan's anchors still hold. Cost if wrong: none |
+| Section A entry | done | | A1-A3 pass (anchors match, a few lines off the plan's cited numbers). A4 baseline: pytest 5784 passed / 1 skipped, ruff clean, mypy clean (361 files), vitest 1625 passed (153 files), tsc and eslint clean | 2026-11-14 | Orchestrator runs sections back to back without the stop-and-ask (operator instruction 2026-11-14: "run all sections to completion"); merge/push still asked. Section L (Task 39) is deferred by the plan and is not run |
+| Section A Tasks 1-2 / exit | todo | | | | |
 | Section B entry / Tasks 3-7 / exit | todo | | | | |
 | Section C entry / Tasks 8-10, 10a / exit | todo | | | | |
 | Section D entry / Tasks 11-15 / exit | todo | | | | |
