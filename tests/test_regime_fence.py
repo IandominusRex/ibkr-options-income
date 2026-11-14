@@ -47,8 +47,11 @@ DETERMINISTIC = sorted(
                 # risk-envelope Task 10a: the breadth oscillator and the Leveraged Entry Signal
                 "breadth",
                 "leveraged_entry",
+                # risk-envelope Task 11: the pure shock engine
+                "shock",
             )
         ),
+        SRC / "common" / "envelope_types.py",
         *(SRC / "regime").glob("*.py"),
         SRC / "storage" / "regime_state.py",
         SRC / "storage" / "les_state.py",
@@ -75,6 +78,16 @@ def test_the_les_modules_exist_and_are_on_the_deterministic_list() -> None:
         "analytics/leveraged_entry.py",
         "storage/les_state.py",
         "data/breadth_backend.py",
+    ):
+        assert (SRC / rel).exists(), rel
+        assert SRC / rel in DETERMINISTIC, rel
+
+
+def test_the_envelope_modules_exist_and_are_on_the_deterministic_list() -> None:
+    """Risk-envelope Tasks 11-13: the shock engine, its types, its inputs and the envelope."""
+    for rel in (
+        "analytics/shock.py",
+        "common/envelope_types.py",
     ):
         assert (SRC / rel).exists(), rel
         assert SRC / rel in DETERMINISTIC, rel
