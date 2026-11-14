@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from src.research.checks.warnings import warnings_for
 
-LEVERAGED = {"TQQQ", "UPRO", "SOXL", "LABU", "TSLL", "DPST"}
+# UPRO and DPST left `leveraged_etfs` on 2026-11-14 (risk-envelope Task 9)
+LEVERAGED = {"TQQQ", "SOXL", "LABU", "TSLL"}
 
 
 def test_a_leveraged_etf_carries_a_decay_warning() -> None:
@@ -31,9 +32,9 @@ def test_cc_only_names_are_marked_never_assignment_eligible() -> None:
 
 
 def test_the_deliberate_would_own_exceptions_say_so() -> None:
-    """TQQQ, UPRO, SOXL and (since 2026-09-29) DPST are in would_own on purpose; the UI must
+    """TQQQ and SOXL are in would_own on purpose (UPRO and DPST left on 2026-11-14); the UI must
     not read as an oversight."""
-    for symbol in ("TQQQ", "UPRO", "SOXL", "DPST"):
+    for symbol in ("TQQQ", "SOXL"):
         details = " ".join(w.detail for w in warnings_for(symbol, is_etf=True, info={}))
         assert "deliberate" in details.lower()
 

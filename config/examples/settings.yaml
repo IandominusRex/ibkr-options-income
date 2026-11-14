@@ -205,6 +205,10 @@ market_data:
   # monitor. A `refresh` command ignores this — an operator asking for a fetch
   # gets one. P3-P4 M1; see Web plan/P3-P4-design.md §4.
   portfolio_snapshot_interval_minutes: 15
+  # Reference symbols (2026-11-14): the EOD run captures these beyond the universe, which they never
+  # enter. SPY left the universe for the spreads book, so its IV capture stopped on 2026-10-05.
+  reference_iv_symbols: [SPY]                    # joins the EOD daily-IV capture
+  reference_price_symbols: [SPY, "^VIX", "^VXN"] # joins the daily price append (the IV sanity check reads ^VIX/^VXN)
 
 claude:
   cli_command: "claude"

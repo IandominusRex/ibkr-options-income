@@ -410,6 +410,17 @@ Plan `docs/superpowers/plans/2026-11-14-risk-envelope.md` Tasks 8-10 and 10a, sp
   `csp_mode: normal` restores it. `vrp_waiver` is False for a leveraged name, so a leveraged signal lot meets
   the credit-below-fair-value floor like any other lot. `leveraged_sizing.enabled: false` still means the
   name is treated as unleveraged (the policy is part of that block).
+- **The universe template, SOXX and SPY's IV restarted (Task 9).** `config/examples/universe.yaml`: UPRO and
+  DPST out of `indexes`, `would_own`, `actively_wheeling` and `leveraged_etfs` (their `sectors` tags,
+  `strike_bands` and `leveraged_sizing.leverage` entries stay for a held lot); TQQQ and SOXL out of
+  `actively_wheeling` (still `would_own`, dip-watch); QQQ into `actively_wheeling`; SOXX into `indexes`
+  and `would_own` (dip-watch, `semis`, `regime.tech_linked`). `market_data.reference_iv_symbols` ([SPY])
+  and `reference_price_symbols` ([SPY, ^VIX, ^VXN]) feed the EOD IV capture and the daily price append
+  without touching the universe: SPY's IV stopped on 2026-10-05 when it left the universe for the spreads
+  book. **Known limitations:** the research page's decay warning (driven by `leveraged_etfs`) no longer
+  appears for UPRO or DPST, and the private `universe.yaml`, `risk_limits.yaml` and `settings.yaml` are not
+  touched by an update (Operator to-dos 2 and 3); `UNIVERSE_RESEARCH.md` is now `docs/archive/UNIVERSE_RESEARCH.md`
+  and was edited there.
 
 ## Bugs fixed (2026-11-12 — spreads late fill, regime flapping, roll noise)
 

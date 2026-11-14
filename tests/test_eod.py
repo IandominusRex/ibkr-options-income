@@ -849,8 +849,9 @@ def test_iv_symbols_include_holdings_and_order_oldest_first(monkeypatch):
         lambda syms: {"AAA": date(2026, 9, 28), "BBB": date(2026, 9, 11)},
     )
     out = eod_report._iv_symbols(held=["ZZZ", "AAA"])
-    # never-observed first (ZZZ, CCC — alphabetical tie-break), then oldest (BBB), then AAA
-    assert out == ["CCC", "ZZZ", "BBB", "AAA"]
+    # never-observed first (SPY, a reference symbol since 2026-11-14, ZZZ, CCC — alphabetical
+    # tie-break), then oldest (BBB), then AAA
+    assert out == ["CCC", "SPY", "ZZZ", "BBB", "AAA"]
 
 
 # ---------------------------------------------------------------------------
@@ -1160,3 +1161,36 @@ async def test_run_applies_account_summary_guard_and_writes_completion_key(
     completed = get_setting(EOD_COMPLETED_KEY)
     assert completed
     datetime.fromisoformat(completed)  # ISO-8601, parses without error
+
+
+# ---------------------------------------------------------------------------
+# Reference symbols (risk-envelope Task 9, 2026-11-14): SPY left the universe for the spreads
+# book, so its IV stopped on 2026-10-05; the IV sanity check also needs ^VIX and ^VXN closes.
+# `market_data.reference_*_symbols` add them to the EOD lists without touching the universe.
+# ---------------------------------------------------------------------------
+
+
+def test_reference_iv_symbols_join_the_eod_iv_list(monkeypatch):
+    from src.orchestrator import eod_report
+
+    monkeypatch.setattr(eod_report, "_universe_symbols", lambda: ["AAA"])
+    monkeypatch.setattr("src.storage.iv_history.latest_obs_dates", lambda syms: {})
+    out = eod_report._iv_symbols(held=[])
+    assert "SPY" in out and "AAA" in out  # SPY is not in the universe, and still gets its IV
+
+
+@pytest.mark.asyncio
+async def test_reference_price_symbols_join_the_daily_price_append(monkeypatch):
+    from src.orchestrator import eod_report
+
+    fetched: list[str] = []
+
+    def fake_fetch(sym, period):
+        fetched.append(sym)
+        return []
+
+    monkeypatch.setattr("src.analytics.price_data._fetch_yf_bars", fake_fetch)
+    monkeypatch.setattr("src.storage.price_history.append_bars", lambda sym, bars: 0)
+    await eod_report._append_daily_prices(["AAA"])
+    assert {"AAA", "SPY", "^VIX", "^VXN"} <= set(fetched)
+    assert len(fetched) == len(set(fetched))  # each symbol once

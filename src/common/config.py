@@ -311,6 +311,15 @@ class MarketDataCfg(BaseModel):
     # DB, so a monitor restart cannot burst snapshots.
     portfolio_snapshot_interval_minutes: int = 15
 
+    # Reference symbols (risk-envelope Task 9, 2026-11-14): read by the EOD run and nothing else,
+    # never part of the universe. SPY left the universe for the spreads book and its stored IV
+    # stopped on 2026-10-05 (`Config._spreads_isolated` forbids it there); the IV sanity check
+    # (Task 10) and the leveraged entry signal read ^VIX/^VXN closes from `price_history`.
+    # `reference_iv_symbols` join the EOD daily-IV capture, `reference_price_symbols` the daily
+    # price append (and `scripts/backfill_prices.py`).
+    reference_iv_symbols: list[str] = Field(default_factory=lambda: ["SPY"])
+    reference_price_symbols: list[str] = Field(default_factory=lambda: ["SPY", "^VIX", "^VXN"])
+
     @model_validator(mode="after")
     def _enforce_line_budget(self) -> MarketDataCfg:
         """`max_concurrent_lines` is the account's ~100-line market-data cap. A single chain
@@ -2381,6 +2390,7 @@ _DEFAULT_TECH_LINKED = [
     "QQQ",
     "TQQQ",
     "SMH",
+    "SOXX",
     "SOXL",
     "NVDA",
     "AMD",

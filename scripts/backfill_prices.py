@@ -28,6 +28,8 @@ log = get_logger(__name__)
 def _universe_symbols(cfg) -> list[str]:
     u = cfg.universe
     symbols = set(u.get("indexes", [])) | set(u.get("watchlist", [])) | set(u.get("would_own", []))
+    # the reference symbols (SPY, ^VIX, ^VXN) are fetched too; they never join the universe
+    symbols |= {str(s).upper() for s in cfg.market_data.reference_price_symbols}
     return sorted(symbols)
 
 

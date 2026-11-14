@@ -177,7 +177,7 @@ regime:
   enabled: true
   # Names governed by the stricter of the SPY and QQQ regimes (every other name follows SPY).
   # An explicit list: the sector tags misclassify e.g. TSLL as consumer and MARA as crypto.
-  tech_linked: [QQQ, TQQQ, SMH, SOXL, NVDA, AMD, AVGO, AAPL, MSFT, GOOGL, AMZN, META, PLTR, MAGS,
+  tech_linked: [QQQ, TQQQ, SMH, SOXX, SOXL, NVDA, AMD, AVGO, AAPL, MSFT, GOOGL, AMZN, META, PLTR, MAGS,
                 HACK, IGV, CRWD, NBIS, IONQ, RGTI, BABA, TSLL, MARA]
   csp:
     budget_multiplier:  {normal: 1.0, cautious: 0.7, stressed: 0.4, crisis: 0.1}

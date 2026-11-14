@@ -36,8 +36,9 @@ a CSP entry signal for them, so don't treat a DIP-WATCH name's price rise as a r
 a CSP candidate on it.
 
 SAFE_BETS — Core income (fund-manager grade, stable assignment):
-  QQQ  ~$470  IVR 18-40  CC+CSP  1.0-2.5%/mo   index; tech-heavy; DIP-WATCH
+  QQQ  ~$470  IVR 18-40  CC+CSP  1.0-2.5%/mo   index; tech-heavy; ACTIVELY_WHEELING (since 2026-11-14)
   SMH  ~$220  IVR 28-55  CC+CSP  2.0-4.0%/mo   semi sector ETF; diversified; DIP-WATCH
+  SOXX ~unk   IVR unk    CC+CSP  unk           semi ETF, SOXL's unlevered twin; no option history here yet; DIP-WATCH
   MAGS ~$55   IVR unk    CC+CSP  unk           Roundhill Magnificent Seven ETF; equal-weight
                                                 AAPL/MSFT/GOOGL/AMZN/META/NVDA/TSLA — heavily
                                                 overlaps other tech names below; ACTIVELY_WHEELING
@@ -72,14 +73,11 @@ MODERATE — Active income (elevated IV, real fundamentals):
                                                 correlated with BE (same AI-power thesis); ACTIVELY_WHEELING
   TEM is watchlist/CC-only, not in would_own.
 
-RISKY — leveraged, DELIBERATE would_own exception (TQQQ/UPRO/SOXL confirmed 2026-08-27, DPST
-confirmed 2026-09-29 — decay risk on assignment is accepted for these four specifically;
-ACTIVELY_WHEELING):
+RISKY — leveraged, would_own but DIP-WATCH (TQQQ/SOXL confirmed 2026-08-27 — decay risk on assignment is
+accepted for these two specifically). Since 2026-11-14 a CSP on either opens ONLY through the drawdown
+sleeve, so expect no leveraged CSP candidate outside it; UPRO and DPST were removed from the universe:
   TQQQ ~unk   IV high    CC+CSP  high          3× Nasdaq-100
-  UPRO ~unk   IV high    CC+CSP  high          3× S&P 500
   SOXL ~$25   IV 80-140% CC+CSP 182-534% ann   3× semi; -85% in 2022; decay accepted for this account
-  DPST ~$120  IV 70-110% CC+CSP high           3× regional banks; deliberate would_own exception
-                                                (2026-09-29); size small, prefer short DTE; verify OI
 
 RISKY — CC-only leveraged ETFs (NEVER would_own — no exception for these):
   LABU ~$20   IV 90-160% CC ONLY extreme       3× biotech + FDA binary risk; never assign
@@ -100,7 +98,7 @@ KEY RULES FOR REVIEW:
 - AAPL/MSFT premiums rarely exceed 1.2%/month — sanity-check yield claims
 - Defensive names (V and XLP/XLV/TLT) are LOW-IV — expect few signals; never inflate yield claims for them
 - Crypto cluster (MARA) is BTC-correlated
-- Leveraged ETFs: every review must note "assignment risk is NAV decay" — even for TQQQ/UPRO/SOXL/DPST,
+- Leveraged ETFs: every review must note "assignment risk is NAV decay" — even for TQQQ/SOXL,
   which are would_own despite this (a deliberate, accepted exception, not an oversight)
 - BABA: every review must note ADR/geopolitical risk
 - MARA/RGTI/RKLB/ASTS/BE and other RISKY names: every review must note speculative nature and cap sizing reminder

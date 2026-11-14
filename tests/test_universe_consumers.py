@@ -238,7 +238,44 @@ def test_csp_eligibility_matches_operator_decision():
     from src.common.config import get_config
 
     u = get_config().universe
-    assert {"BAC", "DPST"} <= set(u["would_own"]) and {"BAC", "DPST"} <= set(u["actively_wheeling"])
+    assert "BAC" in u["would_own"] and "BAC" in u["actively_wheeling"]
     assert "AMD" not in u["would_own"]  # AMD: covered calls only
-    # DPST is now a deliberate leveraged exception, not CC-only
-    assert "DPST" in set(u["leveraged_etfs"]) & set(u["would_own"])
+    # DPST (and UPRO) left the universe on 2026-11-14 (risk-envelope Task 9); TQQQ and SOXL are
+    # the remaining deliberate leveraged exceptions, dip-watch only
+    assert "DPST" not in u["would_own"] and "DPST" not in u["actively_wheeling"]
+    assert {"TQQQ", "SOXL"} <= set(u["leveraged_etfs"]) & set(u["would_own"])
+
+
+# --------------------------------------------------------------------------- #
+# Risk-envelope Task 9 (2026-11-14): UPRO and DPST out, SOXX dip-watch, QQQ wheeling
+# --------------------------------------------------------------------------- #
+
+
+def test_reference_symbols_never_enter_the_universe():
+    """`market_data.reference_*_symbols` feed the EOD lists only: SPY belongs to the spreads
+    book (`Config._spreads_isolated`), and ^VIX/^VXN are not tradable names."""
+    u = effective_universe()
+    for sym in ("SPY", "^VIX", "^VXN"):
+        for key in ("indexes", "watchlist", "would_own", "actively_wheeling"):
+            assert sym not in u.get(key, []), (sym, key)
+    md = get_config().market_data
+    assert md.reference_iv_symbols == ["SPY"]
+    assert md.reference_price_symbols == ["SPY", "^VIX", "^VXN"]
+
+
+def test_the_universe_template_after_the_leveraged_policy():
+    u = get_config().universe
+    scanned = set(u["indexes"]) | set(u["watchlist"]) | set(u["would_own"])
+    for dropped in ("UPRO", "DPST"):
+        assert dropped not in scanned | set(u["actively_wheeling"]) | set(u["leveraged_etfs"])
+    # TQQQ and SOXL stay would_own (dip-watch) but leave the core rotation
+    assert {"TQQQ", "SOXL"} <= set(u["would_own"])
+    assert not {"TQQQ", "SOXL"} & set(u["actively_wheeling"])
+    # QQQ moves into the rotation; SOXX arrives as dip-watch with its own sector tag
+    assert "QQQ" in u["actively_wheeling"] and "QQQ" in u["would_own"]
+    assert "SOXX" in u["indexes"] and "SOXX" in u["would_own"]
+    assert "SOXX" not in u["actively_wheeling"]
+    assert u["sectors"]["SOXX"] == u["sectors"]["SMH"] == "semis"
+    # every name that stays in the rotation is also CSP-eligible
+    assert set(u["actively_wheeling"]) <= set(u["would_own"])
+    assert "SOXX" in get_config().risk["regime"]["tech_linked"]

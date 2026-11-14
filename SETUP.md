@@ -305,6 +305,19 @@ Note that holding a name does not move it out of its bucket: a held `actively_wh
 its 0.5% either-way gate *and* gains the 2%-rally trigger, and a held dip-watch name keeps its 3%
 dip trigger and gains the same. The rules add up rather than replacing each other (2026-08-28).
 
+**2026-11-14 (risk envelope).** The shipped template drops UPRO and DPST (out of `indexes`,
+`would_own`, `actively_wheeling` and `leveraged_etfs`; their `sectors`/`strike_bands` tags and their
+`leveraged_sizing.leverage` entries stay so a lot you still hold keeps its sector and its leverage), takes
+TQQQ and SOXL out of `actively_wheeling` (they stay `would_own`, dip-watch, and a CSP on either opens only
+through the drawdown sleeve), moves QQQ into `actively_wheeling`, and adds SOXX (SOXL's unlevered twin) to
+`indexes` and `would_own` as dip-watch with `sectors: SOXX: semis`. Your private `universe.yaml` is not
+touched by an update: make the same edits by hand, add `SOXX` to `regime.tech_linked` in your private
+`risk_limits.yaml`, add `market_data.reference_iv_symbols: [SPY]` and
+`market_data.reference_price_symbols: [SPY, "^VIX", "^VXN"]` to your private `settings.yaml` (the code
+defaults match, so this only makes them visible), then run `python -m scripts.backfill_prices` once so SOXX,
+SPY, `^VIX` and `^VXN` have price history (SPY's IV restarts with the next EOD run; `python -m
+scripts.backfill_iv --symbols SPY,SOXX` fills the past year if you want rank history immediately).
+
 Tickers you've decided you'll never trade don't need to stay in `universe.yaml` at all — move them
 to `config/universe_archive.yaml` instead (reference-only, never loaded by the application) so the
 reasoning is easy to find later instead of just disappearing.

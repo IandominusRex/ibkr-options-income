@@ -32,9 +32,11 @@
 #   moderate  — active income: elevated IV, real fundamentals (META/PLTR/HOOD/SOFI/HIMS)
 #   risky     — speculative / high-IV: premium income only, assignment is a risk event
 #             Leveraged ETFs (LABU/TSLL) — CC-only, NEVER in would_own (daily-reset decay)
-#             TQQQ/UPRO/SOXL/DPST — leveraged, but a DELIBERATE would_own exception (TQQQ/UPRO/SOXL
-#             confirmed 2026-08-27; DPST confirmed 2026-09-29: decay risk on assignment is
-#             accepted for these four specifically)
+#             TQQQ/SOXL: would_own, CSPs only through the drawdown sleeve, 2026-11-14 (they are
+#             dip-watch, not actively_wheeling; the sleeve is `regime_limits.sleeve_lot` and
+#             `leveraged_sizing.csp_mode: drawdown_only` gives no other leveraged CSP a lot);
+#             UPRO/DPST dropped 2026-11-14 (their `leverage` entries stay in risk_limits.yaml for
+#             any lot still held)
 #             Individual speculative names (MARA/RGTI/ASTS/RKLB) — CSP only, hard position limits
 #
 # Archived tickers (things you've decided you'll never trade) live in
@@ -51,6 +53,7 @@ indexes:
   # SPY is reserved for the daily credit-spread book (config/spreads.yaml → book_underlyings)
   - QQQ          # Nasdaq-100; slightly higher IV than SPY
   - SMH          # Semiconductor sector proxy; good OI
+  - SOXX         # Semiconductor ETF, SOXL's unlevered twin (beta 2.96 / R^2 0.998 against SOXL); dip-watch (2026-11-14), no option history yet
   - MAGS         # Roundhill Magnificent Seven ETF; equal-weight AAPL/MSFT/GOOGL/AMZN/META/NVDA/TSLA
                  # NOTE: heavily overlaps GOOGL/NVDA/AMZN below — same tech-sector bucket
 
@@ -64,13 +67,10 @@ indexes:
   - HACK         # Cybersecurity ETF
   - IGV          # Software ETF
 
-  # risky — leveraged, DELIBERATE would_own exception (TQQQ/UPRO/SOXL confirmed 2026-08-27;
-  # DPST confirmed 2026-09-29)
-  - TQQQ         # 3× Nasdaq-100; daily-reset decay accepted for CSP/CC
-  - UPRO         # 3× S&P 500; daily-reset decay accepted for CSP/CC
-  - SOXL         # 3× Semiconductor; annualized CC yields 180–530%; daily-reset decay accepted
-  - DPST         # 3× Regional Banks; interest-rate sensitive; good CC premiums; would_own
-                 # exception (2026-09-29) — assignment means holding a daily-reset product
+  # risky — leveraged, would_own but CSPs only through the drawdown sleeve (2026-11-14);
+  # UPRO and DPST were dropped the same day
+  - TQQQ         # 3× Nasdaq-100; daily-reset decay accepted; dip-watch, CSP only via the drawdown sleeve
+  - SOXL         # 3× Semiconductor; annualized CC yields 180–530%; dip-watch, CSP only via the drawdown sleeve
 
   # risky — CC-only leveraged ETFs; NEVER add to would_own
   - LABU         # 3× Biotech; binary FDA gap risk on top of leverage decay
@@ -138,11 +138,7 @@ actively_wheeling:
   - RKLB
   - RGTI
   - MARA
-  # risky — leveraged, deliberate would_own exception
-  - TQQQ
-  - UPRO
-  - SOXL
-  - DPST
+  - QQQ          # moved from dip-watch 2026-11-14 (the index sleeve's governing name)
 
 # ── CSP allowlist ─────────────────────────────────────────────────────────────
 
@@ -151,8 +147,8 @@ actively_wheeling:
 # = `actively_wheeling` (above) ∪ the "dip-watch" names below (pulled into a scan cycle only on
 # a ≥3% drop — see market_data.dip_pull_in_pct — not scanned every cycle like actively_wheeling).
 # Leveraged CC-only ETFs (LABU/TSLL) are intentionally excluded — assignment = owning a
-# decaying 3× product with no offsetting exception. DPST is a deliberate would_own exception
-# (2026-09-29) — see the actively_wheeling block above and the leveraged_etfs comment below.
+# decaying 3× product with no offsetting exception. TQQQ/SOXL are would_own but dip-watch, and a
+# CSP on either opens only through the drawdown sleeve (2026-11-14); UPRO/DPST are out.
 would_own:
   # actively_wheeling (see block above) — always CSP-eligible, always the core rotation
 
@@ -175,14 +171,13 @@ would_own:
   - RKLB
   - RGTI
   - MARA
-  - TQQQ
-  - UPRO
-  - SOXL
-  - DPST
+  - QQQ
 
   # dip-watch — would_own-eligible, but only scanned on a ≥3% drop (market_data.dip_pull_in_pct)
-  - QQQ
+  - TQQQ         # 3× Nasdaq-100: CSP only through the drawdown sleeve (2026-11-14)
+  - SOXL         # 3× Semiconductor: CSP only through the drawdown sleeve (2026-11-14)
   - SMH
+  - SOXX         # semis twin of SOXL; added 2026-11-14
   - HACK
   - IGV
   - AAPL
@@ -199,9 +194,10 @@ sectors:
   # Indexes
   QQQ: index
   SMH: semis
+  SOXX: semis
   MAGS: tech
   TQQQ: index
-  UPRO: index
+  UPRO: index   # dropped 2026-11-14; kept so a lot still held keeps its sector
 
   # Sector / diversifier ETFs
   XLV: healthcare
@@ -214,7 +210,7 @@ sectors:
   SOXL: semis
   LABU: biotech
   TSLL: consumer
-  DPST: financials
+  DPST: financials   # dropped 2026-11-14; kept so a lot still held keeps its sector
 
   # safe_bets stocks
   NVDA: semis
@@ -268,22 +264,21 @@ strike_bands:
   BE: 0.45
 
 # ---------------------------------------------------------------------------
-# Leveraged ETFs (2026-08-27; DPST moved into the exception set 2026-09-29).
+# Leveraged ETFs (2026-08-27; DPST moved into the exception set 2026-09-29; UPRO and DPST
+# dropped 2026-11-14).
 # Listed here once so the research checks layer (src/research/checks/warnings.py)
 # can surface the daily-reset decay warning without keeping a second hard-coded
 # copy. Membership rules, derived:
 #   • CC-only (never assignment-eligible) = leveraged_etfs − would_own
 #       → LABU / TSLL
 #   • Deliberate would_own exception       = leveraged_etfs ∩ would_own
-#       → TQQQ / UPRO / SOXL / DPST (TQQQ/UPRO/SOXL confirmed 2026-08-27; DPST
-#         confirmed 2026-09-29)
+#       → TQQQ / SOXL (confirmed 2026-08-27; CSPs only through the drawdown sleeve since
+#         2026-11-14)
 # Do not move a name between the two sets by editing here alone — the would_own
 # list is the source of truth for which side of the line a name sits on.
 # ---------------------------------------------------------------------------
 leveraged_etfs:
   - TQQQ
-  - UPRO
   - SOXL
-  - DPST
   - LABU
   - TSLL

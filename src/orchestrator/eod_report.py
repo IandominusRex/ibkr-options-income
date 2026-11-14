@@ -141,6 +141,16 @@ def _universe_symbols() -> list[str]:
     )
 
 
+def _reference_iv_symbols() -> list[str]:
+    """``market_data.reference_iv_symbols``: captured daily beyond the universe (SPY, 2026-11-14)."""
+    return [str(s).upper() for s in get_config().market_data.reference_iv_symbols]
+
+
+def _reference_price_symbols() -> list[str]:
+    """``market_data.reference_price_symbols``: SPY and the VIX family, never in the universe."""
+    return [str(s).upper() for s in get_config().market_data.reference_price_symbols]
+
+
 async def _append_one_iv(ib, sym: str, timeout: float) -> bool:
     """Fetch and store one symbol's most recent daily IV bar. Returns True iff a new row was
     inserted. Exceptions propagate — the caller decides what a failure means (first-pass
@@ -176,7 +186,9 @@ def _iv_symbols(held: list[str]) -> list[str]:
     """
     from src.storage.iv_history import latest_obs_dates
 
-    symbols = sorted(set(_universe_symbols()) | {s.upper() for s in held})
+    symbols = sorted(
+        set(_universe_symbols()) | {s.upper() for s in held} | set(_reference_iv_symbols())
+    )
     last = latest_obs_dates(symbols)
     return sorted(symbols, key=lambda s: (s in last, last.get(s, date.min), s))
 
@@ -283,6 +295,8 @@ async def _append_daily_prices(symbols: list[str]) -> None:
     loop = asyncio.get_running_loop()
     today = date.today()
     inserted = 0
+    # the reference symbols (SPY, ^VIX, ^VXN) ride along; each symbol is fetched once
+    symbols = list(dict.fromkeys([*symbols, *_reference_price_symbols()]))
     for sym in symbols:
         try:
             bars = await loop.run_in_executor(None, _fetch_yf_bars, sym, "5d")

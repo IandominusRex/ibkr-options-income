@@ -4,7 +4,11 @@ Deep-research findings (June 2026) on every ticker in `config/universe.yaml`.
 Used by Claude Code when analysing the codebase and injected (in compact form) into the
 trade-review prompt in `src/claude/prompts/strategist.py`.
 
-**Last updated:** 2026-10-10 (operator-confirmed) — AVGO, VST and BE added to `watchlist:` +
+**Last updated:** 2026-11-14 (risk-envelope plan, Task 9; operator rulings E7-E9) — UPRO and DPST
+removed from the universe's trading lists and `leveraged_etfs`; TQQQ and SOXL leave
+`actively_wheeling` and stay `would_own` (dip-watch), their CSPs only through the drawdown
+sleeve (`leveraged_sizing.csp_mode: drawdown_only`); QQQ moves into `actively_wheeling`; SOXX
+added as dip-watch — see "Changes — 2026-11-14" below. Prior update, 2026-10-10 (operator-confirmed) — AVGO, VST and BE added to `watchlist:` +
 `would_own` + `actively_wheeling`; CRWD promoted from dip-watch to `actively_wheeling`;
 JPM/WMT/UBER/TSLA/IWM (all dip-watch) archived to `config/universe_archive.yaml` — see
 "Additions — 2026-10-10" and "Archived — 2026-10-10" below. Prior update, 2026-09-29 — AMD un-archived back into `watchlist:` as
@@ -67,7 +71,10 @@ are dip-watch._
 - **Monthly premium at 0.30Δ:** ~1–2.5%  
 - **CC:** ✅ | **CSP:** ✅  
 - **Assignment:** Comfortable — tech-heavy index, no single-company earnings risk  
-- **Notes:** Higher IV than SPY due to tech concentration; premium is notably better.
+- **Notes:** Higher IV than SPY due to tech concentration; premium is notably better.  
+- **Tier (2026-11-14):** moved from dip-watch into `actively_wheeling`; it is the governing index of
+  TQQQ, so it also carries the leveraged entry signal's trend and pullback tests and counts
+  as `broad_index_etfs` once the envelope's index class lands.
 
 ### IWM — Russell 2000 ETF — ARCHIVED 2026-10-10
 
@@ -244,6 +251,9 @@ section below.
 _Renamed from "Tier 3" 2026-08-27 — same names, same research, organizational label only._
 
 ### SOXL — Direxion 3× Semiconductor Bull ETF
+- **Update 2026-11-14:** leaves `actively_wheeling` (stays `would_own`, dip-watch). A CSP opens
+  only through the drawdown sleeve (`leveraged_sizing.csp_mode: drawdown_only`); governing index
+  SOXX. The text below is the June 2026 research and the 2026-08-27 exception.
 - **Price (June 2026):** ~$25  
 - **IV typical range:** 80–140%  
 - **CC expected returns (verified):** 1.75–13.13% per trade; **182–534% annualized**  
@@ -272,7 +282,10 @@ _Renamed from "Tier 3" 2026-08-27 — same names, same research, organizational 
 - **CSP:** ❌ — leverage decay and TSLA correlation mean assignment is a trap  
 - **Notes:** Low price (~$1,500 to own 100 shares) makes CC entry accessible. Sell short-dated OTM calls only.
 
-### DPST — Direxion 3× Regional Banks Bull ETF
+### DPST — Direxion 3× Regional Banks Bull ETF — REMOVED 2026-11-14
+- **Removed 2026-11-14** (risk-envelope ruling E8): out of `indexes`, `would_own`,
+  `actively_wheeling` and `leveraged_etfs`. Its `leverage` entry stays in `risk_limits.yaml` and
+  its sector tag stays in `universe.yaml` for any lot still held. The research below is history.
 - **Price (June 2026):** ~$120  
 - **IV typical range:** 70–110%  
 - **CC:** ✅ — interest-rate sensitive; good premiums on rate announcement weeks  
@@ -465,15 +478,33 @@ doc-update table.
 
 ---
 
+## Changes — 2026-11-14 (risk-envelope plan, Task 9)
+
+- **UPRO** (3× S&P 500; it never had its own section here) — removed from the trading lists and
+  `leveraged_etfs`; its `leverage` entry and `index` sector tag stay for any held lot.
+- **DPST** — removed (see its section above).
+- **TQQQ, SOXL** — out of `actively_wheeling`, still `would_own` (dip-watch); CSPs only through the
+  drawdown sleeve. LABU and TSLL stay CC-only.
+- **QQQ** — into `actively_wheeling`.
+- **SOXX — iShares Semiconductor ETF** (new, `indexes` + `would_own`, dip-watch,
+  `sectors: SOXX: semis`, `regime.tech_linked`): SOXL's unlevered twin (SOXL's beta to it is 2.96,
+  R² 0.998) and its governing index for the leveraged entry signal. It has no option history in this
+  system yet: dip-watch exists so its chain liquidity is logged before any use. Price, IV rank and
+  premium ranges are not researched here and are deliberately not stated.
+- **SPY** keeps its IV capture (`market_data.reference_iv_symbols`) without re-entering the universe.
+
+---
+
 ## Key trading rules derived from research
 
 1. **Do not sell premium when IVR < 30.** The risk engine enforces this, but Claude should flag candidates near the floor as marginal.
 2. **TastyTrade standard: wait for IVR ≥ 50** before entering new premium positions in ideal conditions. IVR 30–49 = acceptable but not ideal.
 3. **Leveraged ETFs (LABU, TSLL):** CC-only. Assignment = NAV decay trap. Never sell CSPs.
-   **TQQQ, UPRO, SOXL, and (since 2026-09-29) DPST are a deliberate exception** (TQQQ/UPRO/SOXL
-   confirmed 2026-08-27; DPST confirmed 2026-09-29): this account accepts daily-reset decay risk
-   on assignment for these four specifically — they're in `would_own` and `actively_wheeling`.
-   The NAV-decay reasoning is unchanged; the risk is accepted, not absent.
+   **TQQQ and SOXL are a deliberate exception** (confirmed 2026-08-27): this account accepts
+   daily-reset decay risk on assignment for them — they are in `would_own` (dip-watch, no longer
+   `actively_wheeling` since 2026-11-14), and a CSP opens only through the drawdown sleeve.
+   UPRO and DPST were removed on 2026-11-14. The NAV-decay reasoning is unchanged; the risk is
+   accepted, not absent.
 4. **BABA:** Size conservatively (< `max_pct_per_ticker`). Flag ADR risk in every review.
 5. **MARA, RGTI, BE:** The `max_pct_per_ticker: 5%` cap limits damage. Flag as speculative in every review.
 6. **Earnings blackout:** The system enforces a 14-day blackout. Claude should call out if the DTE window is close to an expected earnings date that yfinance missed.
@@ -506,10 +537,10 @@ The risk engine caps sector exposure at 25% of net liquidation. Sector assignmen
 
 | Sector | Tickers |
 |---|---|
-| `index` | QQQ, TQQQ, UPRO |
-| `semis` | NVDA, AMD, AVGO, SMH, SOXL |
+| `index` | QQQ, TQQQ (UPRO: tag kept for a held lot) |
+| `semis` | NVDA, AMD, AVGO, SMH, SOXX, SOXL |
 | `tech` | AAPL, MSFT, GOOGL, AMZN, MAGS, META, PLTR, RGTI, BABA, NBIS, CRWD, IONQ, HACK, IGV |
-| `financials` | BAC, SOFI, HOOD, DPST, V |
+| `financials` | BAC, SOFI, HOOD, V (DPST: tag kept for a held lot) |
 | `consumer` | TSLL, XLP |
 | `healthcare` | HIMS, TEM, XLV |
 | `crypto` | MARA |
