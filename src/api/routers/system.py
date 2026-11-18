@@ -93,18 +93,30 @@ def _heartbeat_row(
 ) -> SystemRow:
     if heartbeat is None:
         return SystemRow(
-            as_of=now, key=key, label=label, state="unknown",
-            detail="not yet reporting", log_key=log_key,
+            as_of=now,
+            key=key,
+            label=label,
+            state="unknown",
+            detail="not yet reporting",
+            log_key=log_key,
         )
     age = now - heartbeat
     if age <= max_age:
         return SystemRow(
-            as_of=now, key=key, label=label, state="ok",
-            detail=f"last heartbeat {int(age.total_seconds())}s ago", log_key=log_key,
+            as_of=now,
+            key=key,
+            label=label,
+            state="ok",
+            detail=f"last heartbeat {int(age.total_seconds())}s ago",
+            log_key=log_key,
         )
     return SystemRow(
-        as_of=now, key=key, label=label, state="down",
-        detail=f"last heartbeat {int(age.total_seconds())}s ago (stale)", log_key=log_key,
+        as_of=now,
+        key=key,
+        label=label,
+        state="down",
+        detail=f"last heartbeat {int(age.total_seconds())}s ago (stale)",
+        log_key=log_key,
     )
 
 
@@ -137,28 +149,52 @@ def system_status(
     try:
         trading_db.execute(sa.text("SELECT 1"))
         rows.append(
-            SystemRow(as_of=now, key="trading_db", label="Trading DB", state="ok",
-                       detail="reachable", log_key=None)
+            SystemRow(
+                as_of=now,
+                key="trading_db",
+                label="Trading DB",
+                state="ok",
+                detail="reachable",
+                log_key=None,
+            )
         )
     except Exception:
         trading_ok = False
         rows.append(
-            SystemRow(as_of=now, key="trading_db", label="Trading DB", state="down",
-                       detail="unreachable", log_key=None)
+            SystemRow(
+                as_of=now,
+                key="trading_db",
+                label="Trading DB",
+                state="down",
+                detail="unreachable",
+                log_key=None,
+            )
         )
 
     research_ok = True
     try:
         research_db.execute(sa.text("SELECT 1"))
         rows.append(
-            SystemRow(as_of=now, key="research_db", label="Research DB", state="ok",
-                       detail="reachable", log_key=None)
+            SystemRow(
+                as_of=now,
+                key="research_db",
+                label="Research DB",
+                state="ok",
+                detail="reachable",
+                log_key=None,
+            )
         )
     except Exception:
         research_ok = False
         rows.append(
-            SystemRow(as_of=now, key="research_db", label="Research DB", state="down",
-                       detail="unreachable", log_key=None)
+            SystemRow(
+                as_of=now,
+                key="research_db",
+                label="Research DB",
+                state="down",
+                detail="unreachable",
+                log_key=None,
+            )
         )
 
     providers = breaker_states()
@@ -176,8 +212,14 @@ def system_status(
             provider_states.append("ok")
     if not provider_states:
         rows.append(
-            SystemRow(as_of=now, key="data_providers", label="Data providers", state="ok",
-                       detail="no providers registered", log_key=None)
+            SystemRow(
+                as_of=now,
+                key="data_providers",
+                label="Data providers",
+                state="ok",
+                detail="no providers registered",
+                log_key=None,
+            )
         )
     else:
         worst = _worst(provider_states)
@@ -190,8 +232,14 @@ def system_status(
         else:
             detail = f"{', '.join(half_open_names)} recovering"
         rows.append(
-            SystemRow(as_of=now, key="data_providers", label="Data providers", state=worst,
-                       detail=detail, log_key=None)
+            SystemRow(
+                as_of=now,
+                key="data_providers",
+                label="Data providers",
+                state=worst,
+                detail=detail,
+                log_key=None,
+            )
         )
 
     # The drain/monitor/ibkr-connected rows all read `trading_db` again below (a fresh
@@ -208,38 +256,72 @@ def system_status(
     if trading_ok:
         drain_hb = parse_setting_dt(read_setting(trading_db, _DRAIN_HEARTBEAT_KEY))
         rows.append(
-            _heartbeat_row(now, key="command_drain", label="Command drain (approval_service)",
-                            heartbeat=drain_hb, max_age=drain_max_age, log_key="approval")
+            _heartbeat_row(
+                now,
+                key="command_drain",
+                label="Command drain (approval_service)",
+                heartbeat=drain_hb,
+                max_age=drain_max_age,
+                log_key="approval",
+            )
         )
 
         monitor_hb = parse_setting_dt(read_setting(trading_db, MONITOR_HEARTBEAT_KEY))
         rows.append(
-            _heartbeat_row(now, key="intraday_monitor", label="Intraday monitor",
-                            heartbeat=monitor_hb, max_age=monitor_max_age, log_key="monitor")
+            _heartbeat_row(
+                now,
+                key="intraday_monitor",
+                label="Intraday monitor",
+                heartbeat=monitor_hb,
+                max_age=monitor_max_age,
+                log_key="monitor",
+            )
         )
     else:
         unreachable_detail = "trading DB unreachable — cannot read heartbeat"
         rows.append(
-            SystemRow(as_of=now, key="command_drain", label="Command drain (approval_service)",
-                       state="unknown", detail=unreachable_detail, log_key="approval")
+            SystemRow(
+                as_of=now,
+                key="command_drain",
+                label="Command drain (approval_service)",
+                state="unknown",
+                detail=unreachable_detail,
+                log_key="approval",
+            )
         )
         rows.append(
-            SystemRow(as_of=now, key="intraday_monitor", label="Intraday monitor",
-                       state="unknown", detail=unreachable_detail, log_key="monitor")
+            SystemRow(
+                as_of=now,
+                key="intraday_monitor",
+                label="Intraday monitor",
+                state="unknown",
+                detail=unreachable_detail,
+                log_key="monitor",
+            )
         )
 
     if research_ok:
         worker_hb = as_utc_opt(read_heartbeat())
         rows.append(
-            _heartbeat_row(now, key="research_worker", label="Research worker",
-                            heartbeat=worker_hb, max_age=_RESEARCH_WORKER_MAX_AGE,
-                            log_key="research")
+            _heartbeat_row(
+                now,
+                key="research_worker",
+                label="Research worker",
+                heartbeat=worker_hb,
+                max_age=_RESEARCH_WORKER_MAX_AGE,
+                log_key="research",
+            )
         )
     else:
         rows.append(
-            SystemRow(as_of=now, key="research_worker", label="Research worker",
-                       state="unknown", detail="research DB unreachable — cannot read heartbeat",
-                       log_key="research")
+            SystemRow(
+                as_of=now,
+                key="research_worker",
+                label="Research worker",
+                state="unknown",
+                detail="research DB unreachable — cannot read heartbeat",
+                log_key="research",
+            )
         )
 
     if trading_ok:
@@ -258,17 +340,21 @@ def system_status(
                 label="IBKR connection",
                 state=_worst([drain_leg_state, monitor_leg_state]),
                 detail=(
-                    f"approval_service: {drain_leg_detail}; "
-                    f"intraday_monitor: {monitor_leg_detail}"
+                    f"approval_service: {drain_leg_detail}; intraday_monitor: {monitor_leg_detail}"
                 ),
                 log_key=None,
             )
         )
     else:
         rows.append(
-            SystemRow(as_of=now, key="ibkr_connection", label="IBKR connection",
-                       state="unknown", detail="trading DB unreachable — cannot read heartbeat",
-                       log_key=None)
+            SystemRow(
+                as_of=now,
+                key="ibkr_connection",
+                label="IBKR connection",
+                state="unknown",
+                detail="trading DB unreachable — cannot read heartbeat",
+                log_key=None,
+            )
         )
 
     return SystemStatusResponse(as_of=now, rows=rows)

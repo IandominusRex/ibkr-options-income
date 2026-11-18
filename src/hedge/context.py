@@ -73,21 +73,22 @@ async def book_inputs(ib: Any, nlv: float) -> ShockInputs | None:
     cannot be read."""
     from src.analytics.shock_inputs import build_inputs
     from src.common.books import les_by_name_for_envelope, value_exposure
-    from src.ibkr.live_iv import live_option_ivs
+    from src.ibkr.live_iv import live_option_reads
     from src.ibkr.portfolio import get_positions
 
     try:
         positions = get_positions(ib)
         exposure = value_exposure()
         value_by_name = dict(exposure.by_name) if exposure.active and exposure.readable else {}
-        live = await live_option_ivs(ib, positions)
+        live = await live_option_reads(ib, positions)
         return await asyncio.to_thread(
             build_inputs,
             positions,
             nlv=nlv,
             value_by_name=value_by_name,
             les_by_name=les_by_name_for_envelope(),
-            ivs=live,
+            ivs=live.ivs,
+            spots=live.spots,
         )
     except Exception:
         log.warning("hedge: the book could not be measured", exc_info=True)

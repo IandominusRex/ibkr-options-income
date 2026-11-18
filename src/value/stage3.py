@@ -205,7 +205,7 @@ async def value_envelope(
     stock), so no value line is added a second time."""
     from src.analytics.shock import SCENARIOS, measure, name_move
     from src.analytics.shock_inputs import betas, build_inputs
-    from src.ibkr.live_iv import live_option_ivs
+    from src.ibkr.live_iv import live_option_reads
     from src.storage.envelope_state import room_for
     from src.storage.envelope_switches import enforce_mode, get_switch
 
@@ -214,8 +214,8 @@ async def value_envelope(
         return None
     try:
         nlv = float(account.net_liquidation)
-        live_ivs = await live_option_ivs(ib, positions)  # type: ignore[arg-type]
-        inputs = build_inputs(positions, nlv=nlv, value_by_name={}, ivs=live_ivs)
+        live = await live_option_reads(ib, positions)  # type: ignore[arg-type]
+        inputs = build_inputs(positions, nlv=nlv, value_by_name={}, ivs=live.ivs, spots=live.spots)
         extra, _flagged = betas([s for s in symbols if s not in inputs.betas])
         inputs = replace(inputs, betas={**inputs.betas, **extra})
         room = room_for(

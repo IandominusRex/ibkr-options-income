@@ -390,20 +390,22 @@ async def _send_envelope(
         from src.common.books import les_by_name_for_envelope, value_exposure
         from src.common.market_hours import today_et
         from src.engine.envelope import room as envelope_room
-        from src.ibkr.live_iv import live_option_ivs
+        from src.ibkr.live_iv import live_option_reads
 
         exposure = value_exposure()
         value_by_name = dict(exposure.by_name) if exposure.active and exposure.readable else {}
-        live = await live_option_ivs(ib, positions)
+        live = await live_option_reads(ib, positions)
         inputs = await asyncio.to_thread(
             build_inputs,
             positions,
             nlv=account.net_liquidation,
             value_by_name=value_by_name,
             les_by_name=les_by_name_for_envelope(),
-            ivs=live,
+            ivs=live.ivs,
+            spots=live.spots,  # the live underlying, not a stale stored close
         )
-        return envelope_room(inputs, today=today_et()), inputs
+        # a send-time measurement never starts the glide: only the scan's live one does
+        return envelope_room(inputs, today=today_et(), may_start=False), inputs
     except Exception:
         log.exception("send-time risk envelope could not be measured; puts fail closed when on")
         return None

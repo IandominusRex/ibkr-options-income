@@ -662,7 +662,9 @@ def _option_legs(
         # `strike is not None`, not a truthy check — a genuine (if unrealistic)
         # $0.00 strike must not be treated the same as "strike unknown", matching
         # portfolio_calendar's equivalent guard.
-        moneyness = _moneyness(spot, right, strike) if (right is not None and strike is not None) else None
+        moneyness = (
+            _moneyness(spot, right, strike) if (right is not None and strike is not None) else None
+        )
         legs.append(
             OptionLeg(
                 as_of=as_of,

@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+from dataclasses import dataclass
 from typing import Any
 
 from ib_async import IB
@@ -48,6 +49,20 @@ def _model_iv(ticker: Any) -> float | None:
     return iv
 
 
+def _und_price(ticker: Any) -> float | None:
+    """``modelGreeks.undPrice`` (the underlying's price the model IV was computed against) as a
+    positive number, else None."""
+    greeks = getattr(ticker, "modelGreeks", None)
+    raw = getattr(greeks, "undPrice", None) if greeks is not None else None
+    try:
+        px = float(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+    if px is None or math.isnan(px) or px <= 0:
+        return None
+    return px
+
+
 async def _await_ivs(tickers: list[Any], timeout: float) -> None:
     """Poll until every ticker carries a model IV, bounded by poll count (a patched sleep
     cannot spin)."""
@@ -67,9 +82,18 @@ def _cancel(ib: IB, contract: Any) -> None:
 
 async def _read_chunked(ib: IB, contracts: list[Any]) -> list[float | None]:
     """Model IV for each qualified contract, in order, chunked and cancelled per chunk."""
+    return [iv for iv, _und in await _read_chunked_full(ib, contracts)]
+
+
+async def _read_chunked_full(
+    ib: IB, contracts: list[Any]
+) -> list[tuple[float | None, float | None]]:
+    """(model IV, underlying price) for each qualified contract, in order, chunked and cancelled
+    per chunk. The underlying price is the one the same subscription's model greeks carry, so a
+    caller that wants a live spot pays for no further line."""
     cfg = get_envelope_cfg()
     batch = max(1, min(_MAX_BATCH, int(cfg.live_iv_batch)))
-    out: list[float | None] = []
+    out: list[tuple[float | None, float | None]] = []
     for i in range(0, len(contracts), batch):
         chunk = contracts[i : i + batch]
         opened: list[tuple[Any, Any]] = []
@@ -81,7 +105,9 @@ async def _read_chunked(ib: IB, contracts: list[Any]) -> list[float | None]:
                     log.warning("live_iv: subscription failed for %s", getattr(c, "conId", c))
                     opened.append((c, None))
             await _await_ivs([t for _, t in opened if t is not None], cfg.live_iv_timeout_seconds)
-            out.extend(_model_iv(t) if t is not None else None for _, t in opened)
+            out.extend(
+                (_model_iv(t), _und_price(t)) if t is not None else (None, None) for _, t in opened
+            )
         finally:
             for c, t in opened:
                 if t is not None:
@@ -89,8 +115,19 @@ async def _read_chunked(ib: IB, contracts: list[Any]) -> list[float | None]:
     return out
 
 
-async def live_option_ivs(ib: IB, positions: list[PositionSnapshot]) -> dict[int, float | None]:
-    """Live model IV for every option position, keyed by the position's ``con_id``.
+@dataclass(frozen=True)
+class LiveReads:
+    """What one pass over the option lines read: model IV by ``con_id`` and the underlying's live
+    price by symbol (``spots``; an underlying with no valid ``undPrice`` is simply absent)."""
+
+    ivs: dict[int, float | None]
+    spots: dict[str, float]
+
+
+async def live_option_reads(ib: IB, positions: list[PositionSnapshot]) -> LiveReads:
+    """Live model IV for every option position (keyed by the position's ``con_id``) and the
+    underlying's live price from the same subscriptions (review fix 3: the send-time envelope
+    must not price the book's options against a stale close).
 
     Each option is qualified (``qualify_options_async``, through the contract cache), then read
     with ``req_fresh_mkt_data`` in chunks. An option that fails to qualify, or whose model IV
@@ -103,8 +140,9 @@ async def live_option_ivs(ib: IB, positions: list[PositionSnapshot]) -> dict[int
         if p.sec_type == "OPT" and p.strike and p.expiry is not None and p.right is not None
     ]
     if not opts:
-        return {}
+        return LiveReads({}, {})
     out: dict[int, float | None] = {p.con_id: None for p in opts if p.con_id}
+    spots: dict[str, float] = {}
     try:
         pairs = []
         for p in opts:
@@ -114,18 +152,25 @@ async def live_option_ivs(ib: IB, positions: list[PositionSnapshot]) -> dict[int
             )
         await qualify_options_async(ib, [c for _, c in pairs])
         ready = [(p, c) for p, c in pairs if getattr(c, "conId", 0)]
-        ivs = await _read_chunked(ib, [c for _, c in ready])
-        for (p, c), iv in zip(ready, ivs, strict=True):
+        reads = await _read_chunked_full(ib, [c for _, c in ready])
+        for (p, c), (iv, und) in zip(ready, reads, strict=True):
             out[int(p.con_id or c.conId)] = iv
+            if und is not None:
+                spots.setdefault((p.underlying or p.symbol).upper(), und)
     except Exception:
         log.warning(
             "live_iv: live option IV fetch failed; every option reads unmeasured", exc_info=True
         )
-        return {k: None for k in out}
+        return LiveReads({k: None for k in out}, {})
     missing = sum(1 for v in out.values() if v is None)
     if missing:
         log.info("live_iv: %d of %d option position(s) have no live model IV", missing, len(out))
-    return out
+    return LiveReads(out, spots)
+
+
+async def live_option_ivs(ib: IB, positions: list[PositionSnapshot]) -> dict[int, float | None]:
+    """Live model IV for every option position, keyed by ``con_id`` (see ``live_option_reads``)."""
+    return (await live_option_reads(ib, positions)).ivs
 
 
 async def live_iv_for(ib: IB, contract: Any) -> float | None:
