@@ -204,9 +204,23 @@ def apply_reports(directory: Path | None = None) -> list[str]:
                 f"python -m scripts.envelope switch {result.switch} {default}"
             )
             continue
+        # E14 writes passed=True with 15 when no threshold qualified: say so, a fallback is not a
+        # measured pass. What the switch does in live is its default (every switch reads it there).
+        verdict = (
+            "PASS (fallback: no threshold qualified)"
+            if str(result.metrics.get("fell_back_to_15")) == "yes"
+            else "PASS"
+        )
+        live_note = (
+            "paper; record-only in live"
+            if default == "record"
+            else "paper only; off in live"
+            if default in ("off", "none")
+            else f"paper only; {default} in live"
+        )
         notices.append(
-            f"{result.id} PASS: {result.switch} -> {result.value_on_pass} "
-            f"(paper; record-only in live). Reverse: "
+            f"{result.id} {verdict}: {result.switch} -> {result.value_on_pass} "
+            f"({live_note}). Reverse: "
             f"python -m scripts.envelope switch {result.switch} {default}"
         )
     return notices

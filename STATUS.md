@@ -454,7 +454,10 @@ synthetic inputs only. Each one's output is a result file that does not exist un
   opens) and writes its own result file (`E15_tech_cap.json`, `E15_stacking.json`).
 - **The slow-breaker threshold replay** (Task 28, `scripts/slow_breaker_replay.py`): E14's pick of 8, 10, 12 or 15
   percent from a real-NLV slide check and a synthetic first-year episode count; writes `E14.json`, which the EOD
-  run applies by setting the `slow_breaker` switch to the threshold (paper only). The real NLV series is the
+  run applies by setting the `slow_breaker` switch to the threshold (paper only). **An E14 replay with data always
+  passes**: when no threshold qualifies it writes `passed: true` with the spec's fallback, 15 percent
+  (`fell_back_to_15: yes` in the metrics, and the notice reads `E14 PASS (fallback: no threshold qualified)`); only a
+  missing series gives no result. The real NLV series is the
   `portfolio_snapshots` history, which is short (it starts in October 2026); when it holds under 5 sessions of the
   slide the synthetic series stands in and the report says so.
 - **The sleeve replay and the covered-call floor replay** (Task 29, `scripts/sleeve_replay.py`,

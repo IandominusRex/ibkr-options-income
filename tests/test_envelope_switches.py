@@ -41,12 +41,13 @@ def _report(
     passed: bool | None,
     switch: str = "slow_breaker",
     value: str = "12",
+    metrics: dict | None = None,
 ) -> None:
     result = EnvelopeReportResult(
         id=rid,
         passed=passed,
         criterion="a rule",
-        metrics={"n": 3.0},
+        metrics=metrics if metrics is not None else {"n": 3.0},
         switch=switch,
         value_on_pass=value,
         written_at=datetime(2026, 11, 14, tzinfo=UTC),
@@ -138,6 +139,31 @@ def test_a_later_report_may_replace_an_earlier_reports_value(tmp_path) -> None:
     msgs = sw.apply_reports(tmp_path)
     assert len(msgs) == 1
     assert sw.get_switch("slow_breaker") == "10"
+
+
+def test_the_notice_says_when_the_value_is_the_fallback(tmp_path) -> None:
+    """Review fix 6: E14 writes passed=True with 15 when no threshold qualified; the notice must
+    not read as a plain measured PASS."""
+    _report(tmp_path, "E14", passed=True, value="15", metrics={"fell_back_to_15": "yes"})
+    (msg,) = sw.apply_reports(tmp_path)
+    assert msg.startswith("E14 PASS (fallback: no threshold qualified): slow_breaker -> 15")
+
+
+def test_a_measured_pass_is_not_called_a_fallback(tmp_path) -> None:
+    _report(tmp_path, "E14", passed=True, value="10", metrics={"fell_back_to_15": "no"})
+    (msg,) = sw.apply_reports(tmp_path)
+    assert "fallback" not in msg and msg.startswith("E14 PASS: slow_breaker -> 10")
+
+
+def test_the_notice_names_what_the_switch_does_in_live(tmp_path) -> None:
+    """Every switch but the two that default to `record` reads off in live; saying 'record-only'
+    for them was wrong."""
+    _report(tmp_path, "E14", passed=True)
+    (msg,) = sw.apply_reports(tmp_path)
+    assert "(paper only; off in live)" in msg and "record-only" not in msg
+    _report(tmp_path, "L1", passed=True, switch="leveraged_entry", value="on")
+    (msg,) = sw.apply_reports(tmp_path)
+    assert "(paper; record-only in live)" in msg  # its live default really is `record`
 
 
 def test_apply_reports_returns_one_notice_per_change(tmp_path) -> None:

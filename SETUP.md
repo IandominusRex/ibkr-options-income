@@ -2290,9 +2290,17 @@ always in live), or 8, 10, 12 or 15 percent; a PASSed E14 replay turns it on in 
 (`python -m scripts.envelope switch slow_breaker 10`). **A trip is not a halt**: orders, rolls and closes keep
 running. The wheel's total CSP allocation is halved (`envelope.slow_breaker.csp_budget_fraction`, 0.5), the spreads
 book opens nothing, and you get one Telegram notice. It stays tripped when the drawdown recovers; only
-`python -m scripts.envelope reset-slow-breaker` clears it, and the window then restarts from the reset (so a book still
-under its old high is not tripped again at once). `python -m scripts.envelope show` prints its state. It is
-evaluated on each scan and on each order poll.
+`python -m scripts.envelope reset-slow-breaker` clears it, and the window then restarts at the reset's timestamp (only
+snapshots captured after it count, so a book still under its old high is not tripped again at once). With the switch
+`off` a stored trip blocks nothing: neither the wheel's CSP budget, the spreads book nor the hedge's buys.
+`python -m scripts.envelope show` prints its state. It is evaluated on each scan and on each order poll.
+
+**An E14 replay with data always passes.** It writes `passed: true` with the lowest threshold that trips in the
+Oct-Nov slide and stays within the episode limit, and **falls back to 15 percent when no threshold qualified**: 15 is the
+spec's own answer for that case, so the file is a PASS either way. The notice says which it was (`E14 PASS (fallback: no
+threshold qualified): slow_breaker -> 15`) and `fell_back_to_15` is in the result file's metrics. A fallback is not
+evidence that 15 percent suits the book: read the replay's table before leaving the switch on. It is `None` (no change)
+only when there is no net-liquidation series at all.
 
 ### The leveraged sleeve (Task 23, 2026-11-15)
 
