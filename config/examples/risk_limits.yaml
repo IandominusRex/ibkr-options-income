@@ -100,7 +100,8 @@ envelope:
 # size for every hedge menu item's legs (XND and QQQ) into hedge_quotes, and the H4 instrument report
 # (python -m scripts.hedge_capture_report). Typed in src/common/config.py (HedgeCfg).
 hedge:
-  instruments:                  # the candidates, XND first; sec_type/exchange name the underlying, options go SMART with trading_class
+  underlyings: [XND, QQQ]       # Task 33 (H9): what the hedge book may trade; an index (XND) may never be a universe or spreads-book name
+  instruments:                 # the candidates, XND first; sec_type/exchange name the underlying, options go SMART with trading_class
     XND: {sec_type: IND, exchange: NASDAQ, trading_class: XND, multiplier: 100}   # verify with: python -m scripts.hedge_capture_report --probe
     QQQ: {sec_type: STK, exchange: SMART, trading_class: QQQ, multiplier: 100}
   capture_times_et: ["10:30", "14:30"]   # fixed times, ET: each runs once per session, in the first intraday cycle after it

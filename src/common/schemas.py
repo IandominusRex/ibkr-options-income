@@ -31,6 +31,10 @@ class Strategy(StrEnum):
     # monitor's; a tapped trim or de-lever, or an LES share order (Task 32a).
     STOCK_SELL = "stock_sell"
     STOCK_BUY = "stock_buy"
+    # The index hedge (risk-envelope Task 33, spec §3.10.10 item 3): a buy-to-open long put or put
+    # vertical on the hedge instrument. Never an income strategy, never on the wheel's ``orders``
+    # or ``fills`` tables (the hedge book keeps its own), gated only by ``validate_hedge``.
+    HEDGE = "hedge"
 
 
 class OptionRight(StrEnum):
@@ -897,6 +901,89 @@ class StockOrderIntent(BaseModel):
     @property
     def strategy(self) -> Strategy:
         return Strategy.STOCK_BUY if self.side == "BUY" else Strategy.STOCK_SELL
+
+
+HEDGE_SCENARIOS: tuple[str, ...] = ("S10", "S20", "T20", "G10", "P20")
+
+
+class HedgeLeg(BaseModel):
+    """One option leg of a hedge order (risk-envelope Task 33; spec §3.10.5, §3.10.10 item 3).
+
+    ``action`` is the leg's direction inside the opening structure: ``BUY`` for the long put,
+    ``SELL`` for a vertical's lower-strike short put. The quote fields are the latest the gate saw
+    (``quoted_at`` decides freshness); ``delta`` is the leg's model delta (negative for a put)."""
+
+    action: Literal["BUY", "SELL"]
+    right: Literal["P", "C"] = "P"
+    strike: float = Field(gt=0)
+    expiry: date
+    con_id: int | None = None
+    bid: float | None = None
+    ask: float | None = None
+    delta: float | None = None
+    iv: float | None = None
+    quoted_at: datetime | None = None
+
+    @property
+    def mid(self) -> float | None:
+        """The mid of a two-sided quote, else None."""
+        if self.bid is None or self.ask is None or self.bid <= 0 or self.ask <= 0:
+            return None
+        return (self.bid + self.ask) / 2.0
+
+    def key(self, underlying: str) -> tuple[str, str, float, date]:
+        """(underlying, right, strike, expiry): the contract identity across books."""
+        return (underlying.upper(), self.right, round(float(self.strike), 4), self.expiry)
+
+
+class HedgeCandidate(BaseModel):
+    """One hedge order, opening or closing (risk-envelope Task 33; spec §3.10.10 item 3, H5, H9).
+
+    Every number here is Python's: the menu (``src/hedge/menu.py``) and the size rule
+    (``src/hedge/sizing.py``) build it, and ``risk_engine.validate_hedge`` gates it at decision time
+    and again at send time on a fresh quote. ``debit`` is the net premium per share (positive =
+    paid: an opening buy; negative = received: a sale to close); ``max_loss`` the most the order can
+    lose in dollars (an opening's equals its debit x 100 x contracts, checked by the gate).
+    ``scenario_credits`` is the order's gain per contract in each envelope scenario, in dollars.
+
+    ``order_ref`` is ``hedge:<hedge_id>`` for the programme; ``hedge:claude:<id>`` is reserved for
+    the Mastermind's paper put budget and refused by this build. ``closes`` names the open
+    position a closing order sells; ``roll_of`` names the position a roll's opening buy replaces
+    (its sale's proceeds are ``roll_proceeds`` and its contracts ``roll_contracts``: the stress
+    block lets only a self-funding roll through, H6)."""
+
+    hedge_id: str
+    order_ref: str
+    instrument: str
+    intent: Literal["open", "close"] = "open"
+    kind: Literal["outright", "vertical"] = "outright"
+    legs: list[HedgeLeg]
+    contracts: int = Field(ge=0)
+    multiplier: int = Field(default=100, ge=1)
+    debit: float
+    max_loss: float = 0.0
+    spot: float | None = None
+    dte: int | None = None
+    scenario_credits: dict[str, float] = Field(default_factory=dict)
+    closes: str | None = None
+    roll_of: str | None = None
+    roll_proceeds: float | None = None
+    roll_contracts: int | None = None
+    reason: str = ""
+    created_at: datetime = Field(default_factory=_utcnow)
+
+    @property
+    def strategy(self) -> Strategy:
+        return Strategy.HEDGE
+
+    @property
+    def long_leg(self) -> HedgeLeg | None:
+        return next((leg for leg in self.legs if leg.action == "BUY"), None)
+
+    @property
+    def cost(self) -> float:
+        """The order's premium in dollars (positive = paid)."""
+        return self.debit * self.multiplier * self.contracts
 
 
 class RiskVerdict(BaseModel):

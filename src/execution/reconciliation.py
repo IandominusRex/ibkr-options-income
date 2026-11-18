@@ -138,8 +138,8 @@ def _exec_matches_candidate(fill: object, candidate: CandidateRow, ib_order_id: 
     if isinstance(sec_type, str) and sec_type and sec_type != "OPT":
         return False
     order_ref = getattr(execution, "orderRef", None)
-    if isinstance(order_ref, str) and order_ref.startswith(VALUE_ORDER_PREFIX):
-        return False
+    if isinstance(order_ref, str) and order_ref.startswith((VALUE_ORDER_PREFIX, "hedge:")):
+        return False  # the value book's, or the hedge book's (clientId 32, Task 33)
 
     if ib_order_id is not None and getattr(execution, "orderId", None) == ib_order_id:
         return True
@@ -529,6 +529,10 @@ async def reconcile_external_closes(ib: IB, bot: object, chat_id: str) -> None:
         }
         for f in buys:
             ex = f.execution
+            # The hedge book's buys (risk-envelope Task 33, §3.10.10 item 9): kept out of OrderRow,
+            # so the own-order skip below cannot see them; never a manual close of a wheel short.
+            if str(getattr(ex, "orderRef", "") or "").startswith("hedge:"):
+                continue
             exec_id = getattr(ex, "execId", None)
             if not exec_id or exec_id in recorded_exec_ids:
                 continue  # already recorded (incl. system auto-closes) → never double-count

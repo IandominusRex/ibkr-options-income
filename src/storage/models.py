@@ -362,6 +362,98 @@ class HedgeQuoteRow(Base):
     mid: Mapped[float | None] = mapped_column(Float, nullable=True)
     delta: Mapped[float | None] = mapped_column(Float, nullable=True)
     needed_contracts: Mapped[int] = mapped_column(Integer, default=0)
+    # The leg's model IV (decimal), from Task 36: the BS fallback for a hedge mark reads it.
+    iv: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class HedgeProgrammeRow(Base):
+    """The bridge hedge programme (risk-envelope Task 33/36; spec §3.10.2-§3.10.3, H2, H3): one row
+    per bridge. ``nlv0`` is net liquidation on the bridge's first day, fixed in dollars once;
+    ``state`` is ``on`` or ``ended``; ``zero_size_sessions`` counts consecutive sessions the size
+    rule asked for nothing (20 posts the review record). Written by ``src/hedge/store.py`` only."""
+
+    __tablename__ = "hedge_programme"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    state: Mapped[str] = mapped_column(String(8), default="on")
+    instrument: Mapped[str] = mapped_column(String(8))
+    started_on: Mapped[date] = mapped_column(Date)
+    nlv0: Mapped[float] = mapped_column(Float)
+    glide_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+    ended_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    zero_size_sessions: Mapped[int] = mapped_column(Integer, default=0)
+    last_session: Mapped[date | None] = mapped_column(Date, nullable=True)
+    review_posted_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class HedgeOrderRow(Base):
+    """One hedge order (risk-envelope Task 33; spec §3.10.10 items 5-7): an opening buy, a sale to
+    close, or a booked cash settlement / lapse. ``order_ref`` is the broker ``orderRef``
+    (``hedge:<hedge_id>``), written before ``placeOrder``. ``legs`` is the JSON list of
+    ``{action, right, strike, expiry, con_id}``; ``closes`` names the position a close sells. The
+    wheel's ``orders`` and ``fills`` never hold a hedge row. Written by ``src/hedge/store.py``."""
+
+    __tablename__ = "hedge_orders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    hedge_id: Mapped[str] = mapped_column(String(48), index=True)
+    order_ref: Mapped[str] = mapped_column(String(64), index=True)
+    instrument: Mapped[str] = mapped_column(String(8))
+    intent: Mapped[str] = mapped_column(String(8))  # open | close
+    kind: Mapped[str] = mapped_column(String(10))  # outright | vertical
+    contracts: Mapped[int] = mapped_column(Integer)
+    multiplier: Mapped[int] = mapped_column(Integer, default=100)
+    debit_approved: Mapped[float] = mapped_column(Float)  # per share, positive = paid
+    limit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    state: Mapped[str] = mapped_column(String(12), default="submitted")
+    ib_order_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    filled_qty: Mapped[float] = mapped_column(Float, default=0.0)
+    avg_fill_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    legs: Mapped[list] = mapped_column(JSON, default=list)
+    closes: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    roll_of: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    reason: Mapped[str] = mapped_column(String(64), default="")
+    detail: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class HedgeFillRow(Base):
+    """One hedge fill or booked event (risk-envelope Task 33): ``kind`` ``fill`` (an execution),
+    ``settlement`` (an XND cash settlement at expiry) or ``lapse`` (a QQQ position left to lapse).
+    ``qty`` is contracts, positive for an opening buy, negative for a sale or a settlement; ``cash``
+    is the dollars moved (negative = paid). Written by ``src/hedge/store.py`` only."""
+
+    __tablename__ = "hedge_fills"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    order_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    hedge_id: Mapped[str] = mapped_column(String(48), index=True)
+    kind: Mapped[str] = mapped_column(String(12), default="fill")
+    qty: Mapped[float] = mapped_column(Float)
+    price: Mapped[float] = mapped_column(Float)  # per share, net
+    cash: Mapped[float] = mapped_column(Float)
+    commission: Mapped[float] = mapped_column(Float, default=0.0)
+    exec_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    filled_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, index=True)
+
+
+class HedgeMarkRow(Base):
+    """One daily mark of an open hedge position (risk-envelope Task 36; spec §3.10.8 item 3): the
+    net mark per share and the position's value in dollars, from the captured mid (``source``
+    ``captured``) or a labelled Black-Scholes fallback (``bs``). Written by ``src/hedge/store.py``."""
+
+    __tablename__ = "hedge_marks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_date: Mapped[date] = mapped_column(Date, index=True)
+    hedge_id: Mapped[str] = mapped_column(String(48), index=True)
+    contracts: Mapped[float] = mapped_column(Float)
+    mark: Mapped[float] = mapped_column(Float)
+    value: Mapped[float] = mapped_column(Float)
+    source: Mapped[str] = mapped_column(String(8))  # captured | bs
+    marked_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
 class PriceHistoryRow(Base):
@@ -827,7 +919,8 @@ class BrokerExecutionRow(Base):
     ibkr_realized_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
     occurrence_idx: Mapped[int] = mapped_column(Integer, default=0)
     superseded_by: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
-    # "system" | "manual" | "spreads" | "value" (an orderRef of "value:<id>", spec §9.2)
+    # "system" | "manual" | "spreads" | "value" (an orderRef of "value:<id>", spec §9.2) | "les"
+    # (an "les:<id>" ref, risk-envelope Task 32a) | "hedge" ("hedge:<id>" or XND, Task 33)
     book: Mapped[str] = mapped_column(String(8), default="manual")
     order_ref: Mapped[str | None] = mapped_column(String(48), nullable=True)
     import_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

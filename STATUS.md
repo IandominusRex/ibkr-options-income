@@ -569,7 +569,14 @@ unmerged; the daemons capture nothing until a merge and `./ibkr restart`. Captur
   over at least 15 sessions and writes `E3.json`; it needs the SPXW and XSP exchange fees (shipped `null`,
   which blocks it), and a PASS needs the spreads paper bar too and only notifies (`spxw_ready`; Task 39 is the
   cutover).
-- **Not yet:** the hedge's book, its orders, `validate_hedge` and the bridge (Tasks 33-37). `needed_contracts` is
+- **The hedge book** (Task 33, H9): its own tables (`hedge_programme`, `hedge_orders`, `hedge_fills`,
+  `hedge_marks`, written only by `src/hedge/store.py`), `Strategy.HEDGE` / `HedgeCandidate`, the read-only
+  `src/common/hedge_view.py`, `book="hedge"` in the ledger (by `hedge:` ref or the XND underlying), the
+  hedge's contracts dropped from `get_positions()` (XND by underlying, QQQ by `conId`), `wheel_shares` and
+  the trade ledger leaving hedge rows out, and `reconcile_external_closes` skipping `hedge:` refs. XND may
+  never be a universe or spreads-book name (`Config._hedge_isolated`). The trade ledger's FIFO pairs a long
+  open and close into one closed "Buy" trade (tested; spec §3.10.10's [U]).
+- **Not yet:** `validate_hedge`, the hedge's orders and the bridge (Tasks 34-37). `needed_contracts` is
   recorded as 0 until Task 36's size rule exists (the report reads it as "at least one contract").
 - **Known limitations (wings):** the wing's distance is the SPY short strike over the GEX `scale`, snapped to a listed strike at or beyond it (within one strike step of the same expected-move distance); XSP's trading class (`XSP`) is a guess that falls back to any class of the symbol that lists the expiry; the cost model charges the full mid-to-natural crossing in and out for every instrument alike (the measured crossing, not the shadow haircut), so it is conservative for all and compares like with like.
 - **Known limitations:** XND's contract fields (`IND` on `NASDAQ`, class `XND`) come from the plan and have not
@@ -600,7 +607,7 @@ Plan `docs/superpowers/plans/2026-11-14-risk-envelope.md` Tasks 11-14, spec
   card is Task 15.
 - **Not yet:** the envelope gates nothing (Tasks 18-20 wire `admits` into the generator and the Rules
   Engine and record would-blocks in `sizing_actions`). The hedge book's marks are not in the inputs
-  until `hedge_view` exists (Task 33). The spreads book's SPY legs are not in S10 (`get_positions()`
+  until the bridge marks them (Task 36; `hedge_view` exists from Task 33). The spreads book's SPY legs are not in S10 (`get_positions()`
   drops them; the harness counts the spreads book at its caps, Task 26).
 - **Known limitations:** the manual-buy line reads the ledger, so it needs a ledger account locked by a
   CSV/Flex import and arrives up to one sweep interval after the fill; the API must start after the

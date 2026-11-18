@@ -5697,7 +5697,7 @@ export interface components {
          * Strategy
          * @enum {string}
          */
-        Strategy: "covered_call" | "cash_secured_put" | "roll" | "stock_sell" | "stock_buy";
+        Strategy: "covered_call" | "cash_secured_put" | "roll" | "stock_sell" | "stock_buy" | "hedge";
         /**
          * SummaryOut
          * @description The AI narrative over computed values. Enrichment — influences nothing.

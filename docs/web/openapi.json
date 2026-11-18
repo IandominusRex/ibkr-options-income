@@ -15129,7 +15129,8 @@
           "cash_secured_put",
           "roll",
           "stock_sell",
-          "stock_buy"
+          "stock_buy",
+          "hedge"
         ],
         "title": "Strategy"
       },

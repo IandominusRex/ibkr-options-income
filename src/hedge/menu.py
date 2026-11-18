@@ -52,6 +52,7 @@ class HedgeQuote:
     ask_size: float | None = None
     delta: float | None = None
     con_id: int | None = None
+    iv: float | None = None  # the leg's model IV (decimal), when the quote carried one
 
     @property
     def mid(self) -> float | None:

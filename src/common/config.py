@@ -2894,6 +2894,7 @@ class HedgeCfg(_KeyedCfg):
     Lives in ``config/risk_limits.yaml -> hedge:``; a missing block means these defaults."""
 
     KEYS: ClassVar[tuple[str, ...]] = (
+        "underlyings",
         "instruments",
         "capture_times_et",
         "capture_max_lines",
@@ -2905,6 +2906,10 @@ class HedgeCfg(_KeyedCfg):
         "commission_per_contract",
     )
 
+    # Task 33 (H9): the underlyings the hedge book may trade. An index underlying (XND) is the
+    # hedge book's alone: ``Config._hedge_isolated`` refuses it in the universe or the spreads book,
+    # and ``books.is_hedge_underlying`` attributes its positions and executions by underlying.
+    underlyings: list[str] = Field(default_factory=lambda: ["XND", "QQQ"])
     instruments: dict[str, HedgeInstrumentCfg] = Field(default_factory=_default_hedge_instruments)
     capture_times_et: list[str] = Field(default_factory=lambda: ["10:30", "14:30"])
     capture_max_lines: int = Field(default=10, ge=1, le=10)
@@ -2914,6 +2919,11 @@ class HedgeCfg(_KeyedCfg):
     vertical_min_width_pct: float = Field(default=10.0, gt=0, lt=100)
     quote_max_spread_pct: float = Field(default=8.0, gt=0)
     commission_per_contract: float = Field(default=0.65, ge=0)
+
+    @field_validator("underlyings")
+    @classmethod
+    def _upper_underlyings(cls, v: list[str]) -> list[str]:
+        return [str(x).upper() for x in v]
 
     @field_validator("instruments")
     @classmethod
@@ -3167,6 +3177,34 @@ class Config(BaseModel):
             raise ValueError("ibkr.client_ids.value must be set when value book.enabled is true")
         return self
 
+    @model_validator(mode="after")
+    def _hedge_isolated(self) -> Config:
+        """The hedge book's index underlyings (XND) are its own (risk-envelope Task 33, H9).
+
+        Positions carry no order tag and IBKR nets same-contract positions across clientIds, so an
+        index hedge underlying is attributed by underlying alone: it may never appear in
+        ``config/universe.yaml`` or ``spreads.book_underlyings``. No hedge underlying of any kind
+        may be a spreads-book underlying (``books.py`` would tag it spreads). A stock-type hedge
+        underlying that is a universe name (QQQ) is kept apart by the Rules Engine's QQQ-route
+        rule instead (spec §3.10.0)."""
+        hedge = HedgeCfg(**(self.risk.get("hedge") or {}))
+        index_names = set(hedge_index_underlyings(hedge))
+        book = {s.upper() for s in self.spreads.book_underlyings}
+        wheel = {
+            str(sym).upper()
+            for value in self.universe.values()
+            if isinstance(value, list)
+            for sym in value
+        }
+        clash = sorted((index_names & (wheel | book)) | (set(hedge.underlyings) & book))
+        if clash:
+            raise ValueError(
+                f"hedge.underlyings {clash} also appear in config/universe.yaml or "
+                "spreads.book_underlyings: an index hedge underlying is the hedge book's alone, "
+                "and no hedge underlying may be a spreads-book underlying"
+            )
+        return self
+
 
 def example_path(name: str) -> Path:
     """``config/settings.yaml`` → ``config/examples/settings.yaml``."""
@@ -3267,6 +3305,16 @@ def get_envelope_cfg() -> RiskEnvelopeCfg:
 def get_hedge_cfg() -> HedgeCfg:
     """The typed ``hedge:`` block of ``config/risk_limits.yaml`` (shipped defaults when absent)."""
     return HedgeCfg(**(get_config().risk.get("hedge") or {}))
+
+
+def hedge_index_underlyings(hedge: HedgeCfg) -> tuple[str, ...]:
+    """The hedge underlyings that are indexes (XND): attributed to the hedge book by underlying
+    alone. A name with no instrument entry counts as an index (the conservative reading)."""
+    return tuple(
+        name
+        for name in hedge.underlyings
+        if (c := hedge.instruments.get(name)) is None or c.sec_type == "IND"
+    )
 
 
 def get_claude_cut_cfg() -> ClaudeCutCfg:

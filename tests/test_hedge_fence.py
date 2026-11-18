@@ -7,8 +7,10 @@
 * it is the only package that constructs ``hedge_*`` rows (``HedgeQuoteRow`` now; Task 33 adds the
   book's tables to ``ROW_CLASSES``). Reading them is allowed anywhere; writing is one package.
 
-Task 33 extends this file with the order-path half of the fence (the reconciler skip, the clash
-rules, ``src/common/hedge_view.py`` as everyone else's window).
+Task 33 extends it with the book's half: the four book tables join ``ROW_CLASSES``, the hedge
+package never constructs a wheel ``orders`` / ``fills`` row, and ``src/common/hedge_view.py`` is
+everyone else's window (``mode=ro``, plain SQL, imports only ``src.common.config`` and the standard
+library). The reconciler skip and the attribution are tested in ``tests/test_hedge_book.py``.
 """
 
 from __future__ import annotations
@@ -29,7 +31,13 @@ ENRICHMENT = (
     "src.analytics.sentiment",
     "src.analytics.sector_context",
 )
-ROW_CLASSES = ("HedgeQuoteRow(",)
+ROW_CLASSES = (
+    "HedgeQuoteRow(",
+    "HedgeProgrammeRow(",
+    "HedgeOrderRow(",
+    "HedgeFillRow(",
+    "HedgeMarkRow(",
+)
 
 
 def _reaches(modules: set[str], prefix: str) -> bool:
@@ -71,3 +79,35 @@ def test_hedge_places_no_order() -> None:
         text = p.read_text(encoding="utf-8")
         for needle in ("placeOrder", "LimitOrder", "MarketOrder", ".reqMktData("):
             assert needle not in text, f"{p.name}: {needle}"
+
+
+def test_the_hedge_package_never_writes_a_wheel_order_or_fill() -> None:
+    """Item 7: the wheel's ``orders`` / ``fills`` never receive a hedge row, so the 20+ sites that
+    read SELL as an open never see one."""
+    for p in sorted((SRC / "hedge").rglob("*.py")):
+        text = p.read_text(encoding="utf-8")
+        for cls in ("OrderRow(", "FillRow("):
+            hits = [ln for ln in text.splitlines() if cls in ln and f"Hedge{cls}" not in ln]
+            assert hits == [], f"{p.name} constructs {cls[:-1]}: {hits}"
+
+
+def test_hedge_view_is_read_only_plain_sql_and_imports_only_config() -> None:
+    path = SRC / "common" / "hedge_view.py"
+    text = path.read_text(encoding="utf-8")
+    assert "mode=ro" in text
+    modules = imported_modules(path)
+    src_imports = {m for m in modules if m.startswith("src")}
+    assert src_imports <= {"src.common.config", "src.common.config.get_config"}, src_imports
+    assert not _reaches(modules, "sqlalchemy")
+    for writer in ("INSERT", "UPDATE ", "DELETE", "session_scope"):
+        assert writer not in text, writer
+
+
+def test_other_books_and_the_reasoning_layer_never_import_the_hedge_package() -> None:
+    offenders = [
+        f"{p.relative_to(ROOT)}"
+        for pkg in ("spreads", "spreads_ai", "value", "value_ai", "claude", "news")
+        for p in sorted((SRC / pkg).rglob("*.py"))
+        if _reaches(imported_modules(p), "src.hedge")
+    ]
+    assert offenders == []

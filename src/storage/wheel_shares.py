@@ -35,15 +35,15 @@ class WheelShares:
 
 def wheel_shares(symbols: list[str]) -> dict[str, WheelShares]:
     """W per symbol (zero shares when the ledger holds none for it). The value book's, the
-    spreads book's and the LES book's executions (``book`` value / spreads / les, risk-envelope
-    Task 32a) are not the wheel's."""
+    spreads book's, the LES book's and the hedge book's executions (``book`` value / spreads /
+    les / hedge, risk-envelope Tasks 32a, 33) are not the wheel's."""
     wanted = sorted({s.upper() for s in symbols})
     out = {s: WheelShares(0.0, None) for s in wanted}
     if not wanted:
         return out
     return _count(
         wanted,
-        BrokerExecutionRow.book.not_in(("value", "spreads", "les")),
+        BrokerExecutionRow.book.not_in(("value", "spreads", "les", "hedge")),
         out,
     )
 

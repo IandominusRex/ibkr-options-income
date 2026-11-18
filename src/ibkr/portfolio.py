@@ -13,7 +13,7 @@ from datetime import date
 
 from ib_async import IB, AccountValue
 
-from src.common.books import attribute, is_spreads_underlying
+from src.common.books import attribute, is_hedge_underlying, is_spreads_underlying
 from src.common.config import get_config
 from src.common.logging import get_logger
 from src.common.schemas import AccountSnapshot, OptionRight, PositionSnapshot
@@ -219,7 +219,11 @@ def wheel_view(positions: list[PositionSnapshot]) -> list[PositionSnapshot]:
 
 
 def get_positions(
-    ib: IB, *, include_spreads: bool = False, include_value: bool = False
+    ib: IB,
+    *,
+    include_spreads: bool = False,
+    include_value: bool = False,
+    include_hedge: bool = False,
 ) -> list[PositionSnapshot]:
     """Snapshot current positions (stocks and options) as typed objects.
 
@@ -232,12 +236,33 @@ def get_positions(
     Stock the value book holds is likewise taken out (``wheel_view``, spec §9.2): the wheel sees
     only its own shares. ``include_value=True`` is the account-truth view (the healthcheck, and the
     value process, which reconciles both books itself).
+
+    The hedge book's contracts (risk-envelope Task 33, H9) are dropped too: by underlying for an
+    index only it trades (XND, ``books.is_hedge_underlying``) and by ``conId`` through
+    ``src/common/hedge_view.py`` for a QQQ hedge, so no wheel monitor, budget or exit ever sees a
+    hedge leg. ``include_hedge=True`` is the account-truth view (the healthcheck, the hedge
+    manager). An unreadable hedge book drops only by underlying (logged): a QQQ long put left in
+    is a long option, which every wheel monitor and the envelope's gross measures skip anyway.
     """
     out: list[PositionSnapshot] = []
     skipped = 0
+    hedge_ids: frozenset[int] = frozenset()
+    if not include_hedge:
+        from src.common.hedge_view import hedge_con_ids
+
+        found = hedge_con_ids()
+        if found is None:
+            log.warning("get_positions: the hedge book is unreadable; dropping XND only")
+        else:
+            hedge_ids = found
     for item in ib.portfolio():
         c = item.contract
         if not include_spreads and is_spreads_underlying(c.symbol):
+            skipped += 1
+            continue
+        if not include_hedge and (
+            is_hedge_underlying(c.symbol) or int(getattr(c, "conId", 0) or 0) in hedge_ids
+        ):
             skipped += 1
             continue
         right = None
@@ -264,7 +289,7 @@ def get_positions(
                 con_id=int(c.conId) if getattr(c, "conId", 0) else None,
             )
         )
-    log.info("Fetched %d portfolio positions (%d spreads-book skipped)", len(out), skipped)
+    log.info("Fetched %d portfolio positions (%d spreads/hedge-book skipped)", len(out), skipped)
     return out if include_value else wheel_view(out)
 
 

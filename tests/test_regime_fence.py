@@ -66,6 +66,8 @@ DETERMINISTIC = sorted(
         *(SRC / "regime").glob("*.py"),
         # Task 16: the hedge package (quote capture; the order path arrives in Tasks 33-36)
         *(SRC / "hedge").glob("*.py"),
+        # Task 33: everyone else's read-only window onto the hedge book
+        SRC / "common" / "hedge_view.py",
         SRC / "storage" / "regime_state.py",
         SRC / "storage" / "les_state.py",
         SRC / "data" / "breadth_backend.py",

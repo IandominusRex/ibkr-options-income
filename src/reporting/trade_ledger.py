@@ -464,8 +464,13 @@ def apply_annotations(trades: list[LedgerTrade], annotations: dict[str, LedgerAn
 
 
 def load_execs(session: Session) -> list[LedgerExec]:
+    """Every live execution row but the hedge book's (``book="hedge"``, risk-envelope Task 33,
+    spec §3.10.10 item 10): the wheel's builders never see a hedge leg; ``src/reporting/hedge.py``
+    reports the hedge book's P&L from its own tables."""
     rows = session.scalars(
-        select(BrokerExecutionRow).where(BrokerExecutionRow.superseded_by.is_(None))
+        select(BrokerExecutionRow).where(
+            BrokerExecutionRow.superseded_by.is_(None), BrokerExecutionRow.book != "hedge"
+        )
     )
     return [
         LedgerExec(

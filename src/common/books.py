@@ -16,6 +16,11 @@ count V (``src/common/value_view.py``) and the wheel its own count W (from the b
 apply: the wheel sees ``min(W, broker - V claimed)`` shares, never below zero, so a race errs short;
 if value.db cannot be read the wheel uses W alone and nothing where the broker disagrees with it.
 It imports nothing from ``src.value``.
+
+**The hedge book (risk-envelope Task 33, H9)** trades an index only it holds (XND, attributed by
+underlying: ``is_hedge_underlying``) or, on the fallback route, QQQ, a universe name: there every
+hedge order carries ``orderRef = "hedge:<id>"`` (``is_hedge_order_ref``) and its contracts are
+known by ``conId`` through ``src/common/hedge_view.py``. It imports nothing from ``src.hedge``.
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from src.common.config import get_config
+from src.common.config import get_config, get_hedge_cfg, hedge_index_underlyings
 from src.common.value_view import ValueHolding, read_book
 
 log = logging.getLogger(__name__)
@@ -33,6 +38,12 @@ VALUE_ORDER_PREFIX = "value:"
 # The LES share book (risk-envelope Task 32a, ruling L5): every LES order carries
 # ``orderRef = "les:<id>"`` and its fills are ledger ``book="les"``, outside the wheel's count W.
 LES_ORDER_PREFIX = "les:"
+# The hedge book (risk-envelope Task 33, ruling H9): every hedge order carries
+# ``orderRef = "hedge:<id>"`` (the programme) and its executions are ledger ``book="hedge"``.
+# ``hedge:claude:<id>`` is reserved for the Mastermind's paper put budget: it is a hedge ref for
+# attribution, and ``risk_engine.validate_hedge`` refuses it in this build.
+HEDGE_ORDER_PREFIX = "hedge:"
+HEDGE_CLAUDE_PREFIX = "hedge:claude:"
 
 # Daily-option trading classes whose statement rows name the class, not the index: an Activity
 # Statement prints an SPX daily as "SPXW 07OCT26 6800 P", so its root parses as SPXW.
@@ -60,6 +71,24 @@ def is_value_order_ref(order_ref: str | None) -> bool:
 def is_les_order_ref(order_ref: str | None) -> bool:
     """True for an LES share order (``les:<id>``, Task 32a): its fills are LES shares."""
     return bool(order_ref) and str(order_ref).startswith(LES_ORDER_PREFIX)
+
+
+def hedge_underlyings() -> frozenset[str]:
+    """The hedge book's own underlyings: the index ones in ``hedge.underlyings`` (XND), which
+    ``Config._hedge_isolated`` keeps out of the universe and the spreads book."""
+    return frozenset(hedge_index_underlyings(get_hedge_cfg()))
+
+
+def is_hedge_underlying(symbol: str | None) -> bool:
+    """True for an underlying only the hedge book trades (XND): its positions and executions are
+    the hedge book's by underlying alone. QQQ, a universe name, is never one: a QQQ hedge is
+    attributed by its ``hedge:`` orderRef and its contracts' ``conId`` instead."""
+    return symbol is not None and symbol.upper() in hedge_underlyings()
+
+
+def is_hedge_order_ref(order_ref: str | None) -> bool:
+    """True for a hedge order (``hedge:<id>``, and the reserved ``hedge:claude:<id>``)."""
+    return bool(order_ref) and str(order_ref).startswith(HEDGE_ORDER_PREFIX)
 
 
 @dataclass(frozen=True, slots=True)

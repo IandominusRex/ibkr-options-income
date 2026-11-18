@@ -15,7 +15,13 @@ from datetime import UTC, date, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.common.books import is_les_order_ref, is_spreads_underlying, is_value_order_ref
+from src.common.books import (
+    is_hedge_order_ref,
+    is_hedge_underlying,
+    is_les_order_ref,
+    is_spreads_underlying,
+    is_value_order_ref,
+)
 from src.common.schemas import (
     LedgerImportResult,
     LedgerSource,
@@ -271,6 +277,24 @@ def _tag_spreads(s: Session, row_ids: set[int]) -> int:
     return tagged
 
 
+def _tag_hedge_book(s: Session, row_ids: set[int]) -> int:
+    """Tag ``book="hedge"`` on rows whose orderRef is a hedge order's (``hedge:<id>``, including
+    the reserved ``hedge:claude:<id>``) or whose underlying only the hedge book trades (XND),
+    risk-envelope Task 33 (H9). Runs before :func:`_tag_books`, like the value and LES tags: an
+    order id collides across clientIds, an orderRef or an index underlying does not. A spreads
+    row is never retagged."""
+    if not row_ids:
+        return 0
+    tagged = 0
+    for r in s.scalars(select(BrokerExecutionRow).where(BrokerExecutionRow.id.in_(row_ids))):
+        if r.book in ("hedge", "spreads"):
+            continue
+        if is_hedge_order_ref(r.order_ref) or is_hedge_underlying(r.underlying):
+            r.book = "hedge"
+            tagged += 1
+    return tagged
+
+
 def _tag_value_book(s: Session, row_ids: set[int]) -> int:
     """Tag ``book="value"`` on rows whose orderRef is the value book's (``value:<id>``, spec
     §9.2). Runs before :func:`_tag_books`: order ids collide across clientIds, an orderRef does
@@ -279,7 +303,7 @@ def _tag_value_book(s: Session, row_ids: set[int]) -> int:
         return 0
     tagged = 0
     for r in s.scalars(select(BrokerExecutionRow).where(BrokerExecutionRow.id.in_(row_ids))):
-        if r.book != "value" and is_value_order_ref(r.order_ref):
+        if r.book not in ("value", "hedge") and is_value_order_ref(r.order_ref):
             r.book = "value"
             tagged += 1
     return tagged
@@ -294,7 +318,7 @@ def _tag_les_book(s: Session, row_ids: set[int]) -> int:
         return 0
     tagged = 0
     for r in s.scalars(select(BrokerExecutionRow).where(BrokerExecutionRow.id.in_(row_ids))):
-        if r.book not in ("les", "spreads", "value") and is_les_order_ref(r.order_ref):
+        if r.book not in ("les", "spreads", "value", "hedge") and is_les_order_ref(r.order_ref):
             r.book = "les"
             tagged += 1
     return tagged
@@ -314,7 +338,7 @@ def _tag_books(s: Session, row_ids: set[int]) -> int:
         )
     )
     for r in rows:
-        if r.book in ("spreads", "value", "les"):
+        if r.book in ("spreads", "value", "les", "hedge"):
             continue  # an order-id collision with a wheel order must never retag any of them
         for order in s.scalars(select(OrderRow).where(OrderRow.ib_order_id == r.ib_order_id)):
             snap = order.snapshot or {}
@@ -442,6 +466,7 @@ def ingest(
             affected.add((e.contract.ident, et_date(e.trade_time)))
         counts["superseded"] = supersede_twins(s, affected)
         counts["spreads"] = _tag_spreads(s, touched_ids)
+        counts["hedge"] = _tag_hedge_book(s, touched_ids)
         counts["value"] = _tag_value_book(s, touched_ids)
         counts["les"] = _tag_les_book(s, touched_ids)
         counts["system"] = _tag_books(s, touched_ids)
@@ -469,6 +494,7 @@ def ingest(
             or bool(counts["spreads"])
             or bool(counts["value"])
             or bool(counts["les"])
+            or bool(counts["hedge"])
         )
 
         if source == "live" and not touched:

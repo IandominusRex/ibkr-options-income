@@ -98,6 +98,32 @@ def _spreads_view_in_tmp(monkeypatch, tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def _hedge_view_in_tmp(monkeypatch, tmp_path_factory):
+    """The wheel reads the hedge book through src/common/hedge_view.py (risk-envelope Task 33). No
+    test may read the operator's trading DB through it: by default it points at a file that does
+    not exist (no hedge was ever placed); ``hedge_db`` points it at the test's own DB."""
+    monkeypatch.setattr(
+        "src.common.hedge_view._path",
+        lambda: tmp_path_factory.getbasetemp() / "no_hedge_book" / "income_system.db",
+    )
+
+
+@pytest.fixture()
+def hedge_db(tmp_path, monkeypatch):
+    """An isolated trading DB with src/common/hedge_view.py reading the same file (Task 33)."""
+    import src.storage.db as dbmod
+    from src.common.config import Config
+
+    path = tmp_path / "hedge.db"
+    monkeypatch.setattr(dbmod, "_engine", None)
+    monkeypatch.setattr(dbmod, "_SessionLocal", None)
+    monkeypatch.setattr(Config, "db_url_abs", lambda self: f"sqlite:///{path}")
+    monkeypatch.setattr("src.common.hedge_view._path", lambda: path)
+    dbmod.init_db()
+    return path
+
+
+@pytest.fixture(autouse=True)
 def _value_api_in_tmp(monkeypatch, tmp_path_factory):
     """The web API reads the value book through src/api/value_db.py (Part 6). No test may read the
     operator's data/value.db: by default it points at a file that does not exist; a test that

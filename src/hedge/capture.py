@@ -91,6 +91,7 @@ def to_quote(contract: Any, ticker: Any) -> HedgeQuote:
         ask_size=_size(getattr(ticker, "askSize", None)),
         delta=_num(getattr(greeks, "delta", None)) if greeks is not None else None,
         con_id=int(getattr(contract, "conId", 0) or 0) or None,
+        iv=_pos(getattr(greeks, "impliedVol", None)) if greeks is not None else None,
     )
 
 
@@ -216,6 +217,7 @@ def _records(
                     mid=q.mid,
                     delta=q.delta,
                     needed_contracts=needed,
+                    iv=q.iv,
                 )
             )
     return out
