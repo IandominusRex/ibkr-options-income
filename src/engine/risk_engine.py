@@ -1250,11 +1250,10 @@ def validate_hedge(cand: HedgeCandidate, ctx: HedgeContext) -> RiskVerdict:
 
     if not cand.self_funding_roll:
         s = cfg.stress
-        if ctx.vix_close is None:
+        if ctx.vix_close is None or ctx.vxn_close is None or ctx.vxn_p90 is None:
+            # fewer than 126 stored ^VXN closes (no p90) is unmeasured, never "calm": no new size
             reasons.append("hedge_stress_unmeasured")
-        elif ctx.vix_close >= s.vix_close or (
-            ctx.vxn_close is not None and ctx.vxn_p90 is not None and ctx.vxn_close >= ctx.vxn_p90
-        ):
+        elif ctx.vix_close >= s.vix_close or ctx.vxn_close >= ctx.vxn_p90:
             reasons.append("hedge_stress_block")
         if ctx.halted:
             reasons.append("hedge_halted")

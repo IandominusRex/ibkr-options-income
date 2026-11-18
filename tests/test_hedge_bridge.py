@@ -331,7 +331,14 @@ class _Sh:
 
 
 def _ctx(**kw: Any) -> HedgeContext:
-    base = {"now": NOW, "nlv0": 650_000.0, "vix_close": 18.0, "held_contracts": {"h1": 2.0}}
+    base = {
+        "now": NOW,
+        "nlv0": 650_000.0,
+        "vix_close": 18.0,
+        "vxn_close": 22.0,  # review fix 1: an unmeasured VXN percentile now blocks, so a calm
+        "vxn_p90": 30.0,  # fixture names it
+        "held_contracts": {"h1": 2.0},
+    }
     base.update(kw)
     return HedgeContext(**base)
 
@@ -393,6 +400,21 @@ async def test_the_stress_block_allows_only_a_self_funding_roll(monkeypatch, sen
     sale, buy = sends
     assert sale.intent == "close" and buy.contracts == 2 and buy.roll_contracts == 2
     assert buy.self_funding_roll
+
+
+async def test_a_missing_vxn_percentile_blocks_a_roll_like_the_gate_does(
+    monkeypatch, sends
+) -> None:
+    # Review fix 1: the bridge's own pre-check agrees with validate_hedge (hedge_stress_unmeasured)
+    dear = _Sh(_ctx(vxn_p90=None), (_pick(debit=9.0), 600.0, 2))
+    _with_pick(monkeypatch, dear)
+    text = await manager._roll(open_hedge(expiry=TODAY + timedelta(days=29)), dear)  # type: ignore[arg-type]
+    assert sends == [] and "held under the stress block" in text
+    cheap = _Sh(_ctx(vxn_close=None), (_pick(debit=5.0), 600.0, 5))
+    _with_pick(monkeypatch, cheap)
+    await manager._roll(open_hedge(expiry=TODAY + timedelta(days=29)), cheap)  # type: ignore[arg-type]
+    sale, buy = sends  # self-funding: still allowed, at no more contracts than held
+    assert sale.intent == "close" and buy.contracts == 2 and buy.self_funding_roll
 
 
 async def test_qqq_route_closes_by_t_minus_2_and_sends_a_lapse_instruction(

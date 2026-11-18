@@ -796,8 +796,10 @@ async def _roll(h: hedge_view.OpenHedge, sh: _Shared) -> str:
         ctx.halted
         or ctx.slow_breaker_tripped
         or ctx.vix_close is None
+        or ctx.vxn_close is None
+        or ctx.vxn_p90 is None  # unmeasured blocks, as validate_hedge's hedge_stress_unmeasured
         or ctx.vix_close >= sh.hcfg.stress.vix_close
-        or (ctx.vxn_close is not None and ctx.vxn_p90 is not None and ctx.vxn_close >= ctx.vxn_p90)
+        or ctx.vxn_close >= ctx.vxn_p90
     )
     sale = close_candidate(h, held, "roll")
     priced = await executor.quote_candidate(sh.ib, sale)
@@ -810,7 +812,7 @@ async def _roll(h: hedge_view.OpenHedge, sh: _Shared) -> str:
             return f"Bridge hedge {h.hedge_id}: roll held (stress block; nothing to compare)."
         pick, _spot, n = picked
         new_n = min(int(held), max(n, 0)) or int(held)
-        cost = (pick.item.debit or 0.0) * 100 * new_n
+        cost = (pick.item.debit or 0.0) * h.multiplier * new_n
         if cost > proceeds_est:
             return (
                 f"Bridge hedge {h.hedge_id}: roll held under the stress block (the new item "

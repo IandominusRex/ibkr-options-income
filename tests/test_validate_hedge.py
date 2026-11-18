@@ -247,6 +247,18 @@ def test_stress_unknown_fails_closed() -> None:
     assert "hedge_stress_unmeasured" in reasons(cand(), ctx(vix_close=None))
 
 
+def test_a_missing_vxn_close_or_p90_fails_closed_for_an_opening() -> None:
+    # Review fix 1: fewer than 126 stored ^VXN closes means no p90, and that is "unmeasured", not "fine"
+    assert "hedge_stress_unmeasured" in reasons(cand(), ctx(vxn_p90=None))
+    assert "hedge_stress_unmeasured" in reasons(cand(), ctx(vxn_close=None))
+    assert reasons(cand(), ctx(vxn_close=22.0, vxn_p90=30.0)) == []  # known and below: passes
+
+
+def test_a_missing_vxn_p90_does_not_stop_a_self_funding_roll() -> None:
+    roll = cand(roll_of="h0", roll_proceeds=1_300.0, roll_contracts=2)
+    assert reasons(roll, ctx(vxn_p90=None)) == []
+
+
 def test_a_self_funding_roll_passes_the_stress_block() -> None:
     roll = cand(roll_of="h0", roll_proceeds=1_300.0, roll_contracts=2)  # cost 1,200 <= 1,300
     assert reasons(roll, ctx(vix_close=30.0)) == []
