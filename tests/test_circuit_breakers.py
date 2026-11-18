@@ -550,6 +550,100 @@ def test_only_a_human_resets_it(tmp_path, monkeypatch, capsys) -> None:
     assert evaluate_slow_breaker(810_000.0) is not None
 
 
+def _snapshot_at(when_et, net_liq: float) -> None:
+    """A monitor snapshot captured at the given ET wall-clock time (review fix 4)."""
+    from datetime import UTC
+    from zoneinfo import ZoneInfo
+
+    from src.storage.db import session_scope
+    from src.storage.models import PortfolioSnapshotRow
+    from tests.conftest import _account_dict
+
+    with session_scope() as s:
+        s.add(
+            PortfolioSnapshotRow(
+                captured_at=when_et.replace(tzinfo=ZoneInfo("America/New_York"))
+                .astimezone(UTC)
+                .replace(tzinfo=None),
+                source="monitor",
+                account=_account_dict(net_liq, 80_000.0),
+                positions=[],
+            )
+        )
+
+
+def _reset_at(when_et) -> None:
+    import json
+    from datetime import UTC
+    from zoneinfo import ZoneInfo
+
+    from src.storage.system_settings import set_setting
+
+    stamp = when_et.replace(tzinfo=ZoneInfo("America/New_York")).astimezone(UTC).isoformat()
+    set_setting("slow_breaker_tripped", json.dumps({"tripped": False, "reset_at": stamp}))
+
+
+def _freeze_wednesday(monkeypatch):
+    from datetime import date
+
+    import src.execution.circuit_breakers as cb
+    import src.storage.portfolio_snapshots as ps
+
+    wednesday = date(2026, 11, 18)
+    monkeypatch.setattr(cb, "today_et", lambda: wednesday)
+    monkeypatch.setattr(ps, "today_et", lambda: wednesday)
+
+
+def test_the_slow_window_after_a_reset_ignores_a_pre_reset_high_across_a_quiet_day(
+    tmp_path, monkeypatch
+) -> None:
+    """Review fix 4: reset Monday after a trip, no snapshots Tuesday, evaluation Wednesday: the
+    Friday high must not come back because the window took 'the last 3 days on file'."""
+    from datetime import datetime
+
+    from src.execution.circuit_breakers import slow_drawdown
+    from src.storage.envelope_switches import set_switch
+
+    _db_setup(tmp_path, monkeypatch)
+    _freeze_wednesday(monkeypatch)
+    set_switch("slow_breaker", "10", source="cli")
+    _snapshot_at(datetime(2026, 11, 13, 12, 0), 1_000_000.0)  # Friday, before the reset
+    _reset_at(datetime(2026, 11, 16, 10, 0))  # Monday
+    _snapshot_at(datetime(2026, 11, 16, 11, 0), 950_000.0)  # after the reset
+    _snapshot_at(datetime(2026, 11, 18, 12, 0), 940_000.0)  # Wednesday; nothing on Tuesday
+    assert slow_drawdown(900_000.0) == pytest.approx((950_000 - 900_000) / 950_000 * 100)
+
+
+def test_a_same_day_reset_ignores_that_mornings_snapshots(tmp_path, monkeypatch) -> None:
+    from datetime import datetime
+
+    from src.execution.circuit_breakers import slow_drawdown
+    from src.storage.envelope_switches import set_switch
+
+    _db_setup(tmp_path, monkeypatch)
+    _freeze_wednesday(monkeypatch)
+    set_switch("slow_breaker", "10", source="cli")
+    _snapshot_at(datetime(2026, 11, 18, 8, 0), 1_000_000.0)  # this morning, before the reset
+    _reset_at(datetime(2026, 11, 18, 10, 0))
+    assert slow_drawdown(900_000.0) is None  # nothing since the reset: unmeasured, not tripped
+    _snapshot_at(datetime(2026, 11, 18, 11, 0), 950_000.0)
+    assert slow_drawdown(900_000.0) == pytest.approx((950_000 - 900_000) / 950_000 * 100)
+
+
+def test_window_high_net_liq_since_a_timestamp(tmp_path, monkeypatch) -> None:
+    from datetime import UTC, date, datetime
+
+    from src.storage.portfolio_snapshots import window_high_net_liq
+
+    _db_setup(tmp_path, monkeypatch)
+    _snapshot_at(datetime(2026, 11, 17, 9, 0), 1_000_000.0)
+    _snapshot_at(datetime(2026, 11, 17, 15, 0), 900_000.0)
+    today = date(2026, 11, 18)
+    assert window_high_net_liq(3, today) == pytest.approx(1_000_000.0)
+    cut = datetime(2026, 11, 17, 12, 0, tzinfo=UTC).replace(hour=17)  # 12:00 ET (EST, UTC-5)
+    assert window_high_net_liq(3, today, since=cut) == pytest.approx(900_000.0)
+
+
 def test_a_trip_is_not_a_halt(tmp_path, monkeypatch) -> None:
     from src.execution.circuit_breakers import evaluate_breakers, evaluate_slow_breaker
     from src.storage import slow_breaker

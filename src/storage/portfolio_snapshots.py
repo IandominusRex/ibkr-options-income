@@ -96,20 +96,27 @@ def latest_capture_time() -> datetime | None:
         return None
 
 
-def window_high_net_liq(sessions: int, today: date | None = None) -> float:
+def window_high_net_liq(
+    sessions: int, today: date | None = None, since: datetime | None = None
+) -> float:
     """Highest net liquidation the monitor recorded across the last ``sessions`` ET days on file
     (today included); 0.0 when nothing is recorded. The drawdown breaker's reference level: the
     monitor snapshots all day, so it does not depend on the breaker having run on a quiet day.
+
+    *since* (an aware datetime) drops every snapshot captured before it: the slow breaker's window
+    after a human reset starts at the reset's timestamp, so a pre-reset high can never re-enter
+    through a day that has no snapshots, nor can that morning's pre-reset snapshots count.
     Never raises."""
     today = today or today_et()
-    since = datetime.combine(today - timedelta(days=sessions * 3 + 4), datetime.min.time())
+    floor = datetime.combine(today - timedelta(days=sessions * 3 + 4), datetime.min.time())
+    since_utc = None if since is None else _as_utc(since)
     try:
         with session_scope() as s:
             rows = s.execute(
                 select(
                     PortfolioSnapshotRow.captured_at,
                     func.json_extract(PortfolioSnapshotRow.account, "$.net_liquidation"),
-                ).where(PortfolioSnapshotRow.captured_at >= since)
+                ).where(PortfolioSnapshotRow.captured_at >= floor)
             ).all()
     except Exception:
         log.exception("window_high_net_liq failed")
@@ -118,6 +125,8 @@ def window_high_net_liq(sessions: int, today: date | None = None) -> float:
     for at, nlv in rows:
         captured = _as_utc(at)
         if captured is None or not nlv or float(nlv) <= 0:
+            continue
+        if since_utc is not None and captured < since_utc:
             continue
         day = captured.astimezone(_ET).date()
         if day <= today:

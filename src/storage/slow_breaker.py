@@ -11,8 +11,10 @@ strictly: an unreadable row blocks its entries) and stops opening spreads while 
   while tripped, else 1.0. It is 1.0 whenever the ``slow_breaker`` switch is ``off`` (and in live,
   where every switch reads its default), so an old trip never throttles the wheel behind a switch
   the operator turned off. An unreadable row with the switch on reads as tripped (fail closed).
-* **After a reset the window restarts**: the high is taken over the sessions since the reset (at
-  least the current one), so a book still below its old high is not tripped again at once.
+* **After a reset the window restarts**: the high is taken over the snapshots captured at or after
+  the reset's timestamp (``reset_at``), so a book still below its old high is not tripped again at
+  once, a pre-reset high cannot return through a day with no snapshots, and that morning's
+  pre-reset snapshots do not count.
 
 Deterministic tier: reads and writes ``system_settings`` only.
 """
@@ -21,7 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -69,12 +71,15 @@ def csp_budget_fraction() -> float:
         return 1.0
 
 
-def reset_date() -> date | None:
-    """The ET date of the last human reset, or None (never reset, or unreadable)."""
+def reset_at() -> datetime | None:
+    """The aware timestamp of the last human reset, or None (never reset, or unreadable)."""
     try:
         state = read_state()
         at = state.get("reset_at") if state else None
-        return datetime.fromisoformat(at).astimezone(_ET).date() if isinstance(at, str) else None
+        if not isinstance(at, str):
+            return None
+        stamp = datetime.fromisoformat(at)
+        return stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)
     except Exception:
         return None
 

@@ -43,7 +43,7 @@ from sqlalchemy.orm import Session
 
 from src.common.config import get_config, get_envelope_cfg
 from src.common.hedge_view import pnl_today as hedge_pnl_today
-from src.common.market_hours import is_trading_day, today_et
+from src.common.market_hours import today_et
 from src.common.schemas import OrderState, PositionSnapshot
 from src.common.spreads_view import pnl_today as spreads_pnl_today
 from src.storage import slow_breaker
@@ -359,27 +359,14 @@ def evaluate_breakers(positions: list[PositionSnapshot], net_liquidation: float)
     return reason
 
 
-def _sessions_since(day: date, today: date) -> int:
-    """Trading days from *day* to *today*, both ends counted (at least 1)."""
-    n, d = 0, day
-    while d <= today:
-        if is_trading_day(d):
-            n += 1
-        d += timedelta(days=1)
-    return max(n, 1)
-
-
 def _slow_raw(net_liquidation: float) -> tuple[float, float] | None:
     """``(drawdown percent, window high)`` against the slow breaker's rolling high, or None when
-    net liq or the history is unknown. After a human reset the window restarts: the high is taken
-    over the sessions since the reset (at least the current one), never the whole old window."""
+    net liq or the history is unknown. After a human reset the window restarts at the reset's
+    timestamp: only snapshots captured at or after it count, never the old window."""
     if net_liquidation <= 0:
         return None
     sessions = get_envelope_cfg().slow_breaker.window_sessions
-    reset = slow_breaker.reset_date()
-    if reset is not None:
-        sessions = min(sessions, _sessions_since(reset, today_et()))
-    hwm = window_high_net_liq(sessions)
+    hwm = window_high_net_liq(sessions, since=slow_breaker.reset_at())
     if hwm <= 0:
         return None
     return max(0.0, (hwm - net_liquidation) / hwm * 100.0), hwm
