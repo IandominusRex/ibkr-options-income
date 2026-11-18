@@ -1,15 +1,20 @@
 """Build option LimitOrders at mid-price.
 
 Never use MarketOrder for option entries — always LimitOrder at mid, rounded to
-the nearest $0.05 tick. This is the only place an ib_async Order object is
+the nearest $0.05 tick. This is the only place an ib_async option Order object is
 constructed; nothing outside this module should need to know the constructor.
+
+The hedge book's orders (risk-envelope Task 35) are built here too: ``build_hedge_order`` (a BUY
+to open, a SELL to close, at mid, carrying the ``hedge:<id>`` orderRef) and ``build_hedge_combo``
+(the BAG for a put vertical, a neutral copy of the roll combo's shape). ``src/hedge/`` never
+constructs an order object itself.
 """
 
 from __future__ import annotations
 
 from ib_async import ComboLeg, Contract, LimitOrder
 
-from src.common.schemas import OptionQuote, TradeCandidate
+from src.common.schemas import HedgeCandidate, OptionQuote, TradeCandidate
 
 
 def _round_to_tick(price: float) -> float:
@@ -148,3 +153,46 @@ def build_combo_roll_order(
         tif="DAY",
     )
     return combo, order
+
+
+def build_hedge_order(cand: HedgeCandidate) -> LimitOrder:
+    """A DAY ``LimitOrder`` at mid for a hedge order (risk-envelope Task 35; spec §3.10.10 item 5).
+
+    An opening is a **BUY** at the structure's mid debit; a close is a **SELL** at the mid credit.
+    A single leg prices at its option tick, a vertical (sent as the BAG ``build_hedge_combo``
+    returns) at a penny. ``orderRef`` is the candidate's ``hedge:<id>``. Raises ``ValueError`` when
+    a leg has no two-sided quote."""
+    mid = 0.0
+    for leg in cand.legs:
+        m = leg.mid
+        if m is None:
+            raise ValueError(f"hedge order {cand.order_ref}: a leg has no two-sided quote")
+        mid += m if leg.action == "BUY" else -m
+    price = abs(mid)
+    lmt = _round_combo_tick(price) if len(cand.legs) > 1 else _round_to_tick(price)
+    return LimitOrder(
+        action="BUY" if cand.intent == "open" else "SELL",
+        totalQuantity=cand.contracts,
+        lmtPrice=lmt,
+        tif="DAY",
+        orderRef=cand.order_ref,
+    )
+
+
+def build_hedge_combo(cand: HedgeCandidate, con_ids: list[int]) -> Contract:
+    """The BAG for a hedge vertical: a neutral copy of ``build_combo_roll_order``'s shape (nothing
+    imported from the fenced ``src/spreads/``). Leg 1 BUYs the long put, leg 2 SELLs the short put,
+    1:1; the parent order BUYs the bag to open and SELLs it to close."""
+    if len(con_ids) != len(cand.legs) or len(con_ids) != 2 or any(c <= 0 for c in con_ids):
+        raise ValueError(f"hedge combo {cand.order_ref} needs two qualified legs, got {con_ids}")
+    open_close = 1 if cand.intent == "open" else 2  # IBKR ComboLeg: 1 = open, 2 = close
+    return Contract(
+        symbol=cand.instrument.upper(),
+        secType="BAG",
+        currency="USD",
+        exchange="SMART",
+        comboLegs=[
+            ComboLeg(conId=cid, ratio=1, action=leg.action, exchange="SMART", openClose=open_close)
+            for cid, leg in zip(con_ids, cand.legs, strict=True)
+        ],
+    )

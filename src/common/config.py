@@ -95,10 +95,25 @@ class IBKRCfg(BaseModel):
     host: str = "127.0.0.1"
     paper_port: int = 7497
     live_port: int = 7496
+    # One clientId per process (CLAUDE.md): engine, monitor, backfill, exec, scan, spreads (30),
+    # value (31), hedge (32, risk-envelope Task 35), healthcheck. Refused at load if two share one.
     client_ids: dict[str, int] = Field(default_factory=dict)
     market_data_type: int = 1
     connect_timeout_seconds: float = 15.0
     reconnect: ReconnectCfg = Field(default_factory=ReconnectCfg)
+
+    @field_validator("client_ids")
+    @classmethod
+    def _unique_client_ids(cls, v: dict[str, int]) -> dict[str, int]:
+        seen: dict[int, str] = {}
+        for name, cid in v.items():
+            if cid in seen:
+                raise ValueError(
+                    f"ibkr.client_ids.{name} and ibkr.client_ids.{seen[cid]} share clientId {cid}: "
+                    "every process needs its own"
+                )
+            seen[cid] = name
+        return v
 
 
 class ProfitTakeTier(BaseModel):

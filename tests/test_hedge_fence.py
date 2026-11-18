@@ -15,6 +15,7 @@ library). The reconciler skip and the attribution are tested in ``tests/test_hed
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from tests.test_spreads_fence import imported_modules
@@ -74,11 +75,17 @@ def test_only_src_hedge_writes_hedge_rows() -> None:
 
 
 def test_hedge_places_no_order() -> None:
-    """Task 16 is capture only: no order object, no order call, no direct market-data call."""
+    """Re-based in Task 35 (it pinned Task 16's capture-only package, before the buy-to-open build
+    existed): the hedge package never constructs an order object (``src/execution/order_builder.py``
+    builds every one), never uses a market order or ``ib.reqMktData`` directly, and only
+    ``executor.py`` sends an order."""
     for p in sorted((SRC / "hedge").rglob("*.py")):
         text = p.read_text(encoding="utf-8")
-        for needle in ("placeOrder", "LimitOrder", "MarketOrder", ".reqMktData("):
+        for needle in ("LimitOrder(", "MarketOrder", "StopOrder", ".reqMktData("):
             assert needle not in text, f"{p.name}: {needle}"
+        assert not re.search(r"\bOrder\(", text), f"{p.name}: Order("
+        if p.name != "executor.py":
+            assert "placeOrder" not in text, f"{p.name}: placeOrder"
 
 
 def test_the_hedge_package_never_writes_a_wheel_order_or_fill() -> None:

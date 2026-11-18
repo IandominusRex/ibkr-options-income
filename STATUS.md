@@ -581,7 +581,14 @@ unmerged; the daemons capture nothing until a merge and `./ibkr restart`. Captur
   ways, the H5 DTE and delta windows, a two-sided fresh quote within 8% of mid, the H6 stress block with the
   self-funding roll carve-out, halt and slow breaker, hedge delta at most 50% of the book's beta-delta, every
   `hedge:` order refused in live and `hedge:claude:` refused always); scoped out of the income gates.
-- **Not yet:** the hedge's orders and the bridge (Tasks 35-37). `needed_contracts` is
+- **Hedge orders** (Task 35): `order_builder.build_hedge_order` (a BUY limit at mid to open, a SELL to close; a
+  BAG for a vertical via `build_hedge_combo`) and `src/hedge/executor.py::execute_hedge` on clientId 32
+  (`ibkr.client_ids.hedge`; client ids are now refused at load if two share one): every leg qualified, fresh
+  quotes, re-gated at send time, the `hedge:<id>` row written before `placeOrder`, a chase never above the
+  approved debit x 1.05, part fills booked, an unconfirmed cancel left working and settled later from the
+  broker's executions. **Needs live verification:** the BAG sign for a vertical, XND's tick sizes and paper
+  routing.
+- **Not yet:** the bridge (Tasks 36-37). `needed_contracts` is
   recorded as 0 until Task 36's size rule exists (the report reads it as "at least one contract").
 - **Known limitations (wings):** the wing's distance is the SPY short strike over the GEX `scale`, snapped to a listed strike at or beyond it (within one strike step of the same expected-move distance); XSP's trading class (`XSP`) is a guess that falls back to any class of the symbol that lists the expiry; the cost model charges the full mid-to-natural crossing in and out for every instrument alike (the measured crossing, not the shadow haircut), so it is conservative for all and compares like with like.
 - **Known limitations:** XND's contract fields (`IND` on `NASDAQ`, class `XND`) come from the plan and have not

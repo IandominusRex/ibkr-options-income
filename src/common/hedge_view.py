@@ -33,7 +33,7 @@ from src.common.config import get_config
 log = logging.getLogger(__name__)
 
 _ET = ZoneInfo("America/New_York")
-_WORKING = ("submitted", "partial", "working")
+_WORKING = ("submitted", "working")  # "partial" is final: part filled, the rest cancelled
 _EPS = 1e-9
 
 

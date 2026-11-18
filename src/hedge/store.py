@@ -268,8 +268,8 @@ def update_order(order_id: int, **values: Any) -> None:
 
 
 def working_orders(hedge_id: str | None = None) -> list[dict[str, Any]]:
-    """Orders still ``submitted``, ``partial`` or ``working`` (optionally one position's)."""
-    stmt = select(HedgeOrderRow).where(HedgeOrderRow.state.in_(("submitted", "partial", "working")))
+    """Orders still ``submitted`` or ``working`` (optionally one position's); ``partial`` is final."""
+    stmt = select(HedgeOrderRow).where(HedgeOrderRow.state.in_(("submitted", "working")))
     if hedge_id is not None:
         stmt = stmt.where(HedgeOrderRow.hedge_id == hedge_id)
     with session_scope() as s:
@@ -280,11 +280,26 @@ def working_orders(hedge_id: str | None = None) -> list[dict[str, Any]]:
                 "order_ref": r.order_ref,
                 "intent": r.intent,
                 "contracts": r.contracts,
+                "multiplier": r.multiplier,
                 "filled_qty": r.filled_qty,
                 "created_at": r.created_at,
             }
             for r in s.execute(stmt).scalars()
         ]
+
+
+def fill_exec_ids(order_id: int) -> set[str]:
+    """The broker ``execId``s already booked against one order (a late fill is booked once)."""
+    with session_scope() as s:
+        return {
+            e
+            for (e,) in s.execute(
+                select(HedgeFillRow.exec_id).where(
+                    HedgeFillRow.order_id == order_id, HedgeFillRow.exec_id.is_not(None)
+                )
+            ).all()
+            if e
+        }
 
 
 def record_fill(
