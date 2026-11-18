@@ -2459,7 +2459,7 @@ more than half the book's beta-weighted delta); at 30 days to expiry it rolls (s
 default). After a VIX close at or above 25, or a VXN close at or above its one-year 90th percentile, during a halt
 or while the slow breaker is tripped, it buys nothing new; a roll goes ahead only if the sale pays for the new
 item, otherwise the position is held. On QQQ it closes the position two sessions before expiry, and if that
-close does not fill it tells IBKR not to exercise the put (a lapse instruction), so the put never sells shares.
+close does not fill it tells IBKR not to exercise the put (a lapse instruction), so the put never sells shares. For a vertical it sends no lapse instruction when the underlying's price is unknown (it tells you instead), and none when both legs are in the money; a contract that does not qualify gets none either, with a message to check the position by hand.
 XND settles in cash; the settlement is booked from the last captured price (an estimate; your statement has the
 exact cash).
 

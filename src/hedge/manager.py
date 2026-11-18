@@ -643,13 +643,33 @@ async def _lapse_instruction(h: hedge_view.OpenHedge, qty: float, sh: _Shared) -
         return ""
     quotes = latest_leg_quotes([long_leg.con_id] if long_leg.con_id else [])
     spot = quotes[long_leg.con_id].spot if long_leg.con_id in quotes else None
-    if short_leg is not None and spot is not None and spot < short_leg.strike:
-        return "Both legs are in the money: left to exercise and assignment (no net shares)."
+    if spot is None:
+        # the instrument's newest captured quote, when the long leg has none of its own
+        recent = [q for q in store.load_quotes(instrument=h.instrument) if q.spot and q.spot > 0]
+        spot = recent[-1].spot if recent else None
+    if short_leg is not None:
+        if spot is None:
+            return (
+                f"No spot for {h.instrument} to check the short {short_leg.strike:g}P: no lapse "
+                "instruction sent (lapsing the long alone could leave the short's shares). Left "
+                f"to the operator before expiry {h.expiry}."
+            )
+        if spot < short_leg.strike:
+            return "Both legs are in the money: left to exercise and assignment (no net shares)."
     contract = executor.leg_contract(
         close_candidate(h, qty, "lapse"),
         HedgeLeg(action="BUY", strike=long_leg.strike, expiry=long_leg.expiry),
     )
-    await sh.ib.qualifyContractsAsync(contract)
+    qualified = await sh.ib.qualifyContractsAsync(contract)
+    if (
+        not qualified
+        or any(c is None for c in qualified)
+        or not int(getattr(contract, "conId", 0) or 0)
+    ):
+        return (
+            f"The {h.instrument} {long_leg.strike:g}P could not be qualified: no lapse instruction "
+            "sent. Check the position by hand before expiry."
+        )
     sh.ib.exerciseOptions(contract, 2, int(qty), sh.cfg.secrets.ibkr_account or "", 1)
     set_setting(key, sh.today.isoformat())
     return f"Lapse instruction sent for {int(qty)} {h.instrument} {long_leg.strike:g}P."

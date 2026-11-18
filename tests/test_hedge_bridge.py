@@ -119,14 +119,19 @@ def kinds(acts: list[manager.Action]) -> list[tuple[str, str]]:
 
 
 class FakeIB:
-    def __init__(self) -> None:
+    def __init__(self, *, qualify: bool = True) -> None:
         self.disconnected = False
         self.exercised: list[tuple[Any, ...]] = []
+        self.qualify = qualify
 
     def disconnect(self) -> None:
         self.disconnected = True
 
     async def qualifyContractsAsync(self, *c: Any) -> list[Any]:
+        if not self.qualify:
+            return []  # ib_async's answer for a contract it could not resolve
+        for contract in c:
+            contract.conId = 9001
         return list(c)
 
     def exerciseOptions(self, *args: Any) -> None:
@@ -447,6 +452,67 @@ async def test_qqq_route_closes_by_t_minus_2_and_sends_a_lapse_instruction(
         1,
     )
     assert "Lapse instruction sent" in text
+
+
+def _spot_quote(spot: float, *, con_id: int = 8001) -> None:
+    """One captured quote of QQQ with the underlying at *spot* (not one of the hedge's legs)."""
+    store.record_capture(
+        [
+            store.QuoteRecord(
+                captured_at=datetime(2026, 11, 18, 15, 30, tzinfo=UTC),
+                session_date=TODAY,
+                instrument="QQQ",
+                item_key="P450",
+                leg="long",
+                is_default=False,
+                con_id=con_id,
+                strike=450.0,
+                right="P",
+                expiry=TODAY + timedelta(days=60),
+                spot=spot,
+                bid=1.0,
+                ask=1.1,
+                bid_size=5,
+                ask_size=5,
+                mid=1.05,
+                delta=-0.1,
+            )
+        ]
+    )
+
+
+async def test_a_vertical_with_an_unknown_spot_gets_no_lapse_instruction(hedge_db) -> None:
+    """Review fix 7: without the spot the both-in-the-money guard cannot run, so nothing is sent
+    (lapsing the long alone could leave the short's shares); the operator is told."""
+    h = open_hedge(short=500.0, expiry=date(2026, 11, 20))
+    sh = _Sh(_ctx(), None)
+    text = await manager._lapse_instruction(h, 2.0, sh)  # type: ignore[arg-type]
+    assert sh.ib.exercised == []
+    assert "operator" in text and "spot" in text
+
+
+async def test_the_lapse_guard_falls_back_to_the_latest_captured_spot(hedge_db) -> None:
+    h = open_hedge(short=500.0, expiry=date(2026, 11, 20))
+    _spot_quote(480.0)  # under the short strike: both legs in the money
+    sh = _Sh(_ctx(), None)
+    text = await manager._lapse_instruction(h, 2.0, sh)  # type: ignore[arg-type]
+    assert sh.ib.exercised == [] and "Both legs are in the money" in text
+    other = open_hedge("h2", short=500.0, expiry=date(2026, 11, 20))
+    _spot_quote(520.0)  # the newest capture now: the short is out of the money
+    sh2 = _Sh(_ctx(), None)
+    text = await manager._lapse_instruction(other, 2.0, sh2)  # type: ignore[arg-type]
+    assert len(sh2.ib.exercised) == 1 and "Lapse instruction sent" in text
+
+
+async def test_an_unqualified_contract_sends_no_lapse_instruction(hedge_db) -> None:
+    h = open_hedge(expiry=date(2026, 11, 20))
+    sh = _Sh(_ctx(), None)
+    sh.ib = FakeIB(qualify=False)
+    text = await manager._lapse_instruction(h, 2.0, sh)  # type: ignore[arg-type]
+    assert sh.ib.exercised == [] and "could not be qualified" in text
+    from src.storage.system_settings import get_setting
+
+    assert get_setting("hedge_lapse_sent:h1") in (None, "")  # a retry stays possible
 
 
 async def test_xnd_cash_settlement_is_booked(hedge_db) -> None:
