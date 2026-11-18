@@ -985,6 +985,52 @@ class HedgeCandidate(BaseModel):
         """The order's premium in dollars (positive = paid)."""
         return self.debit * self.multiplier * self.contracts
 
+    @property
+    def self_funding_roll(self) -> bool:
+        """H6: a roll whose sale's proceeds cover its debit and that adds no contracts."""
+        return (
+            self.intent == "open"
+            and self.roll_of is not None
+            and self.roll_proceeds is not None
+            and self.roll_contracts is not None
+            and self.cost - self.roll_proceeds <= 1e-9
+            and self.contracts <= self.roll_contracts
+        )
+
+
+class HedgeContext(BaseModel):
+    """Everything ``risk_engine.validate_hedge`` reads beside the candidate (risk-envelope Task 34),
+    read fresh at decision time and again at send time (``src/hedge/context.py``).
+
+    Budget (H3): ``nlv0``, ``months_elapsed``, ``net_premium_spent`` (dollars paid less received over
+    the bridge, a roll's sale already in it), ``open_premium_at_cost``. Stress (H6): the last ^VIX
+    close and the last ^VXN close with its 1-year 90th percentile (None = unknown: new size is
+    refused), the account halt and the slow breaker. Delta (H5): the book's beta-weighted delta
+    and the open hedges' (SPY-dollars), the instrument's beta. Clash (H9): every other book's
+    option ``conId`` and contract identity (underlying, right, strike, expiry), the names any other
+    book holds a share or a short option in, and the contracts the hedge book holds per position
+    (never sold beyond, nor beyond what IBKR holds)."""
+
+    is_live: bool = False
+    now: datetime
+    nlv0: float = 0.0
+    months_elapsed: float = 0.0
+    net_premium_spent: float = 0.0
+    open_premium_at_cost: float = 0.0
+    halted: bool = False
+    slow_breaker_tripped: bool = False
+    vix_close: float | None = None
+    vxn_close: float | None = None
+    vxn_p90: float | None = None
+    book_beta_delta: float | None = None
+    hedge_beta_delta: float = 0.0
+    instrument_beta: float | None = None
+    other_books_con_ids: list[int] = Field(default_factory=list)
+    other_books_contracts: list[tuple[str, str, float, date]] = Field(default_factory=list)
+    wheel_underlyings: list[str] = Field(default_factory=list)
+    held_contracts: dict[str, float] = Field(default_factory=dict)
+    hedge_book_readable: bool = True
+
 
 class RiskVerdict(BaseModel):
     candidate_id: str

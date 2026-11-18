@@ -95,10 +95,11 @@ envelope:
     same_day_fills: 2           # block when this many cash-secured puts on the name were already sent today
   trim_points: 1.0              # Task 31: a tap-only trim proposal sells the shares that take this many points off S10_gross
 
-# --- Index-hedge quote capture (risk-envelope Task 16, 2026-11-14) ---
-# Until the buy-to-open build (Task 33) this block only drives the twice-a-session capture of bid, ask and
-# size for every hedge menu item's legs (XND and QQQ) into hedge_quotes, and the H4 instrument report
-# (python -m scripts.hedge_capture_report). Typed in src/common/config.py (HedgeCfg).
+# --- The index hedge: quote capture (Task 16) and the bridge (Tasks 33-37), risk-envelope plan ---
+# The twice-a-session capture of bid, ask and size for every hedge menu item's legs (XND and QQQ) into
+# hedge_quotes and the H4 instrument report (python -m scripts.hedge_capture_report); from Task 34 also what
+# risk_engine.validate_hedge reads, and the Python-run bridge (src/hedge/manager.py, paper only, clientId 32).
+# Typed in src/common/config.py (HedgeCfg).
 hedge:
   underlyings: [XND, QQQ]       # Task 33 (H9): what the hedge book may trade; an index (XND) may never be a universe or spreads-book name
   instruments:                 # the candidates, XND first; sec_type/exchange name the underlying, options go SMART with trading_class
@@ -112,6 +113,17 @@ hedge:
   vertical_min_width_pct: 10.0  # H5: a put vertical is at least this % of spot wide
   quote_max_spread_pct: 8.0     # H4: the median quoted spread of the default item's legs must be at most this % of mid
   commission_per_contract: 0.65 # IBKR commission per contract per leg, added to the H4 cost per protected point
+  budget:                       # H3, in % of NLV0 (net liquidation on the bridge's first day, fixed in dollars)
+    net_pct_nlv0: 1.0           # net premium over the bridge (paid less received) at most this
+    pace_pct_per_month: 0.25    # cumulative net premium at most this x (months elapsed + pace_months_allowance)
+    pace_months_allowance: 2    # the pace's opening allowance, in months
+    open_at_cost_pct_nlv0: 0.6  # premium of the open hedge positions, at cost, at most this
+  stress:                       # H6: no new hedge size after either close (a self-funding roll still passes)
+    vix_close: 25.0             # a ^VIX close at or above this
+    vxn_percentile: 90          # a ^VXN close at or above this percentile of its own window
+    vxn_window_sessions: 252    # the ^VXN window, in stored sessions (one year)
+  max_hedge_delta_share: 0.5    # H5: the hedge's beta-weighted delta at most this share of the book's
+  t_minus_close_sessions: 2     # a QQQ hedge is closed this many sessions before expiry (then a lapse instruction)
 
 # --- IV sanity check on iv_history writes (risk-envelope Task 10, 2026-11-14) ---
 # An implausible daily IV observation is stored but flagged, and every reader skips flagged rows

@@ -14,12 +14,25 @@ the cumulative budgets are consumed greedily in that order.
 
 from __future__ import annotations
 
-from src.common.books import Attribution, ValueExposure, is_spreads_underlying, value_exposure
-from src.common.config import RollCfg, get_config, get_envelope_cfg
+from datetime import date
+
+from src.common import hedge_view
+from src.common.books import (
+    HEDGE_CLAUDE_PREFIX,
+    HEDGE_ORDER_PREFIX,
+    Attribution,
+    ValueExposure,
+    is_spreads_underlying,
+    value_exposure,
+)
+from src.common.config import RollCfg, get_config, get_envelope_cfg, get_hedge_cfg
 from src.common.envelope_types import BookLine, EnvelopeRoom, ShockInputs
 from src.common.market_hours import today_et
 from src.common.schemas import (
     AccountSnapshot,
+    HedgeCandidate,
+    HedgeContext,
+    HedgeLeg,
     OptionQuote,
     OptionRight,
     PositionSnapshot,
@@ -183,6 +196,21 @@ def _cumulative_reasons(
     return reasons
 
 
+def _hedge_book_for_clash() -> tuple[set[str] | None, set[tuple[str, str, float, date]]]:
+    """The hedge book's open (or working) instruments and contract identities, through the
+    read-only ``hedge_view``; ``(None, set())`` when it cannot be read."""
+    book = hedge_view.open_hedges()
+    if book is None:
+        return None, set()
+    names = {h.instrument.upper() for h in book}
+    keys = {
+        (h.instrument.upper(), leg.right, round(float(leg.strike), 4), leg.expiry)
+        for h in book
+        for leg in h.legs
+    }
+    return names, keys
+
+
 def validate_candidates(
     candidates: list[TradeCandidate],
     account: AccountSnapshot,
@@ -316,6 +344,8 @@ def validate_candidates(
     # never a reason, returned on the verdict and written to ``sizing_actions`` by the caller.
     limits_would: dict[str, list[str]] = {}
     vrp_waived_ids: set[str] = set()  # name-level signal lots the fair-value floor would refuse
+    hedge_names, hedge_keys = _hedge_book_for_clash()
+    hedge_cfg_names = set(get_hedge_cfg().underlyings)
     for cand in candidates:
         reasons: list[str] = []
         limits = _strategy_limits(cand.strategy)
@@ -323,6 +353,21 @@ def validate_candidates(
         # override could still put one in front of the wheel; it must never reach an order.
         if is_spreads_underlying(cand.underlying):
             reasons.append("reserved_for_spreads_book")
+        # The hedge book (risk-envelope Task 34, spec §3.10.0/§3.10.9, H9): no wheel short in a
+        # contract the hedge holds (IBKR nets same-contract positions across clientIds), and no
+        # wheel opening on an instrument while a hedge on it is open (the QQQ-route rule: a QQQ
+        # put exercised into shares, a same-underlying margin offset). An unreadable hedge book
+        # refuses every opening on a hedge underlying (fail closed).
+        und = cand.underlying.upper()
+        if hedge_names is None:
+            if und in hedge_cfg_names:
+                reasons.append("hedge_book_unreadable")
+        else:
+            key = (und, cand.right.value, round(float(cand.strike), 4), cand.expiry)
+            if key in hedge_keys:
+                reasons.append("hedge_contract_clash")
+            if und in hedge_names:
+                reasons.append("hedge_qqq_route")
         # Value book (spec §9.2): a name whose share attribution is frozen takes no new put and
         # no new call until a human clears it; with the book on and value.db unreadable, no
         # new put at all (the gross and combined caps cannot be measured: fail closed).
@@ -1041,6 +1086,188 @@ def validate_stock_order(
         candidate_id=f"{order.source}:{order.ref_id or sym}",
         verdict=Verdict.PASS if not reasons else Verdict.REJECT,
         reasons=reasons,
+    )
+
+
+HEDGE_QUOTE_MAX_AGE_SECONDS = 60.0  # "fresh" (§3.10.10 item 4): a leg quote at most this old
+
+
+def _hedge_max_loss_per_share(legs: list[HedgeLeg], debit: float) -> float:
+    """The structure's worst loss per share: its debit plus the worst payoff shortfall at expiry
+    (checked at every strike and at zero). A long put or a debit put vertical loses its debit."""
+    points = [0.0, *(leg.strike for leg in legs)]
+
+    def payoff(s: float) -> float:
+        total = 0.0
+        for leg in legs:
+            intrinsic = max(0.0, leg.strike - s) if leg.right == "P" else max(0.0, s - leg.strike)
+            total += intrinsic if leg.action == "BUY" else -intrinsic
+        return total
+
+    return debit - min(payoff(s) for s in points)
+
+
+def _hedge_structure_reasons(cand: HedgeCandidate) -> list[str]:
+    reasons: list[str] = []
+    longs = [leg for leg in cand.legs if leg.action == "BUY"]
+    shorts = [leg for leg in cand.legs if leg.action == "SELL"]
+    if any(leg.right != "P" for leg in cand.legs):
+        reasons.append("hedge_not_a_put")
+    if len(longs) != 1 or len(shorts) > 1:
+        reasons.append("hedge_naked_short" if shorts and not longs else "hedge_structure")
+    elif shorts:
+        long, short = longs[0], shorts[0]
+        if short.expiry != long.expiry or short.strike >= long.strike:
+            reasons.append("hedge_naked_short")  # a diagonal or a short above the long
+    if (cand.kind == "outright") != (not shorts):
+        reasons.append("hedge_structure")
+    return reasons
+
+
+def validate_hedge(cand: HedgeCandidate, ctx: HedgeContext) -> RiskVerdict:
+    """The Rules Engine's gate for a hedge order (risk-envelope Task 34; spec §3.10.10 item 4).
+
+    Deterministic, no LLM, no I/O but config: run at decision time and again at send time on a
+    fresh quote (``src/hedge/executor.py``). Nothing an LLM produces reaches it.
+
+    Every order: ``hedge_paper_only`` in live (the hedge is paper only); ``hedge_claude_reserved``
+    for a ``hedge:claude:`` ref (reserved for the Mastermind's paper put budget, refused by this
+    build) and also ``hedge_claude_live`` under ``LIVE_TRADING=true``; ``hedge_bad_ref`` without a
+    ``hedge:`` ref; ``hedge_underlying`` outside ``hedge.underlyings``; ``no_contracts``;
+    ``hedge_quote_one_sided`` / ``hedge_quote_stale`` (two-sided and fresh, every leg);
+    ``hedge_not_a_put`` / ``hedge_structure`` / ``hedge_naked_short`` (one long put, at most one
+    short put of the same expiry below it, 1:1: no naked short leg).
+
+    A **close** (a sale of what the book holds) lowers risk: beyond the above it is refused only
+    ``hedge_close_exceeds_held`` (never more than the position, nor than IBKR holds).
+
+    An **opening**: ``hedge_no_debit`` / ``hedge_max_loss`` (max loss = the debit); the H5 windows
+    (``hedge_dte_window``, ``hedge_delta_window``); ``hedge_quote_wide`` (a leg wider than
+    ``quote_max_spread_pct`` of mid); the clash rules (``hedge_contract_clash`` in a contract any
+    other book holds; ``hedge_qqq_route`` while another book holds a share or a short option on the
+    instrument); the H3 budget (``hedge_budget_net``, ``hedge_budget_pace``, ``hedge_budget_open``;
+    ``hedge_budget_unmeasured`` with no NLV0 or an unreadable book); ``hedge_delta_cap`` (the
+    hedge's beta-weighted delta above ``max_hedge_delta_share`` of the book's;
+    ``hedge_book_delta_unmeasured`` when either is unknown); and, unless it is a self-funding roll
+    (net debit <= 0, no added contracts), the stress block (``hedge_stress_block``, or
+    ``hedge_stress_unmeasured`` with no VIX close), ``hedge_halted`` and ``hedge_slow_breaker``.
+
+    Scoped out of the income gates (ROC, yield, IV rank, IV/RV, ``min_credit``) as rolls are: a
+    hedge pays premium. No hedge creates envelope headroom (H1, H10): nothing here or in the
+    envelope credits one.
+    """
+    cfg = get_hedge_cfg()
+    reasons: list[str] = []
+    ref = cand.order_ref or ""
+    if ctx.is_live:
+        reasons.append("hedge_paper_only")
+    if ref.startswith(HEDGE_CLAUDE_PREFIX):
+        reasons.append("hedge_claude_reserved")
+        if ctx.is_live:
+            reasons.append("hedge_claude_live")
+    elif not ref.startswith(HEDGE_ORDER_PREFIX):
+        reasons.append("hedge_bad_ref")
+    inst = cand.instrument.upper()
+    if inst not in cfg.underlyings:
+        reasons.append("hedge_underlying")
+    if cand.contracts < 1:
+        reasons.append("no_contracts")
+    reasons += _hedge_structure_reasons(cand)
+    for leg in cand.legs:
+        if leg.mid is None:
+            reasons.append("hedge_quote_one_sided")
+            break
+    for leg in cand.legs:
+        age = (ctx.now - leg.quoted_at).total_seconds() if leg.quoted_at is not None else None
+        if age is None or age > HEDGE_QUOTE_MAX_AGE_SECONDS or age < -HEDGE_QUOTE_MAX_AGE_SECONDS:
+            reasons.append("hedge_quote_stale")
+            break
+
+    if cand.intent == "close":
+        held = ctx.held_contracts.get(cand.closes or "", 0.0)
+        if cand.closes is None or cand.contracts > held + 1e-9:
+            reasons.append("hedge_close_exceeds_held")
+        return _hedge_verdict(cand, reasons)
+
+    if not cand.debit > 0:
+        reasons.append("hedge_no_debit")
+    elif _hedge_max_loss_per_share(cand.legs, cand.debit) > cand.debit + 1e-6 or abs(
+        cand.max_loss - cand.cost
+    ) > 0.01 * max(1.0, cand.cost):
+        reasons.append("hedge_max_loss")
+    lo, hi = cfg.dte_window
+    if cand.dte is None or not max(lo, cfg.dte_floor) <= cand.dte <= hi:
+        reasons.append("hedge_dte_window")
+    long = cand.long_leg
+    dlo, dhi = cfg.long_delta
+    ld = abs(long.delta) if long is not None and long.delta is not None else None
+    if ld is None or not (max(dlo, 0.15) - 1e-9 <= ld <= dhi + 1e-9):
+        reasons.append("hedge_delta_window")
+    for leg in cand.legs:
+        m = leg.mid
+        if m is not None and leg.ask is not None and leg.bid is not None:
+            if (leg.ask - leg.bid) / m * 100.0 > cfg.quote_max_spread_pct + 1e-9:
+                reasons.append("hedge_quote_wide")
+                break
+    clash_ids = set(ctx.other_books_con_ids)
+    clash_keys = {(u.upper(), r, round(float(k), 4), e) for u, r, k, e in ctx.other_books_contracts}
+    if any(
+        (leg.con_id is not None and leg.con_id in clash_ids) or leg.key(inst) in clash_keys
+        for leg in cand.legs
+    ):
+        reasons.append("hedge_contract_clash")
+    if inst in {n.upper() for n in ctx.wheel_underlyings}:
+        reasons.append("hedge_qqq_route")
+
+    if not ctx.nlv0 > 0 or not ctx.hedge_book_readable:
+        reasons.append("hedge_budget_unmeasured")
+    else:
+        net_cap, pace_cap, open_cap = cfg.budget.caps(ctx.nlv0, ctx.months_elapsed)
+        after = ctx.net_premium_spent + cand.cost
+        if after > net_cap + 1e-6:
+            reasons.append("hedge_budget_net")
+        if after > pace_cap + 1e-6:
+            reasons.append("hedge_budget_pace")
+        if ctx.open_premium_at_cost + cand.cost > open_cap + 1e-6:
+            reasons.append("hedge_budget_open")
+
+    per_contract: float | None = None
+    if long is not None and cand.spot and ctx.instrument_beta is not None:
+        signed = [
+            (leg.delta if leg.action == "BUY" else -leg.delta)
+            for leg in cand.legs
+            if leg.delta is not None
+        ]
+        if len(signed) == len(cand.legs):
+            per_contract = sum(signed) * cand.multiplier * cand.spot * ctx.instrument_beta
+    if ctx.book_beta_delta is None or not ctx.book_beta_delta > 0 or per_contract is None:
+        reasons.append("hedge_book_delta_unmeasured")
+    elif (
+        abs(min(0.0, ctx.hedge_beta_delta) + min(0.0, per_contract * cand.contracts))
+        > cfg.max_hedge_delta_share * ctx.book_beta_delta + 1e-6
+    ):
+        reasons.append("hedge_delta_cap")
+
+    if not cand.self_funding_roll:
+        s = cfg.stress
+        if ctx.vix_close is None:
+            reasons.append("hedge_stress_unmeasured")
+        elif ctx.vix_close >= s.vix_close or (
+            ctx.vxn_close is not None and ctx.vxn_p90 is not None and ctx.vxn_close >= ctx.vxn_p90
+        ):
+            reasons.append("hedge_stress_block")
+        if ctx.halted:
+            reasons.append("hedge_halted")
+        if ctx.slow_breaker_tripped:
+            reasons.append("hedge_slow_breaker")
+    return _hedge_verdict(cand, reasons)
+
+
+def _hedge_verdict(cand: HedgeCandidate, reasons: list[str]) -> RiskVerdict:
+    return RiskVerdict(
+        candidate_id=cand.order_ref or cand.hedge_id,
+        verdict=Verdict.PASS if not reasons else Verdict.REJECT,
+        reasons=list(dict.fromkeys(reasons)),
     )
 
 

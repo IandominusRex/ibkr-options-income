@@ -2881,10 +2881,53 @@ def _default_hedge_instruments() -> dict[str, HedgeInstrumentCfg]:
     }
 
 
-class HedgeCfg(_KeyedCfg):
-    """The bridge hedge's capture-era settings (risk-envelope Task 16; spec §3.10.3-§3.10.8, H4, H5).
+class HedgeBudgetCfg(_KeyedCfg):
+    """The bridge's premium budget (risk-envelope Task 34; spec §3.10.3, ruling H3), in percent of
+    NLV0 (net liquidation on the bridge's first day, fixed in dollars): net premium over the bridge
+    (paid less received) at most ``net_pct_nlv0``; cumulative net premium at most
+    ``pace_pct_per_month`` x (months elapsed + ``pace_months_allowance``); open premium at cost at
+    most ``open_at_cost_pct_nlv0``."""
 
-    Until Task 33 only the quote capture reads this block: ``instruments`` are the candidates
+    KEYS: ClassVar[tuple[str, ...]] = (
+        "net_pct_nlv0",
+        "pace_pct_per_month",
+        "pace_months_allowance",
+        "open_at_cost_pct_nlv0",
+    )
+
+    net_pct_nlv0: float = Field(default=1.0, gt=0, le=5)
+    pace_pct_per_month: float = Field(default=0.25, gt=0)
+    pace_months_allowance: float = Field(default=2.0, ge=0)
+    open_at_cost_pct_nlv0: float = Field(default=0.6, gt=0, le=5)
+
+    def caps(self, nlv0: float, months: float) -> tuple[float, float, float]:
+        """(net, pace, open at cost) caps in dollars for *nlv0* after *months* (pace never above
+        net)."""
+        net = self.net_pct_nlv0 / 100.0 * nlv0
+        pace = (
+            self.pace_pct_per_month / 100.0 * nlv0 * (max(0.0, months) + self.pace_months_allowance)
+        )
+        return net, min(net, pace), self.open_at_cost_pct_nlv0 / 100.0 * nlv0
+
+
+class HedgeStressCfg(_KeyedCfg):
+    """The stress block (risk-envelope Task 34; spec §3.10.6, ruling H6): no new hedge size on a
+    session after a ^VIX close at or above ``vix_close``, or a ^VXN close at or above its
+    ``vxn_percentile`` percentile over the last ``vxn_window_sessions`` stored closes."""
+
+    KEYS: ClassVar[tuple[str, ...]] = ("vix_close", "vxn_percentile", "vxn_window_sessions")
+
+    vix_close: float = Field(default=25.0, gt=0)
+    vxn_percentile: float = Field(default=90.0, gt=0, lt=100)
+    vxn_window_sessions: int = Field(default=252, ge=20)
+
+
+class HedgeCfg(_KeyedCfg):
+    """The index hedge's settings (risk-envelope Tasks 16, 33-36; spec §3.10.3-§3.10.9, H3-H6, H9).
+
+    ``underlyings`` (Task 33) are what the hedge book may trade. ``budget``, ``stress``,
+    ``max_hedge_delta_share`` and ``t_minus_close_sessions`` (Task 34) are what
+    ``risk_engine.validate_hedge`` and the bridge read. The capture: ``instruments`` are the candidates
     (XND first, QQQ the fallback), ``capture_times_et`` the two fixed times a session the menu's legs
     are quoted, ``capture_max_lines`` the market-data lines open at once while it does (at most 10,
     cancelled between chunks). The menu holds outright puts and put verticals ``vertical_min_width_pct``
@@ -2904,6 +2947,10 @@ class HedgeCfg(_KeyedCfg):
         "vertical_min_width_pct",
         "quote_max_spread_pct",
         "commission_per_contract",
+        "budget",
+        "stress",
+        "max_hedge_delta_share",
+        "t_minus_close_sessions",
     )
 
     # Task 33 (H9): the underlyings the hedge book may trade. An index underlying (XND) is the
@@ -2919,6 +2966,11 @@ class HedgeCfg(_KeyedCfg):
     vertical_min_width_pct: float = Field(default=10.0, gt=0, lt=100)
     quote_max_spread_pct: float = Field(default=8.0, gt=0)
     commission_per_contract: float = Field(default=0.65, ge=0)
+    # Task 34: what validate_hedge reads beyond the menu's windows (H3, H5, H6, §3.10.4).
+    budget: HedgeBudgetCfg = Field(default_factory=HedgeBudgetCfg)
+    stress: HedgeStressCfg = Field(default_factory=HedgeStressCfg)
+    max_hedge_delta_share: float = Field(default=0.5, gt=0, le=1)
+    t_minus_close_sessions: int = Field(default=2, ge=0, le=10)
 
     @field_validator("underlyings")
     @classmethod

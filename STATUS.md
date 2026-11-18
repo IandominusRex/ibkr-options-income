@@ -576,7 +576,12 @@ unmerged; the daemons capture nothing until a merge and `./ibkr restart`. Captur
   the trade ledger leaving hedge rows out, and `reconcile_external_closes` skipping `hedge:` refs. XND may
   never be a universe or spreads-book name (`Config._hedge_isolated`). The trade ledger's FIFO pairs a long
   open and close into one closed "Buy" trade (tested; spec §3.10.10's [U]).
-- **Not yet:** `validate_hedge`, the hedge's orders and the bridge (Tasks 34-37). `needed_contracts` is
+- **`validate_hedge`** (Task 34): the Rules Engine's only gate in front of a hedge order (budget caps H3, max
+  loss = debit, no naked short leg, `hedge.underlyings`, the contract clash both ways, the QQQ-route rule both
+  ways, the H5 DTE and delta windows, a two-sided fresh quote within 8% of mid, the H6 stress block with the
+  self-funding roll carve-out, halt and slow breaker, hedge delta at most 50% of the book's beta-delta, every
+  `hedge:` order refused in live and `hedge:claude:` refused always); scoped out of the income gates.
+- **Not yet:** the hedge's orders and the bridge (Tasks 35-37). `needed_contracts` is
   recorded as 0 until Task 36's size rule exists (the report reads it as "at least one contract").
 - **Known limitations (wings):** the wing's distance is the SPY short strike over the GEX `scale`, snapped to a listed strike at or beyond it (within one strike step of the same expected-move distance); XSP's trading class (`XSP`) is a guess that falls back to any class of the symbol that lists the expiry; the cost model charges the full mid-to-natural crossing in and out for every instrument alike (the measured crossing, not the shadow haircut), so it is conservative for all and compares like with like.
 - **Known limitations:** XND's contract fields (`IND` on `NASDAQ`, class `XND`) come from the plan and have not
