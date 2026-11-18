@@ -31,7 +31,9 @@ def main() -> None:
     roll = get_config().roll
     parser = argparse.ArgumentParser(description="Assign vs roll vs close at a strike breach.")
     parser.add_argument("--symbol", required=True, help="underlying ticker, e.g. AAPL")
-    parser.add_argument("--right", choices=["P", "C"], default="P", help="P = CSP, C = covered call")
+    parser.add_argument(
+        "--right", choices=["P", "C"], default="P", help="P = CSP, C = covered call"
+    )
     parser.add_argument("--delta", type=float, default=0.25, help="target |delta| at entry")
     parser.add_argument("--dte", type=int, default=14, help="calendar days to expiry per cycle")
     parser.add_argument("--roll-dte", type=int, default=7, help="days a roll adds past expiry")

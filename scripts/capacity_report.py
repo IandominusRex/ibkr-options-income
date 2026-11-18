@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from src.common.config import get_config
 from src.common.schemas import AccountSnapshot, PositionSnapshot
 from src.engine.capital import max_contracts, resolve_caps, risk_units, seed_budgets
+from src.storage.slow_breaker import csp_budget_fraction
 
 
 @dataclass(frozen=True)
@@ -81,7 +82,7 @@ def build_report(
     """
     cfg = get_config()
     risk = cfg.risk
-    caps = resolve_caps(account, risk)
+    caps = resolve_caps(account, risk, csp_fraction=csp_budget_fraction())  # x0.5 while tripped
     sector_of = cfg.universe.get("sectors", {}).get
     hard_max = int(risk.get("cash_secured_put", {}).get("max_contracts", 10))
     dte = 30
