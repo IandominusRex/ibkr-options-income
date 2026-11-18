@@ -120,6 +120,68 @@ def record_action(
         log.warning("sizing action not recorded (%s %s)", kind, cand.candidate_id, exc_info=True)
 
 
+def record_stock_action(
+    *,
+    kind: str,
+    symbol: str,
+    side: str,
+    qty: int,
+    sent: int,
+    price: float,
+    reason: str,
+    order_id: int | None = None,
+) -> None:
+    """Upsert one ``sizing_actions`` row for an LES share order (risk-envelope Task 32a, L7):
+    kind ``les_record`` (the ``record`` mode's would-be order and its Rules Engine verdict,
+    ``sent_contracts`` the shares ``on`` would have sent) or ``les_order`` (what ``on`` sent).
+    Keyed ``les:<SYM>:<side>`` per kind and ET day. ``strategy`` is the stock strategy, the share
+    count stands in the contract columns, ``strike`` is the quote's mid and ``expiry`` the day.
+    The row is born resolved: the CSP counterfactual (``sizing_counterfactual``) values option
+    contracts and has nothing to value here. Never raises."""
+    try:
+        day = today_et()
+        key = f"les:{symbol.upper()}:{side.lower()}"
+        strategy = "stock_buy" if side.upper() == "BUY" else "stock_sell"
+        with session_scope() as s:
+            row = (
+                s.query(SizingActionRow)
+                .filter_by(record_key=key, kind=kind, action_day=day)
+                .first()
+            )
+            if row is None:
+                now = datetime.now(UTC)
+                s.add(
+                    SizingActionRow(
+                        created_at=now,
+                        candidate_id=key,
+                        underlying=symbol.upper(),
+                        strategy=strategy,
+                        right="S",
+                        strike=float(price),
+                        expiry=day,
+                        premium=0.0,
+                        kind=kind,
+                        regime="les",
+                        deterministic_contracts=int(qty),
+                        sent_contracts=int(sent),
+                        reason=reason,
+                        action_day=day,
+                        order_id=order_id,
+                        record_key=key,
+                        resolved_at=now,
+                    )
+                )
+            else:
+                row.deterministic_contracts = int(qty)
+                row.sent_contracts = int(sent)
+                row.strike = float(price)
+                row.reason = reason
+                if order_id is not None:
+                    row.order_id = order_id
+    except Exception:
+        log.warning("LES action not recorded (%s %s %s)", kind, side, symbol, exc_info=True)
+
+
 # The limits behind switches (risk-envelope Tasks 24-25) that are off: gate reason -> the
 # ``sizing_actions`` kind its would-be refusal is recorded under.
 LIMIT_RECORD_KINDS: dict[str, str] = {

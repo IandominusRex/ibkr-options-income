@@ -97,7 +97,7 @@ def build_and_store(
     """Build today's proposals and store the new ones; re-mark every stored proposal's shadow
     value. Returns the proposals stored today (with ids). Never raises."""
     from src.analytics.shock_inputs import build_inputs, stored_ivs
-    from src.common.books import value_exposure
+    from src.common.books import les_by_name_for_envelope, value_exposure
     from src.common.config import get_envelope_cfg
     from src.engine.envelope import room as envelope_room
     from src.engine.repair import build_proposals, shadow_value
@@ -120,6 +120,7 @@ def build_and_store(
             positions,
             nlv=account.net_liquidation,
             value_by_name=value_by_name,
+            les_by_name=les_by_name_for_envelope(),
             ivs=stored_ivs(underlyings),
         )
         room = envelope_room(inputs, today=today, may_start=False)

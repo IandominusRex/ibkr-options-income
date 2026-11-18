@@ -40,7 +40,7 @@ from src.claude.book_context import build_book_block
 from src.claude.dossier_context import dossier_block, load_dossiers, prose_key
 from src.claude.picture_context import load_picture, picture_key, render_picture_block
 from src.claude.runner import review_candidates
-from src.common.books import value_exposure
+from src.common.books import les_by_name_for_envelope, value_exposure
 from src.common.config import Config, get_config
 from src.common.envelope_types import EnvelopeRoom, ShockInputs
 from src.common.market_hours import today_et
@@ -1237,6 +1237,7 @@ async def _measure_envelope(
         enforce = enforce_mode()
         exposure = value_exposure()
         value_by_name = dict(exposure.by_name) if exposure.active and exposure.readable else {}
+        les_by_name = les_by_name_for_envelope()  # LES shares at leverage (Task 32a)
         nlv = account.net_liquidation
         today = today_et()
         # The hedge book's marks join as hedge_lines once it exists (Task 33, hedge_view).
@@ -1246,7 +1247,12 @@ async def _measure_envelope(
             live_inputs = await loop.run_in_executor(
                 None,
                 lambda: build_inputs(
-                    positions, nlv=nlv, value_by_name=value_by_name, ivs=live, spots=spots
+                    positions,
+                    nlv=nlv,
+                    value_by_name=value_by_name,
+                    les_by_name=les_by_name,
+                    ivs=live,
+                    spots=spots,
                 ),
             )
             live_result = measure_shock(live_inputs)
@@ -1273,6 +1279,7 @@ async def _measure_envelope(
                 positions,
                 nlv=nlv,
                 value_by_name=value_by_name,
+                les_by_name=les_by_name,
                 ivs=stored_ivs(underlyings),
                 spots=spots,
             ),

@@ -40,6 +40,7 @@ log = logging.getLogger(__name__)
 _BLUME_WEIGHT = 0.67
 _BLUME_PRIOR = 0.33
 _UNMAPPED_LEVERAGE = 3  # a leveraged ETF missing from the operator's map: the strictest
+_NO_LES: Mapping[str, float] = {}  # build_inputs' default: no LES share line (replays, tests)
 
 
 def _log_returns(symbol: str, sessions: int) -> dict[date, float]:
@@ -141,6 +142,7 @@ def build_inputs(
     value_by_name: Mapping[str, float],
     ivs: Mapping[int, float | None] | Mapping[str, float],
     hedge_lines: Iterable[BookLine] = (),
+    les_by_name: Mapping[str, float] | None = _NO_LES,
     spots: Mapping[str, float] | None = None,
     beta_map: Mapping[str, float] | None = None,
     beta_smh_map: Mapping[str, float] | None = None,
@@ -151,6 +153,12 @@ def build_inputs(
     A spot comes from *spots* (the scan's probes), else the held stock's mark, else the latest
     stored close; none at all leaves the line unmeasured. *beta_map* / *beta_smh_map* skip the
     price-history read (tests, replays).
+
+    *les_by_name* (risk-envelope Task 32a) is the LES share book's market value per ETF
+    (``books.les_by_name_for_envelope``): ``get_positions()`` drops LES shares from the wheel's
+    view, so they come back here once, as ``book="les"`` stock lines that the shock engine moves
+    at leverage x the governing index's beta. None means the LES book could not be read: an
+    unmeasurable ``LES`` line is added, so the whole measurement reads unmeasured (fail closed).
     """
     day = today or today_et()
     spots_in = {k.upper(): v for k, v in (spots or {}).items() if v and v > 0}
@@ -205,12 +213,24 @@ def build_inputs(
         # Stock is linear: with no price on record the line is one unit at its market value.
         qty, px = (mv / spot, spot) if spot else (1.0, float(mv))
         lines.append(BookLine(symbol=sym, kind="stock", qty=qty, spot=px, book="value"))
+    if les_by_name is None:
+        lines.append(BookLine(symbol="LES", kind="stock", qty=0.0, spot=0.0, book="les"))
+    else:
+        for raw, mv in les_by_name.items():
+            if not mv:
+                continue
+            sym = raw.upper()
+            spot = spot_of(sym)
+            qty, px = (mv / spot, spot) if spot else (1.0, float(mv))
+            lines.append(BookLine(symbol=sym, kind="stock", qty=qty, spot=px, book="les"))
     lines.extend(hedge_lines)
 
     cfg = get_envelope_cfg()
     lev = leverage_map()
     governing = {k.upper(): v.upper() for k, v in cfg.governing.items()}
-    wanted = {ln.symbol.upper() for ln in lines}
+    wanted = {
+        ln.symbol.upper() for ln in lines if not (ln.book == "les" and ln.symbol == "LES")
+    }  # the unreadable-LES marker needs no beta
     wanted |= {governing[s] for s in wanted if s in governing}
     b = dict(beta_map) if beta_map is not None else betas(sorted(wanted))[0]
     b_smh = dict(beta_smh_map) if beta_smh_map is not None else betas(sorted(wanted), vs="SMH")[0]

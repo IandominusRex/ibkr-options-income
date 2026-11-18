@@ -220,12 +220,18 @@ def check_t20_trigger(result: ShockResult) -> str | None:
 
 
 def without_shares(inputs: ShockInputs, symbol: str, qty: float) -> ShockInputs:
-    """*inputs* with *qty* shares of *symbol* taken out of its non-value stock lines (the book
-    before a manual buy, E13), never below zero. The value book's lines are left alone."""
+    """*inputs* with *qty* shares of *symbol* taken out of its wheel stock lines (the book before
+    a manual buy, E13; after a trim or de-lever, Tasks 31-32), never below zero. The value book's
+    and the LES book's lines (Task 32a) are left alone: no wheel sale takes one of their shares."""
     left = qty
     lines: list[BookLine] = []
     for ln in inputs.lines:
-        if left > 0 and ln.kind == "stock" and ln.book != "value" and ln.symbol == symbol.upper():
+        if (
+            left > 0
+            and ln.kind == "stock"
+            and ln.book not in ("value", "les")
+            and ln.symbol == symbol.upper()
+        ):
             take = min(left, max(0.0, ln.qty))
             left -= take
             if ln.qty - take > 0:

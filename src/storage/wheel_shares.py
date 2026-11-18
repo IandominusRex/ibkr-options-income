@@ -17,6 +17,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import select
 
@@ -33,11 +34,54 @@ class WheelShares:
 
 
 def wheel_shares(symbols: list[str]) -> dict[str, WheelShares]:
-    """W per symbol (zero shares when the ledger holds none for it)."""
+    """W per symbol (zero shares when the ledger holds none for it). The value book's, the
+    spreads book's and the LES book's executions (``book`` value / spreads / les, risk-envelope
+    Task 32a) are not the wheel's."""
     wanted = sorted({s.upper() for s in symbols})
     out = {s: WheelShares(0.0, None) for s in wanted}
     if not wanted:
         return out
+    return _count(
+        wanted,
+        BrokerExecutionRow.book.not_in(("value", "spreads", "les")),
+        out,
+    )
+
+
+def les_shares(symbols: list[str] | None = None) -> dict[str, float]:
+    """The LES share book's count L per ETF (risk-envelope Task 32a): every stock execution the
+    ledger tagged ``book="les"`` (an ``les:<id>`` orderRef), split-adjusted like W. Every ETF
+    with an LES execution when *symbols* is None."""
+    with session_scope() as s:
+        names = (
+            sorted({x.upper() for x in symbols})
+            if symbols is not None
+            else sorted(
+                {
+                    u
+                    for (u,) in s.execute(
+                        select(BrokerExecutionRow.underlying).where(
+                            BrokerExecutionRow.book == "les", BrokerExecutionRow.sec_type == "STK"
+                        )
+                    ).all()
+                    if u
+                }
+            )
+        )
+    if not names:
+        return {}
+    counted = _count(
+        names,
+        BrokerExecutionRow.book == "les",
+        {n: WheelShares(0.0, None) for n in names},
+    )
+    return {k: max(0.0, v.shares) for k, v in counted.items()}
+
+
+def _count(
+    wanted: list[str], book_clause: Any, out: dict[str, WheelShares]
+) -> dict[str, WheelShares]:
+    """The average-cost share count over the stock executions *book_clause* selects."""
     with session_scope() as s:
         rows = s.execute(
             select(
@@ -48,7 +92,7 @@ def wheel_shares(symbols: list[str]) -> dict[str, WheelShares]:
             ).where(
                 BrokerExecutionRow.sec_type == "STK",
                 BrokerExecutionRow.superseded_by.is_(None),
-                BrokerExecutionRow.book.not_in(("value", "spreads")),
+                book_clause,
                 BrokerExecutionRow.underlying.in_(wanted),
             )
         ).all()

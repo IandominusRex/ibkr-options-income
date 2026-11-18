@@ -145,7 +145,7 @@ async def envelope_manual_buy_check(ib: Any) -> int:
     try:
         from src.analytics.shock import measure
         from src.analytics.shock_inputs import build_inputs, stored_ivs
-        from src.common.books import value_exposure
+        from src.common.books import les_by_name_for_envelope, value_exposure
         from src.common.config import get_envelope_cfg
         from src.common.market_hours import next_session
         from src.engine.envelope import without_shares
@@ -176,6 +176,7 @@ async def envelope_manual_buy_check(ib: Any) -> int:
                 positions,
                 nlv=account.net_liquidation,
                 value_by_name=value_by_name,
+                les_by_name=les_by_name_for_envelope(),
                 ivs=stored_ivs(underlyings),
             )
         )
@@ -2046,6 +2047,17 @@ async def _intraday_scan_loop(
                     await run_capital_release(ib_scan, ib_exec, bot, chat_id)
                 except Exception:
                     logger.exception("Intraday loop: capital release failed")
+
+            # 1a'''. LES share buys and trend-break sells (risk-envelope Task 32a): after 10:00 ET,
+            #     behind the leveraged_entry switch (record: written to sizing_actions, nothing
+            #     sent; on, paper only: gated twice and sent on the exec connection).
+            if ib_exec is not None and ib_exec.isConnected():
+                try:
+                    from src.execution.les import run_les_cycle
+
+                    await run_les_cycle(ib_exec)
+                except Exception:
+                    logger.exception("Intraday loop: LES cycle failed")
 
             # 1a''. Hedge-menu quote capture (risk-envelope Task 16): XND and QQQ legs quoted twice
             #     a session at the fixed hedge.capture_times_et, into hedge_quotes. Quote capture

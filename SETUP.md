@@ -2412,6 +2412,23 @@ fresh quote, when it is sent.
 Every proposal, tapped or not, is re-valued each evening from stored closes (`repair_proposals.shadow_value`),
 so you can read later what acting on it would have earned.
 
+### LES share orders (Task 32a, paper only)
+
+The Leveraged Entry Signal can buy and sell TQQQ and SOXL shares **by itself**, in paper only, behind the
+`leveraged_entry` switch. It ships at `record`: from 10:00 ET each cycle it writes every would-be buy or sell, with
+the Rules Engine's verdict, to `sizing_actions` (kind `les_record`; `python -m scripts.sizing_report` and the database
+show them) and sends nothing. The LES replay's PASS (`python -m scripts.les_replay`) turns it `on` in paper; in live
+it is always refused, even if you set it by hand.
+
+When it is `on`, a notice in the account thread names each order: `LES BUY 16 TQQQ (paper): filled, 16 @ 60.00.
+Signal QQQ 2026-11-13: tier 3%; ...` (the signal's reasons and tier follow). A **buy** comes on a pullback (3% of net
+liquidation, leverage-weighted, with the sleeve's puts) or a breadth washout (6%) while the index is above its 200-day
+average, at most once per ETF every 3 sessions, and only if S10 and U_ew stay within L(t) after it; `refused: ...`
+names what stopped it. A **sell** of every LES share comes at the first cycle after two closes under the 200-day
+average (a trend break), and is never blocked by the envelope. LES shares are their own book (`orderRef les:<id>`,
+ledger `book="les"`): the wheel never writes a covered call against them, never counts them, and a trim or de-lever
+never sells them. Turn it off with `python -m scripts.envelope switch leveraged_entry off`.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

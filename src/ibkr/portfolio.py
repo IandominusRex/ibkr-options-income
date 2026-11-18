@@ -110,6 +110,29 @@ def _parse_expiry(yyyymmdd: str) -> date | None:
         return None
 
 
+def _les_etfs_held(stock: list[PositionSnapshot]) -> set[str]:
+    """The held stock names that an LES order can buy (``regime.leveraged_entry.governing``)."""
+    from src.common.config import get_regime_cfg
+
+    etfs = {k.upper() for k in get_regime_cfg().leveraged_entry.governing}
+    return {(p.underlying or p.symbol).upper() for p in stock} & etfs
+
+
+def _les_counts(stock: list[PositionSnapshot]) -> dict[str, float] | None:
+    """The LES book's shares of the held LES ETFs (``wheel_shares.les_shares``), ``{}`` when no
+    LES ETF is held (no read at all), None when the ledger cannot be read."""
+    held = _les_etfs_held(stock)
+    if not held:
+        return {}
+    try:
+        from src.storage.wheel_shares import les_shares
+
+        return {s: q for s, q in les_shares(sorted(held)).items() if q > 1e-9}
+    except Exception:
+        log.warning("LES share count unreadable: LES ETFs read fail-closed", exc_info=True)
+        return None
+
+
 def wheel_view(positions: list[PositionSnapshot]) -> list[PositionSnapshot]:
     """The wheel's own share of every stock position the value book may share (spec §9.2).
 
@@ -131,6 +154,7 @@ def wheel_view(positions: list[PositionSnapshot]) -> list[PositionSnapshot]:
     stock = [p for p in positions if p.sec_type == "STK" and p.position]
     if not stock or cfg.is_live:
         return positions
+    les = _les_counts(stock)
     book = read_book()
     scope: set[str] | None = None  # None: every name is in scope when value.db is unreadable
     if book is None and not cfg.value.book.enabled:
@@ -146,8 +170,14 @@ def wheel_view(positions: list[PositionSnapshot]) -> list[PositionSnapshot]:
             or book.holding(p.underlying or p.symbol).pending_sell > 0
         )
     }
+    # The LES share book (risk-envelope Task 32a): every name with LES shares is attributed, so
+    # the wheel sees min(W, broker - V claimed - L). An LES count that cannot be read puts every
+    # held LES ETF in scope with no LES shares known: the wheel keeps W only where the broker
+    # agrees with it (fail closed: no covered call on shares that may be LES shares).
+    shared |= set(les) if les is not None else _les_etfs_held(stock)
     if not shared:
         return positions
+    les = les or {}
     w = wheel_shares(sorted(shared))
     out: list[PositionSnapshot] = []
     for p in positions:
@@ -155,7 +185,12 @@ def wheel_view(positions: list[PositionSnapshot]) -> list[PositionSnapshot]:
         if p.sec_type != "STK" or sym not in shared:
             out.append(p)
             continue
-        att = attribute(p.position, w[sym].shares, None if book is None else book.holding(sym))
+        att = attribute(
+            p.position,
+            w[sym].shares,
+            None if book is None else book.holding(sym),
+            les=les.get(sym, 0.0),
+        )
         if att.unexplained:
             log.warning(
                 "value attribution %s: broker %.0f, wheel %.0f, value %.0f: the wheel uses %.0f",

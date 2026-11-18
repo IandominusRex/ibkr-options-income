@@ -20,12 +20,19 @@ It imports nothing from ``src.value``.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from src.common.config import get_config
 from src.common.value_view import ValueHolding, read_book
 
+log = logging.getLogger(__name__)
+
 VALUE_ORDER_PREFIX = "value:"
+# The LES share book (risk-envelope Task 32a, ruling L5): every LES order carries
+# ``orderRef = "les:<id>"`` and its fills are ledger ``book="les"``, outside the wheel's count W.
+LES_ORDER_PREFIX = "les:"
 
 # Daily-option trading classes whose statement rows name the class, not the index: an Activity
 # Statement prints an SPX daily as "SPXW 07OCT26 6800 P", so its root parses as SPXW.
@@ -50,11 +57,16 @@ def is_value_order_ref(order_ref: str | None) -> bool:
     return bool(order_ref) and str(order_ref).startswith(VALUE_ORDER_PREFIX)
 
 
+def is_les_order_ref(order_ref: str | None) -> bool:
+    """True for an LES share order (``les:<id>``, Task 32a): its fills are LES shares."""
+    return bool(order_ref) and str(order_ref).startswith(LES_ORDER_PREFIX)
+
+
 @dataclass(frozen=True, slots=True)
 class Attribution:
     """One name's shares by book. ``wheel_view`` is what the wheel may write calls against and
-    count as its own; ``unexplained`` is broker - (W + V filled): anything but zero is a reconcile
-    failure (spec §9.2)."""
+    count as its own; ``unexplained`` is broker - (W + V filled + L): anything but zero is a
+    reconcile failure (spec §9.2). ``les`` is the LES share book's count L (Task 32a)."""
 
     broker: float
     wheel: float
@@ -62,22 +74,29 @@ class Attribution:
     value_claimed: float
     wheel_view: float
     unexplained: float
+    les: float = 0.0
 
 
-def attribute(broker: float, wheel: float, holding: ValueHolding | None) -> Attribution:
+def attribute(
+    broker: float, wheel: float, holding: ValueHolding | None, les: float = 0.0
+) -> Attribution:
     """Spec §9.2. *holding* None means value.db could not be read: the wheel then uses W alone,
-    and only where the broker agrees with W (no covered call on unexplained shares)."""
+    and only where the broker agrees with W (no covered call on unexplained shares). *les* is the
+    LES book's shares of the name (risk-envelope Task 32a): set aside before the wheel's view, so
+    the wheel never writes a call against, counts, or trims an LES share."""
+    lesq = max(0.0, les)
     if holding is None:
-        view = wheel if abs(broker - wheel) < 1e-6 else 0.0
-        return Attribution(broker, wheel, 0.0, 0.0, max(0.0, view), broker - wheel)
-    view = max(0.0, min(wheel, broker - holding.claimed))
+        view = wheel if abs(broker - lesq - wheel) < 1e-6 else 0.0
+        return Attribution(broker, wheel, 0.0, 0.0, max(0.0, view), broker - lesq - wheel, lesq)
+    view = max(0.0, min(wheel, broker - holding.claimed - lesq))
     return Attribution(
         broker=broker,
         wheel=wheel,
         value_filled=holding.filled,
         value_claimed=holding.claimed,
         wheel_view=view,
-        unexplained=broker - (wheel + holding.filled),
+        unexplained=broker - (wheel + holding.filled + lesq),
+        les=lesq,
     )
 
 
@@ -131,18 +150,51 @@ def value_exposure() -> ValueExposure:
 
 @dataclass(frozen=True, slots=True)
 class LesExposure:
-    """The LES share book's holdings (risk-envelope Task 23 reads it; Task 32a fills it): market
-    value per ETF of the shares bought under ``les:<id>`` orders (ledger ``book="les"``), outside
-    the wheel's share count. The sleeve cap counts them, leverage-weighted, with the sleeve's puts."""
+    """The LES share book's holdings (risk-envelope Tasks 23, 32a): per ETF the shares bought under
+    ``les:<id>`` orders (ledger ``book="les"``, ``shares``) and their market value (``by_name``),
+    outside the wheel's share count. The sleeve cap counts them, leverage-weighted, with the
+    sleeve's puts; the envelope counts them at leverage x the governing index's beta.
+    ``readable`` False: the ledger or a price could not be read (every reader fails closed)."""
 
     by_name: dict[str, float] = field(default_factory=dict)
+    shares: dict[str, float] = field(default_factory=dict)
+    readable: bool = True
 
     @property
     def gross(self) -> float:
         return sum(self.by_name.values())
 
 
-def les_exposure() -> LesExposure:
-    """The LES share book's exposure. **Empty until Task 32a** builds the share order path (no LES
-    share exists before it), so the sleeve cap today counts the sleeve's puts alone."""
-    return LesExposure()
+def les_exposure(prices: Mapping[str, float] | None = None) -> LesExposure:
+    """The LES share book from the broker-truth ledger (``wheel_shares.les_shares``), each ETF
+    marked at *prices*, else its latest stored close (``price_history``). Empty (and free of I/O)
+    in live: the LES path is paper only, so a paper book never feeds a live gate. A ledger read
+    that fails, or a held ETF with no price, is ``readable=False``."""
+    if get_config().is_live:
+        return LesExposure()
+    try:
+        from src.storage.price_history import load_bars
+        from src.storage.wheel_shares import les_shares
+
+        shares = {s: q for s, q in les_shares().items() if q > 1e-9}
+        by_name: dict[str, float] = {}
+        for sym, qty in shares.items():
+            px = (prices or {}).get(sym)
+            if not px or px <= 0:
+                bars = load_bars(sym, limit=1)
+                px = bars[-1].close if bars and bars[-1].close > 0 else None
+            if not px:
+                log.warning("LES book: no price for %s; the book reads unreadable", sym)
+                return LesExposure(shares=shares, readable=False)
+            by_name[sym] = qty * px
+        return LesExposure(by_name=by_name, shares=shares)
+    except Exception:
+        log.warning("LES book unreadable (fail closed)", exc_info=True)
+        return LesExposure(readable=False)
+
+
+def les_by_name_for_envelope(book: LesExposure | None = None) -> dict[str, float] | None:
+    """The LES book's market values for ``shock_inputs.build_inputs(les_by_name=...)``, or None
+    when the book is unreadable (the envelope then reads unmeasured: fail closed)."""
+    b = book if book is not None else les_exposure()
+    return dict(b.by_name) if b.readable else None

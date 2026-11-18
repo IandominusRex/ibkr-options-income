@@ -60,6 +60,9 @@ DETERMINISTIC = sorted(
         # Task 30: the book-repair builder and its table
         SRC / "engine" / "repair.py",
         SRC / "storage" / "repair_proposals.py",
+        # Tasks 31, 32a: the stock order path and the LES share orders (no enrichment reaches them)
+        SRC / "execution" / "stock_orders.py",
+        SRC / "execution" / "les.py",
         *(SRC / "regime").glob("*.py"),
         # Task 16: the hedge package (quote capture; the order path arrives in Tasks 33-36)
         *(SRC / "hedge").glob("*.py"),

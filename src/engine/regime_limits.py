@@ -370,8 +370,8 @@ def sleeve_pace_reason(
 
 def sleeve_used_usd(ctx: SizingContext | None, positions: list[PositionSnapshot]) -> float:
     """What the sleeve's tier already holds, leverage-weighted: the strike x 100 x contracts of every
-    open leveraged short put, plus the LES share book's market value (``books.les_exposure``, empty
-    until Task 32a), each at its leverage."""
+    open leveraged short put, plus the LES share book's market value (``books.les_exposure``, Task
+    32a), each at its leverage. An unreadable LES book fills the tier (infinite: fail closed)."""
     if ctx is None:
         return 0.0
     used = sum(
@@ -381,9 +381,10 @@ def sleeve_used_usd(ctx: SizingContext | None, positions: list[PositionSnapshot]
         * ctx.leverage.get((p.underlying or p.symbol).upper(), 1)
         for p in leveraged_short_puts(ctx, positions)
     )
-    used += sum(
-        value * ctx.leverage.get(name.upper(), 1) for name, value in les_exposure().by_name.items()
-    )
+    book = les_exposure()
+    if not book.readable:
+        return float("inf")
+    used += sum(value * ctx.leverage.get(name.upper(), 1) for name, value in book.by_name.items())
     return used
 
 

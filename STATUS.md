@@ -375,6 +375,14 @@ unmerged; the daemons run none of it until a merge and `./ibkr restart`.
   at up to the same beta-dollars, sized to the share of the sell that filled; each leg is its own gated order and
   the twin buy must pass the envelope. S10 barely moves (same index beta-dollars); what goes is the gap and decay
   tail, which the card does not price.
+- **LES share buys and trend-break sells** (Task 32a, `src/execution/les.py`): the one automatic stock path, paper
+  only, behind `leveraged_entry` (ships `record`: `les_record` rows, nothing sent; refused in live always). LES
+  shares are their own book (`les:<id>` -> ledger `book="les"`), outside the wheel's count W, its covered calls and
+  its trims; `books.les_exposure()` now reads them from the ledger and the envelope counts them at leverage.
+  **Known limits:** the web trade ledger shows an `les` execution as "manual" (`LedgerBookName` has no `les`);
+  `capital.seed_budgets` and the tech-linked tally read the wheel's view and so leave LES shares out (the sleeve
+  cap and the envelope count them). **Needs paper verification** once `on`: the first LES buy's `orderRef` reaching
+  the ledger as `book="les"`.
 
 ## Built (2026-11-15 — risk envelope Section H: replays and the harness)
 

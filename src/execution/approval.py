@@ -387,7 +387,7 @@ async def _send_envelope(
         return None
     try:
         from src.analytics.shock_inputs import build_inputs
-        from src.common.books import value_exposure
+        from src.common.books import les_by_name_for_envelope, value_exposure
         from src.common.market_hours import today_et
         from src.engine.envelope import room as envelope_room
         from src.ibkr.live_iv import live_option_ivs
@@ -400,6 +400,7 @@ async def _send_envelope(
             positions,
             nlv=account.net_liquidation,
             value_by_name=value_by_name,
+            les_by_name=les_by_name_for_envelope(),
             ivs=live,
         )
         return envelope_room(inputs, today=today_et()), inputs

@@ -345,7 +345,7 @@ def resolve_stale_stock_orders(today: Any = None) -> int:
 async def book_for(ib: Any, intent: StockOrderIntent, mid: float) -> dict[str, Any]:
     """Everything ``validate_stock_order`` reads, from the broker and the books now: the wheel's
     positions, the account, the name's attribution and, for a buy, the envelope on live IV."""
-    from src.common.books import attribute
+    from src.common.books import attribute, les_exposure
     from src.common.value_view import read_book
     from src.ibkr.portfolio import get_account_snapshot_async, get_positions
     from src.storage.wheel_shares import wheel_shares
@@ -361,7 +361,18 @@ async def book_for(ib: Any, intent: StockOrderIntent, mid: float) -> dict[str, A
     account = await get_account_snapshot_async(ib, cfg.secrets.ibkr_account or "")
     w = (await asyncio.to_thread(wheel_shares, [sym]))[sym].shares
     book = read_book()
-    attribution = attribute(broker, w, None if book is None else book.holding(sym))
+    les_book = await asyncio.to_thread(les_exposure)
+    # An unreadable LES book leaves no attribution: a sell is then refused (stock_book_unknown).
+    attribution = (
+        attribute(
+            broker,
+            w,
+            None if book is None else book.holding(sym),
+            les=les_book.shares.get(sym, 0.0),
+        )
+        if les_book.readable
+        else None
+    )
     envelope = None
     if intent.side == "BUY":
         envelope = await buy_envelope(ib, positions, account, sym)
@@ -370,6 +381,7 @@ async def book_for(ib: Any, intent: StockOrderIntent, mid: float) -> dict[str, A
         "positions": positions,
         "attribution": attribution,
         "envelope": envelope,
+        "les_shares": les_book.shares.get(sym, 0.0),
     }
 
 
@@ -380,7 +392,7 @@ async def buy_envelope(ib: Any, positions: list[Any], account: Any, symbol: str)
     from dataclasses import replace
 
     from src.analytics.shock_inputs import betas, build_inputs
-    from src.common.books import value_exposure
+    from src.common.books import les_by_name_for_envelope, value_exposure
     from src.common.market_hours import today_et
     from src.engine.envelope import room as envelope_room
     from src.ibkr.live_iv import live_option_ivs
@@ -394,6 +406,7 @@ async def buy_envelope(ib: Any, positions: list[Any], account: Any, symbol: str)
             positions,
             nlv=account.net_liquidation,
             value_by_name=value_by_name,
+            les_by_name=les_by_name_for_envelope(),
             ivs=live,
         )
         want = [symbol.upper()]
@@ -422,6 +435,7 @@ async def send_time_gate(ib: Any, intent: StockOrderIntent, mid: float) -> RiskV
         envelope=book["envelope"],
         mid=mid,
         attribution=book["attribution"],
+        les_shares=book.get("les_shares", 0.0),
     )
 
 
