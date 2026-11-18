@@ -1,0 +1,40 @@
+# The Nasdaq-100 constituents the nightly breadth count uses (risk-envelope Task 10a, Step 1).
+# Written by hand on 2026-11-18 by a Claude Code agent for the operator (Operator to-do 12): the
+# automatic refresh (`python -m scripts.breadth refresh-constituents`) could not run because the
+# Wikipedia article carries no components table. Refresh each quarter (March, June, September,
+# December) or after an ad hoc index change, and commit the list.
+#
+# Sources, both read in full on 2026-11-18 (nothing here is typed from memory):
+#  1. Nasdaq Global Indexes, the NDX weightings export for trade date 2026-11-17 (the list of record):
+#     https://indexes.nasdaqomx.com/Index/ExportWeightings/NDX?tradeDate=2026-11-17T00:00:00.000
+#     (an .xlsx titled 'Weightings values for NDX.', 101 rows of company name and security symbol,
+#     parsed directly). The index overview page https://indexes.nasdaqomx.com/Index/Overview/NDX
+#     states 101 components, data as of 11/17/2026.
+#  2. Invesco QQQ holdings feed, effective date 2026-11-17 (QQQ replicates NDX):
+#     https://dng-api.invesco.com/cache/v1/accounts/en_US/shareclasses/QQQ/holdings/fund?idType=ticker&interval=monthly&productType=ETF
+#     106 lines; the 5 non-equity lines (NQZ6 index future, USD cash, cash collateral, the future's
+#     contra line, USD pending dividends) are dropped, leaving 101 equities. Read through the
+#     fetch tool's summary, twice, with identical lists.
+# The two lists agree exactly: no ticker is in one and not the other. 101 securities: GOOGL and
+# GOOG are both listed (two Alphabet share classes), and so are HON and HONA (Honeywell
+# Aerospace). SPCX (Space Exploration Technologies Corp, per Invesco's issuer name) is a constituent.
+# Symbols are the exchange symbols, which are also the yfinance symbols; none carries punctuation.
+as_of: 2026-11-17
+source: >-
+  Nasdaq Global Indexes NDX weightings export, trade date 2026-11-17
+  (https://indexes.nasdaqomx.com/Index/ExportWeightings/NDX?tradeDate=2026-11-17T00:00:00.000, 101 rows),
+  cross-checked against the Invesco QQQ holdings feed effective 2026-11-17
+  (https://dng-api.invesco.com/cache/v1/accounts/en_US/shareclasses/QQQ/holdings/fund, 101 equity lines): identical.
+ndx: [
+  AAPL, ABNB, ADBE, ADI, ADP, ADSK, AEP, ALAB, ALNY, AMAT,
+  AMD, AMGN, AMZN, APP, ARM, ASML, AVGO, AXON, BKNG, BKR,
+  CCEP, CDNS, CEG, CMCSA, COST, CPRT, CRWD, CRWV, CSCO, CSX,
+  CTAS, DASH, DDOG, DXCM, EXC, FANG, FAST, FER, FTNT, GEHC,
+  GILD, GOOG, GOOGL, HON, HONA, IDXX, INTC, INTU, ISRG, KDP,
+  KLAC, LIN, LITE, LRCX, MAR, MCHP, MDLZ, MELI, META, MNST,
+  MPWR, MRNA, MRVL, MSFT, MSTR, MU, NBIS, NFLX, NVDA, NXPI,
+  ODFL, ORLY, PANW, PAYX, PCAR, PDD, PEP, PLTR, PYPL, QCOM,
+  REGN, RKLB, ROP, ROST, SBUX, SHOP, SNDK, SNPS, SPCX, STX,
+  TER, TMUS, TRI, TSLA, TTWO, TXN, VRTX, WDAY, WDC, WMT,
+  XEL
+]
