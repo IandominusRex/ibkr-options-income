@@ -596,7 +596,16 @@ unmerged; the daemons capture nothing until a merge and `./ibkr restart`. Captur
   close fails, books an XND cash settlement, monetises at 2x only behind `hedge_monetisation`, ends at the glide
   end (sold at its roll date) and posts the review record (default off) once. Hedge marks enter the daily loss
   leg net and the envelope's net measures; gross and U_ew skip the whole hedge book (H1, H10).
-- **Not yet:** `scripts/hedge_report.py` and the fence's last checks (Task 37).
+- **The record and the fence** (Task 37): `src/reporting/hedge.py` (read-only: premium, each down leg's cover
+  ratio at the trough and at exit, execution against mid, the rolling 60-session R² of NLV on the instrument) and
+  `python -m scripts.hedge_report [--review]`; `tests/test_hedge_fence.py` complete (`ast` imports, a `sys.modules`
+  probe, the only-writer rule, `placeOrder` only in the executor); the CLAUDE.md hedge-fence section.
+- **Deferred (the bridge):** the live hedge (refused in live by `validate_hedge` and idle in the manager; going live
+  needs its own plan and ruling); Claude's hedge roles and the `hedge:claude:` budget (reserved, refused here; the
+  Mastermind); monetisation (behind `hedge_monetisation`, `none` until the H5 research replay); the record's
+  equal-S10 trim and always-on comparisons (need index option history: the H5 research session).
+- **Known limitations (the bridge):** a CSV-only import of a QQQ hedge execution (no orderRef) lands in the ledger as
+  `manual`; the stress block needs at least 126 stored ^VXN closes, else no new size.
 - **Needs live verification (the bridge):** `ib.exerciseOptions` lapse behaviour in paper (action 2, override 1);
   the XND settlement is booked at the last captured spot (an estimate; the broker ledger holds the truth). `needed_contracts` is
   recorded as 0 until Task 36's size rule exists (the report reads it as "at least one contract").

@@ -508,21 +508,46 @@ the value book. It is **deterministic tier**:
 
 Enforced by `tests/test_value_fence.py` — keep it green.
 
-### The hedge fence — `src/hedge/` is deterministic and has its own tables (stub, risk-envelope Task 16)
+### The hedge fence — `src/hedge/` is deterministic, its own book, paper only
 
-`src/hedge/` (docs/superpowers/plans/2026-11-14-risk-envelope.md; spec §3.10) is the index-hedge package.
-Task 16 builds the **quote capture** only (`menu.py`, `capture.py`, `store.py`): there is no order path in it
-yet. The rules from the start, enforced by `tests/test_hedge_fence.py` and `tests/test_regime_fence.py`:
+`src/hedge/` (docs/superpowers/plans/2026-11-14-risk-envelope.md Tasks 16 and 33-37; spec §3.10) is the
+index-hedge package: the quote capture (`menu.py`, `capture.py`), the book's store (`store.py`), the size rule
+(`sizing.py`), the gate's inputs (`context.py`), the executor (`executor.py`) and the Python-run bridge
+(`manager.py`). The rules, enforced by `tests/test_hedge_fence.py` and `tests/test_regime_fence.py`:
 
-- It is **deterministic tier**: it imports nothing from `src.claude`, `src.news`, `src.spreads_ai`,
-  `src.value_ai` or the sentiment, sector and market-conditions analytics, and it is on the regime fence's
-  deterministic list.
-- **Only `src/hedge/` constructs `hedge_*` rows** (`HedgeQuoteRow` now). Reading is allowed anywhere.
-- Its market data goes through `req_fresh_mkt_data` only, in chunks of at most ten lines cancelled between
-  chunks, and only while no scan is running (it takes a chain batch's place in the line budget).
-
-Tasks 33-37 complete this section (the book, the order path, `validate_hedge`, `src/common/hedge_view.py`, the
-clientId, the reconciliation skip and the contract-clash rules).
+- **Placement.** `validate_hedge` lives in the Rules Engine (`src/engine/risk_engine.py`) and is the only gate in
+  front of a hedge order: pure, deterministic, no LLM, run at decision time and again at send time on a fresh quote.
+  The bridge runs inside the trading process (`approval_service`'s intraday loop, after the capital release) on
+  its own clientId, **32** (`ibkr.client_ids.hedge`), connected for one hedge cycle and disconnected. Orders are
+  `LimitOrder` at mid built only by `src/execution/order_builder.py` (`build_hedge_order`, a BAG from
+  `build_hedge_combo` for a vertical, chased within the approved debit x 1.05), every leg `qualifyContractsAsync`-ed,
+  quotes through `req_fresh_mkt_data` only, `placeOrder` only in `executor.py`. Python sizes, prices, selects and
+  gates everything; **no LLM output reaches any of it.**
+- **Paper only.** `validate_hedge` refuses every `hedge:` order in live (`hedge_paper_only`) and the manager idles
+  in live (`Config.is_live`). The bridge starts only when `envelope_enforce` reads `on` and the `hedge_instrument`
+  switch is set; it ends at the glide's end and posts a review record whose default is off.
+- **Refs and the book.** Every hedge order carries `orderRef = "hedge:<id>"`, written to `hedge_orders` before
+  `placeOrder`; the ledger tags it `book="hedge"` (by the ref, or by an index underlying only the hedge trades,
+  XND). `hedge:claude:<id>` is **reserved** for the Mastermind's paper put budget (Mastermind §10.7):
+  `validate_hedge` refuses it in this build (`hedge_claude_reserved`, and `hedge_claude_live` under
+  `LIVE_TRADING=true`).
+- **Isolation.** The hedge book has its own tables (`hedge_programme`, `hedge_orders`, `hedge_fills`, `hedge_marks`,
+  `hedge_quotes`): **only `src/hedge/` constructs them**, and the wheel's `orders` / `fills` never hold a hedge row.
+  `reconcile_external_closes` skips an execution whose ref starts `hedge:`. `get_positions()` drops hedge contracts
+  (XND by underlying, QQQ by `conId`); `wheel_shares` and the trade ledger leave `book="hedge"` out. XND may never
+  be a universe or spreads-book name (`Config._hedge_isolated`); on the QQQ route the Rules Engine refuses a wheel
+  QQQ opening while a QQQ hedge is open and the hedge while another book holds a QQQ share or short
+  (`hedge_qqq_route`), and a contract one book holds is refused to the other (`hedge_contract_clash`). A QQQ
+  hedge is closed by T-2 sessions with a lapse instruction if that fails: no exercise into shares.
+- **No headroom credit (H1, H10).** S10_gross, U_ew and every admission test leave the whole hedge book out (a
+  vertical's short leg too); only the net display measures count it. The breakers' daily leg reads the hedge's P&L
+  **net** through `src/common/hedge_view.py`.
+- **Everyone else's window** is `src/common/hedge_view.py` (`mode=ro`, plain SQL, imports only `src.common.config`
+  and the standard library), as `spreads_view.py` is for spreads; `src/reporting/hedge.py` (read-only, imports no
+  `src.hedge`) reports the record and `scripts/hedge_report.py` prints and posts it.
+- **Imports.** It is **deterministic tier**: `src/hedge/` imports nothing from `src.claude`, `src.news`,
+  `src.spreads*`, `src.value*` or the sentiment, sector and market-conditions analytics, even transitively (a
+  `sys.modules` probe); `src.spreads`, `src.value` and the reasoning layer never import `src.hedge`.
 
 ## Reference documentation
 

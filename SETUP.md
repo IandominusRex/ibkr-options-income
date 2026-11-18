@@ -2429,6 +2429,49 @@ average (a trend break), and is never blocked by the envelope. LES shares are th
 ledger `book="les"`): the wheel never writes a covered call against them, never counts them, and a trim or de-lever
 never sells them. Turn it off with `python -m scripts.envelope switch leveraged_entry off`.
 
+### The bridge hedge (Section J, paper only)
+
+The trading service can buy index puts by itself, **in paper only**, as a cushion while the book is repaired: the
+bridge of spec §3.10. Python runs all of it: it picks the item, sizes it, prices it and sends it, and every order is
+checked by the Rules Engine (`validate_hedge`) when it is decided and again on a fresh quote when it is sent. No
+Claude output reaches it. In live it does nothing.
+
+**Before it can run:** add `hedge: 32` under `ibkr.client_ids` in your private `config/settings.yaml` (the bridge
+connects as clientId 32 for one cycle and disconnects; without it the bridge logs a warning and does nothing; two
+client ids that share a number now stop the config from loading). The `hedge:` block's `underlyings`, `budget`,
+`stress`, `max_hedge_delta_share` and `t_minus_close_sessions` keys are in `config/examples/risk_limits.yaml`; your
+private copy needs them only to change a default.
+
+**When it starts:** on the first intraday cycle on which `envelope_enforce` reads `on` and the H4 report has set
+`hedge_instrument` (XND, or QQQ as the fallback). It fixes NLV0 (net liquidation that day) and posts "Bridge hedge
+started". From then on, each cycle: with no position open it buys the default item (the put or put vertical with
+the best minimum protection per dollar, 60-120 days, sized to half the gap between S10 and 15%, within the budget:
+at most 1.0% of NLV0 net over the bridge, 0.25% a month plus two months' allowance, 0.6% open at cost, and never
+more than half the book's beta-weighted delta); at 30 days to expiry it rolls (sells the old, buys the current
+default). After a VIX close at or above 25, or a VXN close at or above its one-year 90th percentile, during a halt
+or while the slow breaker is tripped, it buys nothing new; a roll goes ahead only if the sale pays for the new
+item, otherwise the position is held. On QQQ it closes the position two sessions before expiry, and if that
+close does not fill it tells IBKR not to exercise the put (a lapse instruction), so the put never sells shares.
+XND settles in cash; the settlement is booked from the last captured price (an estimate; your statement has the
+exact cash).
+
+**Its notices** (account thread): "Bridge hedge started ...", "Bridge hedge buy: QQQ outright 3/3 @ 6.05 (filled;
+ref hedge:h20261118-ab12cd)" (or "not sent: <reasons>"), "roll sale" / "roll buy", "roll held under the stress
+block", "sale (t_minus_close)" with "Lapse instruction sent ...", "settled in cash at ...", "ended at the glide's
+end". The hedge's day P&L counts in the daily loss breaker **net** (a gain offsets the wheel's loss), and a trip
+card names the wheel, spreads and hedge books.
+
+**When it ends:** at the end of the envelope's glide nothing new is bought or rolled; the open position is sold at
+its roll date. Then, or earlier if the size rule has asked for nothing for 20 sessions, it posts the **review
+record** once: premium spent, what each down leg returned, execution against mid, and the R² of the book on the
+instrument. **The default is off**: continuing needs a fresh ruling. Stop it by hand at any time with
+`python -m scripts.envelope switch bridge ended` (nothing new is bought; the open position is still managed).
+
+| Command | What it does |
+|---|---|
+| `python -m scripts.hedge_report` | The bridge's record (read-only): premium paid, received and net against NLV0; each down leg (the index at least one 60-session sigma below its 60-session high) with the hedge's value and the book's change at the trough and at exit and the cover ratio; execution against the approved mid; the rolling 60-session R² of NLV on the instrument. |
+| `python -m scripts.hedge_report --review` | Prints the one-page review record and posts it to the account thread ("Default: off"). |
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

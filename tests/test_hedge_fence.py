@@ -15,7 +15,11 @@ library). The reconciler skip and the attribution are tested in ``tests/test_hed
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 from tests.test_spreads_fence import imported_modules
@@ -47,7 +51,16 @@ def _reaches(modules: set[str], prefix: str) -> bool:
 
 def test_the_hedge_package_exists() -> None:
     names = {p.name for p in (SRC / "hedge").glob("*.py")}
-    assert {"__init__.py", "capture.py", "menu.py", "store.py"} <= names
+    assert {
+        "__init__.py",
+        "capture.py",
+        "menu.py",
+        "store.py",
+        "sizing.py",
+        "context.py",
+        "executor.py",
+        "manager.py",
+    } <= names
 
 
 def test_hedge_imports_no_enrichment() -> None:
@@ -118,3 +131,40 @@ def test_other_books_and_the_reasoning_layer_never_import_the_hedge_package() ->
         if _reaches(imported_modules(p), "src.hedge")
     ]
     assert offenders == []
+
+
+# Task 37: the fence complete. Nothing from the reasoning layer, the news, the other books or the
+# enrichment analytics loads with the hedge package, even transitively.
+FORBIDDEN_FOR_HEDGE = (*ENRICHMENT, "src.spreads", "src.value", "src.notify.approval_service")
+
+
+def test_the_hedge_package_loads_no_enrichment_even_transitively() -> None:
+    code = (
+        "import importlib, json, pkgutil, sys\n"
+        "import src.hedge as h\n"
+        "for m in pkgutil.walk_packages(h.__path__, 'src.hedge.'):\n"
+        "    importlib.import_module(m.name)\n"
+        "import src.common.hedge_view, src.reporting.hedge\n"
+        "print(json.dumps(sorted(sys.modules)))\n"
+    )
+    env = {**os.environ, "IBKR_CONFIG_USE_EXAMPLES": "1"}
+    out = subprocess.run(
+        [sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True, check=True
+    )
+    loaded = set(json.loads(out.stdout.strip().splitlines()[-1]))
+    assert [m for m in FORBIDDEN_FOR_HEDGE if _reaches(loaded, m)] == []
+
+
+def test_the_reporting_side_never_imports_the_hedge_package() -> None:
+    """``src/reporting/hedge.py`` reads the book through ``hedge_view`` only (read-only)."""
+    modules = imported_modules(SRC / "reporting" / "hedge.py")
+    assert not _reaches(modules, "src.hedge")
+    assert not _reaches(modules, "src.claude")
+
+
+def test_validate_hedge_lives_in_the_rules_engine_and_refuses_claude_refs() -> None:
+    text = (SRC / "engine" / "risk_engine.py").read_text(encoding="utf-8")
+    assert "def validate_hedge(" in text and "hedge_claude_reserved" in text
+    assert "hedge_paper_only" in text
+    for p in sorted((SRC / "hedge").rglob("*.py")):
+        assert "def validate_hedge" not in p.read_text(encoding="utf-8"), p.name
