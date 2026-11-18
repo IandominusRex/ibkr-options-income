@@ -1050,9 +1050,11 @@ async def test_a_tripped_slow_breaker_reads_from_system_settings(
     tmp_path, spreads_db, db, monkeypatch
 ) -> None:
     from src.spreads.service import SLOW_BREAKER_KEY
+    from src.storage.envelope_switches import set_switch
     from src.storage.system_settings import set_setting
 
     monkeypatch.setattr(SpreadsService, "_account_state", REAL_ACCOUNT_STATE)
+    set_switch("slow_breaker", "10", source="cli")  # review fix 5: a trip counts only while on
     svc, _, _ = make(tmp_path, [T0945])
     assert svc._account_state() == (False, False)
     set_setting(SLOW_BREAKER_KEY, '{"tripped": true, "drawdown_pct": 10.4}')
@@ -1060,7 +1062,27 @@ async def test_a_tripped_slow_breaker_reads_from_system_settings(
     set_setting(SLOW_BREAKER_KEY, '{"tripped": false}')
     assert svc._account_state() == (False, False)
     set_setting(SLOW_BREAKER_KEY, "not json")
-    assert svc._account_state() == (True, True)  # unparseable: fail closed
+    assert svc._account_state() == (True, True)  # unparseable with the switch on: fail closed
+
+
+async def test_a_tripped_slow_breaker_stops_nothing_once_the_switch_is_off(
+    tmp_path, spreads_db, db, monkeypatch
+) -> None:
+    """Review fix 5: an old trip never blocks spreads entries behind a switch the operator turned
+    off (the wheel's csp_budget_fraction already honours it)."""
+    from src.spreads.service import SLOW_BREAKER_KEY
+    from src.storage.envelope_switches import set_switch
+    from src.storage.system_settings import set_setting
+
+    monkeypatch.setattr(SpreadsService, "_account_state", REAL_ACCOUNT_STATE)
+    svc, _, _ = make(tmp_path, [T0945])
+    set_setting(SLOW_BREAKER_KEY, '{"tripped": true, "drawdown_pct": 10.4}')
+    set_switch("slow_breaker", "off", source="cli")
+    assert svc._account_state() == (False, False)
+    set_setting(SLOW_BREAKER_KEY, "not json")
+    assert svc._account_state() == (False, False)  # off: the record is not consulted
+    set_switch("slow_breaker", "10", source="cli")
+    assert svc._account_state() == (True, True)
 
 
 async def test_the_calendar_reaches_the_gate_and_the_events_list(

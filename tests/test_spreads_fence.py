@@ -146,6 +146,7 @@ def test_the_spreads_process_loads_no_wheel_layer_even_transitively() -> None:
         "for m in pkgutil.walk_packages(sp.__path__, 'src.spreads.'):\n"
         "    importlib.import_module(m.name)\n"
         "import src.ledger.live, src.ledger.state, src.storage.db\n"
+        "import src.storage.envelope_switches\n"  # the service's lazy slow-breaker switch read
         "print(json.dumps(sorted(sys.modules)))\n"
     )
     env = {**os.environ, "IBKR_CONFIG_USE_EXAMPLES": "1"}

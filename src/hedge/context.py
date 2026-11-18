@@ -160,7 +160,7 @@ async def build_context(
         net_premium_spent=hedge_view.spend() or 0.0,
         open_premium_at_cost=sum(h.cost for h in hedges or []),
         halted=is_halted(),
-        slow_breaker_tripped=slow_breaker.is_tripped(),
+        slow_breaker_tripped=slow_breaker.blocks_new_entries(),
         vix_close=stress.vix_close,
         vxn_close=stress.vxn_close,
         vxn_p90=stress.vxn_p90,

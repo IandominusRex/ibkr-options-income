@@ -678,7 +678,9 @@ def _all_by_cid(client) -> dict:
 
 def test_who_decided_is_reported_and_an_unrecorded_one_is_null(client) -> None:
     with session_scope() as s:
-        row = _seed_approval(s, candidate_id="auto", status="approved", decided_at=datetime.now(UTC))
+        row = _seed_approval(
+            s, candidate_id="auto", status="approved", decided_at=datetime.now(UTC)
+        )
         row.decided_by = "system"
     by_cid = _all_by_cid(client)
     assert by_cid["auto"]["decided_by"] == "system"
@@ -694,11 +696,18 @@ def test_an_unrecognised_decider_reads_as_null_never_an_error(client) -> None:
 
 def test_a_roll_carries_the_leg_it_buys_back(client) -> None:
     with session_scope() as s:
-        _seed_candidate(s, candidate_id="r1", run_id="roll-1", underlying="AAPL", strategy="roll", strike=250.0)
+        _seed_candidate(
+            s, candidate_id="r1", run_id="roll-1", underlying="AAPL", strategy="roll", strike=250.0
+        )
         _seed_approval(s, candidate_id="r1", snapshot=_roll_snapshot())
     by_cid = _all_by_cid(client)
     leg = by_cid["r1"]["roll_from"]
-    assert (leg["strike"], leg["expiry"], leg["right"], leg["contracts"]) == (250.0, "2026-10-23", "P", 1)
+    assert (leg["strike"], leg["expiry"], leg["right"], leg["contracts"]) == (
+        250.0,
+        "2026-10-23",
+        "P",
+        1,
+    )
     assert (leg["old_mid"], leg["new_mid"]) == (2.1, 3.275)
     assert by_cid["r1"]["premium"] == 1.175  # the net, per share
     assert by_cid["c1"]["roll_from"] is None  # an entry has no leg to buy back

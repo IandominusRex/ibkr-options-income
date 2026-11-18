@@ -764,13 +764,22 @@ class SpreadsService:
         """(the account's master halt, the slow drawdown breaker), from the trading DB's
         system_settings: the link from the account's own stops to the spreads gate
         (risk-envelope Task 3). Read strictly, so an unreadable state reads (True, True) and
-        blocks new entries until it can be read again. Exits never consult it."""
+        blocks new entries until it can be read again; the slow breaker leg is False whenever its
+        switch is off (review fix 5). Exits never consult it."""
         try:
+            from src.storage.envelope_switches import get_switch
             from src.storage.system_settings import HALT_KEY, get_setting_strict
 
             halted = (get_setting_strict(HALT_KEY) or "false").strip().lower() == "true"
-            raw = get_setting_strict(SLOW_BREAKER_KEY)
             slow = False
+            # the trip counts only while the slow_breaker switch is on (every switch reads off in
+            # live); with it off the record is not even parsed. An unreadable record with the
+            # switch on still raises below and blocks.
+            raw = (
+                None
+                if get_switch("slow_breaker") == "off"
+                else get_setting_strict(SLOW_BREAKER_KEY)
+            )
             if raw:
                 state = json.loads(raw)
                 slow = bool(state.get("tripped")) if isinstance(state, dict) else bool(state)

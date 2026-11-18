@@ -188,7 +188,13 @@ def test_the_future_is_simply_empty(client) -> None:
 
 def test_previous_and_next_skip_days_with_no_wheel_activity(client, db) -> None:
     seed(db, "early", sold_at=datetime(2026, 10, 5, 14))
-    seed(db, "late", sold_at=datetime(2026, 10, 14, 14), bought_at=datetime(2026, 10, 16, 15), reason="profit_take")
+    seed(
+        db,
+        "late",
+        sold_at=datetime(2026, 10, 14, 14),
+        bought_at=datetime(2026, 10, 16, 15),
+        reason="profit_take",
+    )
     with db() as s:
         # A call proposal raised on the 7th that never traded still makes the 7th a History day.
         s.add(

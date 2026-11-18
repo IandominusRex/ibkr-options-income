@@ -57,6 +57,19 @@ def is_tripped() -> bool:
     return bool(state and state.get("tripped"))
 
 
+def blocks_new_entries() -> bool:
+    """Whether a trip stops new entries now: False while the ``slow_breaker`` switch is ``off`` (and
+    in live, where every switch reads its default), else ``is_tripped()`` (an unreadable row reads
+    tripped, fail closed). The one switch-aware read for the hedge's buys; the spreads service reads
+    the same key and switch itself (``SpreadsService._account_state``)."""
+    try:
+        if get_switch("slow_breaker") == "off":
+            return False
+    except Exception:
+        log.warning("slow_breaker switch unreadable: reading the trip record", exc_info=True)
+    return is_tripped()
+
+
 def csp_budget_fraction() -> float:
     """What the total CSP allocation is multiplied by: 1.0 unless the switch is on and the breaker
     is tripped (or unreadable)."""

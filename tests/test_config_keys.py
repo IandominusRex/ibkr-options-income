@@ -177,7 +177,9 @@ def test_claude_cfg_code_defaults_match_the_shipped_yaml():
     with an undersized window. Code defaults must match what ships."""
     from src.common.config import ClaudeCfg
 
-    shipped = yaml.safe_load((_ROOT / "config" / "examples" / "settings.yaml").read_text())["claude"]
+    shipped = yaml.safe_load((_ROOT / "config" / "examples" / "settings.yaml").read_text())[
+        "claude"
+    ]
     defaults = ClaudeCfg()
     for key in (
         "ollama_model",
