@@ -126,6 +126,27 @@ def leverage_map() -> dict[str, int]:
     return out
 
 
+def candidate_symbols() -> set[str]:
+    """The names a new cash-secured put may open on: the effective universe's ``indexes``,
+    ``watchlist``, ``would_own``, ``actively_wheeling`` and ``leveraged_etfs``.
+
+    A candidate put on a name the book does not hold needs that name's beta to be measured; with
+    none, ``shock`` reads the line as unmeasured and the gate refuses it ``envelope_unmeasured``
+    (2026-11-19: 69 of 96 record-mode rows, every one on a name not held). Empty when the
+    universe cannot be read: those names then stay unmeasured, as before."""
+    try:
+        from src.common.universe import effective_universe
+
+        uni = effective_universe()
+        names: set[str] = set()
+        for key in ("indexes", "watchlist", "would_own", "actively_wheeling", "leveraged_etfs"):
+            names |= {str(s).upper() for s in uni.get(key) or []}
+        return names
+    except Exception:
+        log.warning("envelope: the universe could not be read for candidate betas", exc_info=True)
+        return set()
+
+
 def _latest_close(symbol: str) -> float | None:
     bars = load_bars(symbol, limit=1)
     return bars[-1].close if bars and bars[-1].close > 0 else None
@@ -231,6 +252,10 @@ def build_inputs(
     wanted = {
         ln.symbol.upper() for ln in lines if not (ln.book == "les" and ln.symbol == "LES")
     }  # the unreadable-LES marker needs no beta
+    if beta_map is None or beta_smh_map is None:
+        # Betas read from the store also cover every name a new put may open on, not only the
+        # book's: a candidate line on a name not held has no beta otherwise (unmeasured).
+        wanted |= candidate_symbols()
     wanted |= {governing[s] for s in wanted if s in governing}
     b = dict(beta_map) if beta_map is not None else betas(sorted(wanted))[0]
     b_smh = dict(beta_smh_map) if beta_smh_map is not None else betas(sorted(wanted), vs="SMH")[0]

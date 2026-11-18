@@ -159,3 +159,48 @@ def test_the_envelope_block_parses_to_the_shipped_defaults() -> None:
         RiskEnvelopeCfg(s10_target=15.0)
     with pytest.raises(ValueError):
         RiskEnvelopeCfg(live_iv_batch=25)  # never more than ten lines at once
+
+
+def test_betas_cover_the_candidate_universe_not_only_the_book(db, monkeypatch) -> None:
+    """A put candidate on a name the book does not hold has a beta, so the envelope measures
+    it instead of refusing it ``envelope_unmeasured`` (2026-11-19)."""
+    from dataclasses import replace
+
+    from src.analytics.shock import measure
+    from src.common.envelope_types import BookLine
+
+    spy = _bench(260)
+    append_bars("SPY", _series(261, spy))
+    append_bars("SMH", _series(261, [1.4 * r for r in spy]))
+    append_bars("NVDA", _series(261, [1.8 * r for r in spy]))
+    append_bars("AVGO", _series(261, [1.6 * r for r in spy]))
+    monkeypatch.setattr(
+        "src.common.universe.effective_universe",
+        lambda: {"would_own": ["avgo"], "watchlist": ["QQQ"], "indexes": ["SPY"]},
+    )
+    assert si.candidate_symbols() == {"AVGO", "QQQ", "SPY"}
+    inp = si.build_inputs(
+        [_stk("NVDA", 100, 180.0)],
+        nlv=100_000.0,
+        value_by_name={},
+        ivs={},
+        today=date(2026, 11, 14),
+    )
+    assert {"NVDA", "AVGO", "QQQ"} <= set(inp.betas) and "AVGO" in inp.betas_smh
+    line = BookLine("AVGO", "short_put", 1.0, 330.0, strike=320.0, dte=30, iv=0.5, book="wheel")
+    assert measure(replace(inp, lines=inp.lines + (line,))).measured
+
+
+def test_an_explicit_beta_map_is_used_as_given(db, monkeypatch) -> None:
+    """Tests and replays pass their own betas: the universe is not added to them."""
+    monkeypatch.setattr("src.common.universe.effective_universe", lambda: {"would_own": ["AVGO"]})
+    inp = _build([_stk("NVDA", 100, 180.0)])
+    assert set(inp.betas) == {"NVDA", "AMD"}
+
+
+def test_an_unreadable_universe_adds_nothing(db, monkeypatch) -> None:
+    def boom() -> dict:
+        raise RuntimeError("no universe")
+
+    monkeypatch.setattr("src.common.universe.effective_universe", boom)
+    assert si.candidate_symbols() == set()
