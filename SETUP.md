@@ -2489,6 +2489,9 @@ values visible and the first two are required.
 1. **`config/settings.yaml`** (private): add `hedge: 32` under `ibkr.client_ids` (the bridge connects on it; two
    names sharing an id now stop the config loading) and `market_data.reference_iv_symbols` /
    `reference_price_symbols` (the example shows SPY, `^VIX`, `^VXN`; the IV sanity check reads the last two).
+   **Before you restart, confirm your private `settings.yaml` gives every process its own client id and has
+   `hedge: 32`**: the config now refuses to load when two names under `ibkr.client_ids` share a value, and every
+   service would then fail to start.
 2. **`config/spreads.yaml`** (private): leave `mode: paper` (the `spreads_paper` switch keeps it in shadow until the
    paper bar is met) and copy the new keys from `config/examples/spreads.yaml`: the `risk:` block (the old
    `*_pct_of_capital` caps are replaced by `*_pct_of_nlv` ones, plus `calendar_block`), the cost-standard keys under
@@ -2529,6 +2532,7 @@ XND's tick sizes). Run `python -m scripts.hedge_capture_report --probe` first.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| Config load fails with `ibkr.client_ids.X and ibkr.client_ids.Y share clientId N` (every service refuses to start) | The load-time uniqueness check added with the hedge's clientId 32: two processes were given the same IBKR client id in the private `config/settings.yaml` (typically `hedge: 32` was added while another name already used 32) | Give every entry under `ibkr.client_ids` its own number (the example `config/examples/settings.yaml` lists a working set, `hedge: 32` included), then `./ibkr restart` |
 | Telegram says *"IV data alert: QQQ <date> flagged as implausible and excluded from IV rank…"*; or a symbol's IV rank or `/health` IV age stops moving | The EOD IV capture stored an observation the sanity check judged implausible (its ratio to ^VIX/^VXN, or its own 20-session median, was outside the band in `risk_limits.yaml → iv_sanity`). The row is kept but every reader skips it, so rank and staleness read from the last good row | Usually nothing: the next good observation resumes it. If a real regime change keeps getting flagged, widen the band in `iv_sanity` (restart the trading service). With no `^VIX`/`^VXN` history in `price_history`, index ETFs are never flagged: run `python -m scripts.backfill_prices` |
 | The logs show `usage limit reached — not retrying` / `You've hit your session limit`, and reviews, news cards or summaries come from the local model | The Claude plan's 5-hour (or weekly) limit was reached. The call is not retried; Ollama answers instead | Wait for the reset time in the message. `python -m scripts.claude_usage` shows which call kinds spend the most; the slim call (`claude.slim_context`) and Haiku routing (`claude.review_model`, `news.llm.model`) are what keep this rare |
 | Roll / delta-drift / assignment-risk info alerts carry no Claude paragraph | By design since 2026-10-15: `claude.review_info_alerts` is false (they carry no buttons; the roll decision card still gets a review) | Set `claude.review_info_alerts: true` to restore the paragraph at ~1K tokens a call |

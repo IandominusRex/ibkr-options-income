@@ -658,7 +658,8 @@ unmerged; the daemons capture nothing until a merge and `./ibkr restart`. Captur
   Mastermind); monetisation (behind `hedge_monetisation`, `none` until the H5 research replay); the record's
   equal-S10 trim and always-on comparisons (need index option history: the H5 research session).
 - **Known limitations (the bridge):** a CSV-only import of a QQQ hedge execution (no orderRef) lands in the ledger as
-  `manual`; the stress block needs at least 126 stored ^VXN closes, else no new size.
+  `manual`; the stress block needs at least 126 stored ^VXN closes, else no new size; the hedge and LES cycles run
+  inline in the intraday loop and can delay that cycle's scan start by up to the fill timeout.
 - **Needs live verification (the bridge):** `ib.exerciseOptions` lapse behaviour in paper (action 2, override 1);
   the XND settlement is booked at the last captured spot (an estimate; the broker ledger holds the truth). `needed_contracts` is
   recorded as 0 until Task 36's size rule exists (the report reads it as "at least one contract").
