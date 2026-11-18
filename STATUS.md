@@ -588,7 +588,17 @@ unmerged; the daemons capture nothing until a merge and `./ibkr restart`. Captur
   approved debit x 1.05, part fills booked, an unconfirmed cancel left working and settled later from the
   broker's executions. **Needs live verification:** the BAG sign for a vertical, XND's tick sizes and paper
   routing.
-- **Not yet:** the bridge (Tasks 36-37). `needed_contracts` is
+- **The bridge** (Task 36): `src/hedge/manager.py`, called once per intraday cycle from `approval_service`
+  after the capital release; paper only (idles in live). Starts when `envelope_enforce` is `on` and the H4
+  switch names XND or QQQ (NLV0 fixed that day); buys the default item (`src/hedge/sizing.py`, H5's size rule
+  against the 15% target and the H3 budget, the delta cap), rolls at 30 DTE (only a self-funding roll under the
+  stress block, a halt or the slow breaker), closes a QQQ position by T-2 with a lapse instruction when the
+  close fails, books an XND cash settlement, monetises at 2x only behind `hedge_monetisation`, ends at the glide
+  end (sold at its roll date) and posts the review record (default off) once. Hedge marks enter the daily loss
+  leg net and the envelope's net measures; gross and U_ew skip the whole hedge book (H1, H10).
+- **Not yet:** `scripts/hedge_report.py` and the fence's last checks (Task 37).
+- **Needs live verification (the bridge):** `ib.exerciseOptions` lapse behaviour in paper (action 2, override 1);
+  the XND settlement is booked at the last captured spot (an estimate; the broker ledger holds the truth). `needed_contracts` is
   recorded as 0 until Task 36's size rule exists (the report reads it as "at least one contract").
 - **Known limitations (wings):** the wing's distance is the SPY short strike over the GEX `scale`, snapped to a listed strike at or beyond it (within one strike step of the same expected-move distance); XSP's trading class (`XSP`) is a guess that falls back to any class of the symbol that lists the expiry; the cost model charges the full mid-to-natural crossing in and out for every instrument alike (the measured crossing, not the shadow haircut), so it is conservative for all and compares like with like.
 - **Known limitations:** XND's contract fields (`IND` on `NASDAQ`, class `XND`) come from the plan and have not

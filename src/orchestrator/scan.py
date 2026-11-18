@@ -34,7 +34,7 @@ from src.analytics.market_conditions import get_market_conditions
 from src.analytics.sector_context import get_sector_context, render_sector_context
 from src.analytics.sentiment import SentimentScorer
 from src.analytics.shock import measure as measure_shock
-from src.analytics.shock_inputs import build_inputs, stored_ivs
+from src.analytics.shock_inputs import build_inputs, hedge_lines, stored_ivs
 from src.analytics.technicals import _fetch_last_price, get_technical_stats
 from src.claude.book_context import build_book_block
 from src.claude.dossier_context import dossier_block, load_dossiers, prose_key
@@ -1240,7 +1240,8 @@ async def _measure_envelope(
         les_by_name = les_by_name_for_envelope()  # LES shares at leverage (Task 32a)
         nlv = account.net_liquidation
         today = today_et()
-        # The hedge book's marks join as hedge_lines once it exists (Task 33, hedge_view).
+        # The hedge book's legs join once, for the net measures (Task 36; gross skips them).
+        hedges = hedge_lines(today)
         live_out: tuple[ShockInputs, EnvelopeRoom] | None = None
         if enforce != "off":
             live = await live_option_ivs(ib, positions)
@@ -1252,6 +1253,7 @@ async def _measure_envelope(
                     value_by_name=value_by_name,
                     les_by_name=les_by_name,
                     ivs=live,
+                    hedge_lines=hedges,
                     spots=spots,
                 ),
             )
@@ -1281,6 +1283,7 @@ async def _measure_envelope(
                 value_by_name=value_by_name,
                 les_by_name=les_by_name,
                 ivs=stored_ivs(underlyings),
+                hedge_lines=hedges,
                 spots=spots,
             ),
         )

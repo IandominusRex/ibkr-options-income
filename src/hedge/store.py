@@ -54,10 +54,19 @@ class QuoteRecord:
     iv: float | None = None
 
 
+NEEDED_KEY = "hedge_needed_contracts"  # system_settings: the size rule's last want (Task 36)
+
+
 def needed_contracts() -> int:
-    """The bridge size of Task 36's rule at the latest snapshot. The rule does not exist yet (the
-    bridge is built in Task 36), so a capture records 0 and the H4 report reads it as "at least one"."""
-    return 0
+    """The bridge size the H5 rule last asked for (``manager._pick`` writes it to
+    ``system_settings``); 0 before the bridge has sized anything, which the H4 report reads as
+    "at least one"."""
+    from src.storage.system_settings import get_setting
+
+    try:
+        return max(0, int(get_setting(NEEDED_KEY, "0") or 0))
+    except ValueError:
+        return 0
 
 
 def _naive(dt: datetime) -> datetime:
@@ -360,3 +369,15 @@ def record_mark(
                 marked_at=when,
             )
         )
+
+
+def last_mark_at(hedge_id: str) -> datetime | None:
+    """When position *hedge_id* was last marked (tz-aware UTC), or None."""
+    with session_scope() as s:
+        at = s.execute(
+            select(HedgeMarkRow.marked_at)
+            .where(HedgeMarkRow.hedge_id == hedge_id)
+            .order_by(HedgeMarkRow.marked_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+    return at.replace(tzinfo=UTC) if at is not None else None

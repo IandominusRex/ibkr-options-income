@@ -402,7 +402,7 @@ def test_a_trip_card_shows_the_loss_by_book(tmp_path, monkeypatch) -> None:
 
     today = _wheel_loss_today(tmp_path, monkeypatch, -9_000.0, -7_000.0)
     reason = evaluate_breakers(today, net_liquidation=300_000.0)
-    assert reason == "Daily mark-to-market loss $16,000 (wheel -$9,000, spreads -$7,000)"
+    assert reason == "Daily mark-to-market loss $16,000 (wheel -$9,000, spreads -$7,000, hedge $0)"
     card = format_breaker_halt(reason)
     assert "HALTED" in card and "wheel -$9,000, spreads -$7,000" in card and "/resume" in card
 

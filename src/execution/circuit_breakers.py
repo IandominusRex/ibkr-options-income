@@ -42,6 +42,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from src.common.config import get_config, get_envelope_cfg
+from src.common.hedge_view import pnl_today as hedge_pnl_today
 from src.common.market_hours import is_trading_day, today_et
 from src.common.schemas import OrderState, PositionSnapshot
 from src.common.spreads_view import pnl_today as spreads_pnl_today
@@ -213,18 +214,26 @@ def _signed_usd(x: float) -> str:
     return f"-${-x:,.0f}" if x < 0 else f"${x:,.0f}"
 
 
-def _daily_pnl_by_book(positions: list[PositionSnapshot]) -> tuple[float, float, float] | None:
-    """``(account delta, wheel delta, spreads P&L)`` for today, or None with no wheel baseline.
+def _daily_pnl_by_book(
+    positions: list[PositionSnapshot],
+) -> tuple[float, float, float, float] | None:
+    """``(account delta, wheel delta, spreads P&L, hedge P&L)`` for today, or None with no wheel
+    baseline.
 
     The spreads book (risk-envelope Task 6, spec §3.2c) adds its real-mode P&L for the day
     (``src.common.spreads_view``: realised + open, paper/live only, ruling P12) **when it is a
     loss**: a spreads gain never offsets a wheel loss, and a missing or unreadable spreads.db
-    counts 0. The drawdown leg already sees the spreads book through net liquidation."""
+    counts 0. The hedge book (Task 36, spec §3.10.7) enters **net**: its marks' change and cash
+    for the day, gain or loss (``src.common.hedge_view.pnl_today``; ``get_positions`` drops its
+    contracts, so the wheel delta never counts them twice); an unreadable hedge book counts 0.
+    The drawdown leg already sees both books through net liquidation."""
     wheel = _mark_delta(positions)
     if wheel is None:
         return None
-    spreads = spreads_pnl_today(today_et()) or 0.0
-    return wheel + min(spreads, 0.0), wheel, spreads
+    day = today_et()
+    spreads = spreads_pnl_today(day) or 0.0
+    hedge = hedge_pnl_today(day) or 0.0
+    return wheel + min(spreads, 0.0) + hedge, wheel, spreads, hedge
 
 
 def mark_based_loss(positions: list[PositionSnapshot], net_liquidation: float) -> float | None:
@@ -234,7 +243,7 @@ def mark_based_loss(positions: list[PositionSnapshot], net_liquidation: float) -
     into a 15% drawdown registers as a *profit* and the kill switch stays open while the
     15-minute loop opens more shorts into the same move (D3). This measures what actually
     happened to the book (``_mark_delta``): today's P&L against the prior snapshot's, plus the
-    spreads book's loss for the day (``_daily_pnl_by_book``).
+    spreads book's loss and the hedge book's net P&L for the day (``_daily_pnl_by_book``).
 
     Returns the loss as a positive number, or None when the breaker is disabled, no baseline
     exists, or no breach occurred.
@@ -318,7 +327,7 @@ def evaluate_breakers(positions: list[PositionSnapshot], net_liquidation: float)
     loss_pct = cfg.daily_loss_halt_pct
     books = _daily_pnl_by_book(positions) if loss_pct else None
     if books is not None:
-        delta, wheel, spreads = books
+        delta, wheel, spreads, hedge = books
         loss = max(-delta, 0.0)
         trip, new_loss = _breach(
             loss,
@@ -329,7 +338,8 @@ def evaluate_breakers(positions: list[PositionSnapshot], net_liquidation: float)
         if trip:
             reason = (
                 f"Daily mark-to-market loss ${loss:,.0f} "
-                f"(wheel {_signed_usd(wheel)}, spreads {_signed_usd(spreads)})"
+                f"(wheel {_signed_usd(wheel)}, spreads {_signed_usd(spreads)}, "
+                f"hedge {_signed_usd(hedge)})"
             )
 
     raw = _drawdown_raw(net_liquidation)

@@ -244,3 +244,36 @@ def build_inputs(
         semis=frozenset(s.upper() for s in cfg.semis_names),
         nlv=float(nlv),
     )
+
+
+def hedge_lines(today: date | None = None) -> tuple[BookLine, ...]:
+    """The hedge book's open legs as ``book="hedge"`` lines (risk-envelope Task 36, code fact C7):
+    ``get_positions()`` drops hedge contracts, so they come back here once, for the **net**
+    measures. Gross and U_ew skip every ``hedge`` line (H1, H10). Each leg takes the newest
+    captured spot and IV of its contract (``hedge_view.leg_quotes``); a leg never captured has no
+    IV and is named in ``unmeasured_net`` only. Empty when the hedge book cannot be read."""
+    from src.common import hedge_view
+
+    day = today or today_et()
+    book = hedge_view.open_hedges() or []
+    quotes = hedge_view.leg_quotes([leg.con_id for h in book for leg in h.legs if leg.con_id]) or {}
+    out: list[BookLine] = []
+    for h in book:
+        if h.contracts <= 0:
+            continue
+        for leg in h.legs:
+            q = quotes.get(leg.con_id or -1, {})
+            out.append(
+                BookLine(
+                    symbol=h.instrument,
+                    kind="long_put" if leg.action == "BUY" else "short_put",
+                    qty=float(h.contracts),
+                    spot=float(q.get("spot") or 0.0),
+                    strike=leg.strike,
+                    dte=(leg.expiry - day).days,
+                    iv=float(q["iv"]) if q.get("iv") else None,
+                    book="hedge",
+                    con_id=leg.con_id,
+                )
+            )
+    return tuple(out)

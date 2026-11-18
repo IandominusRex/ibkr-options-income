@@ -15,6 +15,7 @@ it without importing ``src.hedge``. Only ``src/hedge/`` writes these tables.
   (latest mark today less the latest before it, plus the day's cash flows), signed.
 * ``spend()`` -> premium paid less received over every fill (the H3 net premium).
 * ``latest_programme()`` -> the bridge programme's latest row as a plain mapping.
+* ``leg_quotes(con_ids)`` -> each contract's newest captured quote (the envelope's net lines).
 """
 
 from __future__ import annotations
@@ -310,5 +311,28 @@ def latest_programme() -> dict[str, Any] | None:
         con.row_factory = sqlite3.Row
         row = con.execute("SELECT * FROM hedge_programme ORDER BY id DESC LIMIT 1").fetchone()
         return dict(row) if row is not None else None
+
+    return _read(run)
+
+
+def leg_quotes(con_ids: list[int]) -> dict[int, dict[str, Any]] | None:
+    """The newest captured quote (``hedge_quotes``) of each contract: ``spot``, ``iv``, ``mid``,
+    ``session_date``. None when unreadable; contracts never captured are absent."""
+    wanted = sorted({int(c) for c in con_ids if c})
+
+    def run(con: sqlite3.Connection | None) -> dict[int, dict[str, Any]]:
+        if con is None or not wanted or "hedge_quotes" not in _tables(con):
+            return {}
+        cols = {r[1] for r in con.execute("PRAGMA table_info(hedge_quotes)")}
+        iv = "iv" if "iv" in cols else "NULL"
+        marks = ",".join("?" for _ in wanted)
+        out: dict[int, dict[str, Any]] = {}
+        for cid, spot, ivv, mid, sday in con.execute(
+            f"SELECT con_id, spot, {iv}, mid, session_date FROM hedge_quotes "
+            f"WHERE con_id IN ({marks}) ORDER BY captured_at, id",
+            wanted,
+        ).fetchall():
+            out[int(cid)] = {"spot": spot, "iv": ivv, "mid": mid, "session_date": _day(sday)}
+        return out
 
     return _read(run)

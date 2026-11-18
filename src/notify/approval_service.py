@@ -2048,6 +2048,16 @@ async def _intraday_scan_loop(
                 except Exception:
                     logger.exception("Intraday loop: capital release failed")
 
+            # 1a''''. The bridge hedge (risk-envelope Task 36): Python-run, paper only (it idles in
+            #     live), on its own clientId 32, connected for this one cycle and disconnected
+            #     (P9). Every order passes risk_engine.validate_hedge at decision and send time.
+            try:
+                from src.hedge.manager import run_hedge_cycle
+
+                await run_hedge_cycle(scan_running=bool(bot_data.get("scan_running")))
+            except Exception:
+                logger.exception("Intraday loop: hedge cycle failed")
+
             # 1a'''. LES share buys and trend-break sells (risk-envelope Task 32a): after 10:00 ET,
             #     behind the leveraged_entry switch (record: written to sizing_actions, nothing
             #     sent; on, paper only: gated twice and sent on the exec connection).

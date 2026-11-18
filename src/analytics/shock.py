@@ -155,7 +155,12 @@ def line_pnl(line: BookLine, move: float, *, days: int = 0, vol_bump: float = 0.
 
 
 def _counted(lines: Iterable[BookLine], include_long: bool) -> Iterable[BookLine]:
-    return (ln for ln in lines if include_long or ln.kind not in _LONG_KINDS)
+    """The lines a measure counts. Gross leaves out every long option and the whole hedge book
+    (risk-envelope Task 36, H1/H10): a hedge vertical's short leg is part of a net-long structure
+    the Rules Engine validated, so it neither adds to nor takes from the book's headroom."""
+    return (
+        ln for ln in lines if include_long or (ln.kind not in _LONG_KINDS and ln.book != "hedge")
+    )
 
 
 def scenario_loss(
@@ -196,6 +201,8 @@ def uew(inputs: ShockInputs) -> float:
         raise ValueError("U_ew needs a positive NLV")
     gross = 0.0
     for line in inputs.lines:
+        if line.book == "hedge":
+            continue  # H10: the hedge book (a vertical's short leg too) adds nothing to U_ew
         lev = float(inputs.leverage.get(line.symbol.upper(), 1))
         if line.kind == "stock":
             gross += abs(line.qty * (line.spot or 0.0)) * lev

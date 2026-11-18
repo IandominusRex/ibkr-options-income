@@ -6,7 +6,8 @@ Twice a session, at the fixed ET times in ``hedge.capture_times_et``, every cand
 bid / ask / size / model delta of each, into ``hedge_quotes`` (``store.record_capture``). The H4
 report (``scripts/hedge_capture_report.py``) reads them after 20 sessions.
 
-**Capture only: there is no order path in this package** (``tests/test_hedge_fence.py`` checks it).
+Capture only: this module places no order. ``quote_menu`` (Task 36) quotes the same menu for the
+bridge's buy and roll, on the hedge's own connection; the order goes through ``executor.py``.
 
 Market data: every subscription goes through ``req_fresh_mkt_data`` (never ``ib.reqMktData``), in
 chunks of at most ``hedge.capture_max_lines`` (10) lines, each chunk cancelled before the next opens.
@@ -228,6 +229,27 @@ async def capture_instrument(
 ) -> list[store.QuoteRecord]:
     """One instrument's capture: spot, chain, the menu's legs quoted, the menu's rows. Raises on a
     failure (the caller logs it and moves on to the next instrument)."""
+    spot, items = await _menu(ib, name, icfg, cfg, now)
+    return _records(
+        name, items, default_item(items, spot), spot, now.astimezone(UTC), store.needed_contracts()
+    )
+
+
+async def quote_menu(
+    ib: IB, name: str, icfg: HedgeInstrumentCfg, cfg: HedgeCfg, now: datetime
+) -> tuple[float, list[HedgeMenuItem]] | None:
+    """The instrument's spot and its menu quoted now, for the bridge's buy and roll (Task 36), on
+    the hedge's own connection; None on any failure (logged)."""
+    try:
+        return await _menu(ib, name, icfg, cfg, now)
+    except Exception:
+        log.warning("hedge menu: %s could not be quoted", name, exc_info=True)
+        return None
+
+
+async def _menu(
+    ib: IB, name: str, icfg: HedgeInstrumentCfg, cfg: HedgeCfg, now: datetime
+) -> tuple[float, list[HedgeMenuItem]]:
     und = underlying_contract(name, icfg)
     qualified = await ib.qualifyContractsAsync(und)
     if not qualified or not getattr(und, "conId", 0):
@@ -260,10 +282,7 @@ async def capture_instrument(
     ]
     good = await qualify_options_async(ib, contracts, chunk_size=cfg.capture_max_lines)
     quotes = await quote_contracts(ib, list(good), max_lines=cfg.capture_max_lines)
-    items = build_menu(quotes, spot, cfg, today=today)
-    return _records(
-        name, items, default_item(items, spot), spot, now.astimezone(UTC), store.needed_contracts()
-    )
+    return spot, build_menu(quotes, spot, cfg, today=today)
 
 
 @dataclass
