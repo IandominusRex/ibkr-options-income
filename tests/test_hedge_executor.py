@@ -120,9 +120,15 @@ class FakeIB:
     checks the order row already exists (the ref is written first)."""
 
     def __init__(
-        self, *, fill: float = 2.0, done_on_cancel: bool = True, qualify: bool = True
+        self,
+        *,
+        fill: float = 2.0,
+        done_on_cancel: bool = True,
+        qualify: bool = True,
+        trade_fills: list[Any] | None = None,
     ) -> None:
         self.fill = fill
+        self.trade_fills = trade_fills or []
         self.done_on_cancel = done_on_cancel
         self.qualify = qualify
         self.qualified: list[Any] = []
@@ -159,6 +165,7 @@ class FakeIB:
         if self.trade is None:
             self.trade = FakeTrade(order, self.fill, done_on_cancel=self.done_on_cancel)
             self.trade.done = self.fill > 0 and self.fill >= order.totalQuantity
+            self.trade.fills = list(self.trade_fills)
         return self.trade
 
     def cancelOrder(self, order: Any) -> None:
@@ -269,6 +276,94 @@ async def test_partial_fill_and_unconfirmed_cancel(hedge_db) -> None:
         assert (row.state, row.filled_qty) == ("filled", 2.0)
     h2 = next(h for h in hedge_view.open_hedges() or [] if h.hedge_id == "h2")
     assert h2.contracts == 2.0
+
+
+def _fill(exec_id: str, ref: str, *, sec: str = "OPT", shares: float = 1.0, price: float = 6.0):
+    return SimpleNamespace(
+        execution=SimpleNamespace(execId=exec_id, orderRef=ref, shares=shares, price=price),
+        contract=SimpleNamespace(secType=sec),
+        commissionReport=SimpleNamespace(commission=0.65),
+    )
+
+
+def _broker_with(fills: list[Any]) -> Any:
+    late = MagicMock()
+
+    async def execs() -> list[Any]:
+        return fills
+
+    late.reqExecutionsAsync = execs
+    late.openTrades.return_value = []
+    return late
+
+
+async def test_every_execution_is_its_own_fill_row_and_a_late_one_is_booked_once(
+    hedge_db,
+) -> None:
+    """Review fix 2: a 3-lot buy part-filled 2 in two executions, cancel unconfirmed, then
+    resolve_working: three rows with three execIds, total 3, nothing booked twice."""
+    import src.storage.db as dbmod
+    from src.common import hedge_view
+    from src.hedge import executor
+    from src.storage.models import HedgeFillRow, HedgeOrderRow
+
+    ref = "hedge:h3"
+    ib = FakeIB(
+        fill=2.0,
+        done_on_cancel=False,
+        trade_fills=[_fill("e1", ref), _fill("e2", ref, price=6.1)],
+    )
+    res = await run(ib, cand(hedge_id="h3", order_ref=ref, contracts=3))
+    assert res.status == "working"
+    with dbmod.session_scope() as s:
+        rows = s.query(HedgeFillRow).filter_by(hedge_id="h3").order_by(HedgeFillRow.id).all()
+        assert [(r.exec_id, r.qty, r.price) for r in rows] == [("e1", 1.0, 6.0), ("e2", 1.0, 6.1)]
+    broker = _broker_with([_fill("e1", ref), _fill("e2", ref, price=6.1), _fill("e3", ref)])
+    assert await executor.resolve_working(broker, today=date(2026, 11, 18)) == 1
+    assert await executor.resolve_working(broker, today=date(2026, 11, 18)) == 0
+    with dbmod.session_scope() as s:
+        row = s.query(HedgeOrderRow).filter_by(hedge_id="h3").one()
+        assert (row.state, row.filled_qty) == ("filled", 3.0)
+        ids = [r.exec_id for r in s.query(HedgeFillRow).filter_by(hedge_id="h3").all()]
+        assert sorted(ids) == ["e1", "e2", "e3"]
+    h3 = next(h for h in hedge_view.open_hedges() or [] if h.hedge_id == "h3")
+    assert h3.contracts == 3.0
+
+
+async def test_resolving_without_a_new_execution_does_not_double_count(hedge_db) -> None:
+    import src.storage.db as dbmod
+    from src.hedge import executor
+    from src.storage.models import HedgeFillRow, HedgeOrderRow
+
+    ref = "hedge:h4"
+    ib = FakeIB(fill=2.0, done_on_cancel=False, trade_fills=[_fill("e1", ref), _fill("e2", ref)])
+    await run(ib, cand(hedge_id="h4", order_ref=ref, contracts=3))
+    broker = _broker_with([_fill("e1", ref), _fill("e2", ref)])
+    await executor.resolve_working(broker, today=date(2026, 11, 18))
+    with dbmod.session_scope() as s:
+        row = s.query(HedgeOrderRow).filter_by(hedge_id="h4").one()
+        assert row.filled_qty == 2.0  # not 4: the two executions were already booked
+        assert s.query(HedgeFillRow).filter_by(hedge_id="h4").count() == 2
+
+
+async def test_a_vertical_books_the_bag_execution_once(hedge_db) -> None:
+    """Review fix 2: the trade's fills hold each leg's execution plus the combo's; only the BAG
+    one counts, exactly as resolve_working counts it."""
+    import src.storage.db as dbmod
+    from src.storage.models import HedgeFillRow
+
+    ref = "hedge:h5"
+    fills = [
+        _fill("leg-a", ref, sec="OPT", shares=2.0, price=5.9),
+        _fill("leg-b", ref, sec="OPT", shares=2.0, price=0.9),
+        _fill("bag-1", ref, sec="BAG", shares=2.0, price=5.0),
+    ]
+    ib = FakeIB(fill=2.0, trade_fills=fills)
+    res = await run(ib, cand(hedge_id="h5", order_ref=ref, vertical=True, contracts=2))
+    assert res.status == "filled"
+    with dbmod.session_scope() as s:
+        rows = s.query(HedgeFillRow).filter_by(hedge_id="h5").all()
+        assert [(r.exec_id, r.qty, r.price) for r in rows] == [("bag-1", 2.0, 5.0)]
 
 
 async def test_a_close_sells_and_books_negative_contracts(hedge_db) -> None:

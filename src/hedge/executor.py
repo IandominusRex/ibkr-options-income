@@ -186,13 +186,49 @@ def _cancel_lines(ib: Any, contracts: list[Any]) -> None:
             log.debug("hedge order: cancelMktData failed for %s", getattr(c, "conId", ""))
 
 
-def _commission(trade: Any) -> tuple[float, str | None]:
-    total, exec_id = 0.0, None
-    for f in getattr(trade, "fills", None) or []:
+def counted_executions(fills: Any) -> list[Any]:
+    """The executions that count for an order: a vertical's legs also report, so when a BAG
+    (combo) execution is present only the BAG ones count; otherwise every option execution.
+    One entry per ``execId`` (a repeated report is one execution). One rule for ``_record``
+    and ``resolve_working``."""
+    seen: set[str] = set()
+    unique: list[Any] = []
+    for f in fills or []:
+        eid = getattr(getattr(f, "execution", None), "execId", None)
+        if eid is not None:
+            if str(eid) in seen:
+                continue
+            seen.add(str(eid))
+        unique.append(f)
+    bag = [f for f in unique if str(getattr(getattr(f, "contract", None), "secType", "")) == "BAG"]
+    return bag or unique
+
+
+def _book_executions(
+    fills: list[Any], *, order_id: int, hedge_id: str, sign: float, multiplier: int, known: set[str]
+) -> float:
+    """Book each execution not yet booked as its own fill row; returns the contracts booked."""
+    booked = 0.0
+    for f in fills:
+        ex = getattr(f, "execution", None)
+        exec_id = getattr(ex, "execId", None)
+        shares = float(getattr(ex, "shares", 0.0) or 0.0)
+        if shares <= 0 or (exec_id is not None and str(exec_id) in known):
+            continue
         cr = getattr(f, "commissionReport", None)
-        total += abs(float(getattr(cr, "commission", 0.0) or 0.0)) if cr is not None else 0.0
-        exec_id = exec_id or getattr(getattr(f, "execution", None), "execId", None)
-    return total, exec_id
+        store.record_fill(
+            hedge_id=hedge_id,
+            qty=sign * shares,
+            price=float(getattr(ex, "price", 0.0) or 0.0),
+            multiplier=multiplier,
+            order_id=order_id,
+            commission=abs(float(getattr(cr, "commission", 0.0) or 0.0)) if cr is not None else 0.0,
+            exec_id=None if exec_id is None else str(exec_id),
+        )
+        if exec_id is not None:
+            known.add(str(exec_id))
+        booked += shares
+    return booked
 
 
 async def quote_candidate(
@@ -374,17 +410,27 @@ def _record(
     avg = float(getattr(trade.orderStatus, "avgFillPrice", 0.0) or 0.0) or None
     result.filled, result.avg_price = filled, avg
     if filled > 0:
-        commission, exec_id = _commission(trade)
         sign = 1.0 if cand.intent == "open" else -1.0
-        store.record_fill(
-            hedge_id=store.position_id(cand),
-            qty=sign * filled,
-            price=avg or 0.0,
-            multiplier=cand.multiplier,
+        hedge_id = store.position_id(cand)
+        _book_executions(
+            counted_executions(getattr(trade, "fills", None)),
             order_id=order_id,
-            commission=commission,
-            exec_id=exec_id,
+            hedge_id=hedge_id,
+            sign=sign,
+            multiplier=cand.multiplier,
+            known=store.fill_exec_ids(order_id),
         )
+        short = filled - store.order_booked_qty(order_id)
+        if short > 1e-9 and trade.isDone():
+            # the order is over and the trade's fill list lags its status: book the rest once, at
+            # the average price. A still-working order is left to resolve_working (by execId).
+            store.record_fill(
+                hedge_id=hedge_id,
+                qty=sign * short,
+                price=avg or 0.0,
+                multiplier=cand.multiplier,
+                order_id=order_id,
+            )
     if filled >= cand.contracts - 1e-9:
         state, result.status = "filled", "filled"
         detail = f"filled {filled:g} @ {avg or 0:.2f}"
@@ -445,29 +491,24 @@ async def resolve_working(ib: Any, *, today: Any = None) -> int:
             if str(getattr(f.execution, "orderRef", "") or "") == ref
             and str(getattr(f.contract, "secType", "") or "") in ("OPT", "BAG")
         ]
-        bag = [f for f in mine if str(getattr(f.contract, "secType", "")) == "BAG"]
-        counted = bag or mine  # a vertical's legs also report: count the combo once
+        counted = counted_executions(mine)  # a vertical's legs also report: the combo counts once
         known = store.fill_exec_ids(row["id"])
-        new = [f for f in counted if getattr(f.execution, "execId", None) not in known]
-        sign = 1.0 if row["intent"] == "open" else -1.0
-        for f in new:
-            cr = getattr(f, "commissionReport", None)
-            store.record_fill(
-                hedge_id=row["hedge_id"],
-                qty=sign * float(getattr(f.execution, "shares", 0.0) or 0.0),
-                price=float(getattr(f.execution, "price", 0.0) or 0.0),
-                multiplier=int(row.get("multiplier") or 100),
-                order_id=row["id"],
-                commission=abs(float(getattr(cr, "commission", 0.0) or 0.0)) if cr else 0.0,
-                exec_id=getattr(f.execution, "execId", None),
-            )
-        filled = float(row["filled_qty"] or 0.0) + sum(
-            float(getattr(f.execution, "shares", 0.0) or 0.0) for f in new
+        new = [f for f in counted if str(getattr(f.execution, "execId", None)) not in known]
+        _book_executions(
+            new,
+            order_id=row["id"],
+            hedge_id=row["hedge_id"],
+            sign=1.0 if row["intent"] == "open" else -1.0,
+            multiplier=int(row.get("multiplier") or 100),
+            known=known,
         )
+        # what is booked is the truth: never the stored count plus the new, which double counts
+        # an execution the executor had already booked
+        filled = max(float(row["filled_qty"] or 0.0), store.order_booked_qty(row["id"]))
         created = row["created_at"]
         stale = created is not None and created.replace(tzinfo=UTC).astimezone(_ET).date() < day
         if ref in open_refs and not stale and filled < row["contracts"] - 1e-9:
-            if new:
+            if filled > float(row["filled_qty"] or 0.0):
                 store.update_order(row["id"], filled_qty=filled)
             continue
         state = (

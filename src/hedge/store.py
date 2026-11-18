@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from src.common.schemas import HedgeCandidate
 from src.storage.db import session_scope
@@ -309,6 +309,17 @@ def fill_exec_ids(order_id: int) -> set[str]:
             ).all()
             if e
         }
+
+
+def order_booked_qty(order_id: int) -> float:
+    """Contracts already booked as fills against one order (absolute; a close books negative)."""
+    with session_scope() as s:
+        total = s.execute(
+            select(func.coalesce(func.sum(func.abs(HedgeFillRow.qty)), 0.0)).where(
+                HedgeFillRow.order_id == order_id, HedgeFillRow.kind == "fill"
+            )
+        ).scalar_one()
+    return float(total or 0.0)
 
 
 def record_fill(
