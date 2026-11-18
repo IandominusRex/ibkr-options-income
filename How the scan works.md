@@ -13,7 +13,10 @@ longer trims the trading day; the last 15-min cycle, 15:45, is the last one eith
 2026-10-10 (AVGO/VST/BE added and CRWD promoted to `actively_wheeling`; JPM/WMT/UBER/TSLA/IWM
 archived — membership counts below reflect this), updated 2026-10-22 (section 11: what the market
 regime, the scale-in ladder and the covered-call breakout rule do to a contract the scan has already
-found; it does not change which tickers are looked at). Reflects
+found; it does not change which tickers are looked at), updated 2026-11-18 (the shipped
+`config/examples/universe.yaml` of 2026-11-14 drops UPRO and DPST, moves TQQQ and SOXL from
+`actively_wheeling` to dip-watch and QQQ into `actively_wheeling`; no scan rule or threshold changed, and the
+sample lists in the worked example below are illustrative, so they are left as written). Reflects
 `src/orchestrator/scan.py`, `src/notify/approval_service.py` (`_intraday_scan_loop`),
 `config/universe.yaml`, and `config/settings.yaml → market_data` / `scheduler` as they stand
 today.*

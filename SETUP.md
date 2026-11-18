@@ -1227,7 +1227,7 @@ SQLite, fetching only the missing tail instead of full per-symbol histories. `/h
 "IV history" line and warns if any symbol's latest observation is older than 5 days (i.e. an
 appender or backfill has stopped) — re-run the backfills to recover.
 
-**Breadth data (risk envelope, 2026-11-14).** The EOD run also records a Nasdaq-100 breadth oscillator and the Leveraged Entry Signal for QQQ and SOXX (recorded only: nothing trades on it yet). After the first restart on this code run `python -m scripts.breadth backfill` once: it loads the thetrading.tools advance/decline history (free, personal-use licence, from 2016-11) and computes the oscillator and today's signals. The system also wants its own nightly count from the Nasdaq-100 constituent list, `config/breadth_constituents.yaml` (committed reference data). `python -m scripts.breadth refresh-constituents` rewrites it from the Wikipedia Nasdaq-100 article, **but it refuses to write unless it finds 100-102 tickers, and that article had no components table when this was built (2026-11-14)**: if it refuses, write the file by hand from the index provider's list (`as_of`, `source`, `ndx: [...]`) and commit it. Without the file the oscillator runs on the history alone. Repeat the refresh each quarter (the index rebalances in March, June, September and December). `python -m scripts.breadth status` shows what is stored.
+**Breadth data (risk envelope, 2026-11-14).** The EOD run also records a Nasdaq-100 breadth oscillator and the Leveraged Entry Signal for QQQ and SOXX (recorded only: nothing trades on it yet). After the first restart on this code run `python -m scripts.breadth backfill` once: it loads the thetrading.tools advance/decline history (free, personal-use licence, from 2016-11) and computes the oscillator and today's signals. The system also wants its own nightly count from the Nasdaq-100 constituent list, `config/breadth_constituents.yaml` (committed reference data; **it does not exist yet**, you write it, see the §20 checklist). `python -m scripts.breadth refresh-constituents` rewrites it from the Wikipedia Nasdaq-100 article, **but it refuses to write unless it finds 100-102 tickers, and that article had no components table when this was built (2026-11-14)**: if it refuses, write the file by hand from the index provider's list (`as_of`, `source`, `ndx: [...]`) and commit it. Without the file the oscillator runs on the history alone. Repeat the refresh each quarter (the index rebalances in March, June, September and December). `python -m scripts.breadth status` shows what is stored.
 
 ---
 
@@ -2217,7 +2217,7 @@ adds **re-evaluations** (spec §7.1) and **Stage 1b**, the point-in-time backtes
 | `python -m scripts.value_claude [--read SYMBOL] [--reset-breaker]` | Claude's side of the value book (Part 4): the breaker, today's read budget and the queue; queues a read; resets the breaker. |
 | `python -m scripts.value_backtest [--universe evidence\|trading] [--names A,B] [--limit N] [--start D] [--end D] [--bars provider\|research] [--refresh] [--out F]` | Stage 1b: the point-in-time backtest of Python's rules (Part 3). |
 
-## 20. The risk envelope's switches (2026-11-14, in progress)
+## 20. The risk envelope: its switches, replays, book repair, LES shares and the bridge hedge (2026-11-14 to 2026-11-18)
 
 The risk-envelope build (`docs/superpowers/plans/2026-11-14-risk-envelope.md`) ships behaviours that
 must wait on data behind **switches**. Each is a row in `system_settings`; a replay or capture report that
@@ -2471,6 +2471,51 @@ instrument. **The default is off**: continuing needs a fresh ruling. Stop it by 
 |---|---|
 | `python -m scripts.hedge_report` | The bridge's record (read-only): premium paid, received and net against NLV0; each down leg (the index at least one 60-session sigma below its 60-session high) with the hedge's value and the book's change at the trough and at exit and the cover ratio; execution against the approved mid; the rolling 60-session R² of NLV on the instrument. |
 | `python -m scripts.hedge_report --review` | Prints the one-page review record and posts it to the account thread ("Default: off"). |
+
+### After the merge: your checklist (risk envelope)
+
+The daemons do not hot-reload, and your private configs are git-ignored, so nothing below happens by itself.
+Every key has a default that matches the example, so a missing key never stops the system; the edits make the
+values visible and the first two are required.
+
+1. **`config/settings.yaml`** (private): add `hedge: 32` under `ibkr.client_ids` (the bridge connects on it; two
+   names sharing an id now stop the config loading) and `market_data.reference_iv_symbols` /
+   `reference_price_symbols` (the example shows SPY, `^VIX`, `^VXN`; the IV sanity check reads the last two).
+2. **`config/spreads.yaml`** (private): leave `mode: paper` (the `spreads_paper` switch keeps it in shadow until the
+   paper bar is met) and copy the new keys from `config/examples/spreads.yaml`: the `risk:` block (the old
+   `*_pct_of_capital` caps are replaced by `*_pct_of_nlv` ones, plus `calendar_block`), the cost-standard keys under
+   `execution:` and the `wing_capture:` block; fill each `execution.exchange_fees` entry that is `null` (SPXW, XSP) before the
+   E3 cutover.
+3. **`config/universe.yaml`** (private): the SOXX and SPY-IV edits in `config/examples/universe.yaml`, then
+   `python -m scripts.backfill_prices` and `python -m scripts.backfill_iv --symbols SPY,SOXX`.
+4. **`config/risk_limits.yaml`** (private): the `envelope:`, `hedge:`, `iv_sanity:`, `regime.leveraged_entry`,
+   `leveraged_sizing.csp_mode` and `portfolio.broad_index_*` keys, if you want them visible.
+5. **Restart** with `./ibkr restart` (the trading service first, then the API: the API reads the new tables).
+6. **LES and breadth:** run `python -m scripts.breadth backfill` once. **Write `config/breadth_constituents.yaml`
+   by hand** (`as_of`, `source`, `ndx: [...]`, 100-102 tickers, from Nasdaq's own list) and commit it; the
+   Nasdaq-100 rebalances in March, June, September and December, so repeat each quarter
+   (`python -m scripts.breadth refresh-constituents` refuses to write on a page without the components table). Until
+   the file exists the oscillator runs on the thetrading.tools history alone. `leveraged_entry` ships `record`; it
+   turns `on` (paper only, buying and selling) from the LES replay's PASS, and
+   `python -m scripts.envelope switch leveraged_entry record` reverses it.
+7. **`config/macro_calendar.yaml`:** spot-check its 39 CPI, PPI and Employment Situation rows against bls.gov. They
+   were read through a summarising fetch, never from raw HTML.
+8. **The spreads backtest** needs a ThetaData Options Standard subscription and its Terminal running: `python -m
+   scripts.spreads_backtest --start <earliest> --end <latest> --report`. Expect harness fixes on the first run.
+9. **Read each PASS or FAIL notice** in the account thread; reverse any switch with
+   `python -m scripts.envelope switch <name> <value>`.
+10. **Research sessions (not built as scripts):** the wheel-faithful index-class replay (E10, S&P 1991-2026 and NDX
+    2002-2026) and the hedge monetisation replay (H5) are meant to be run as Claude Code research sessions, each
+    writing an `EnvelopeReportResult` file to `data/envelope_reports/E10.json` / `H5.json` (switch `index_1x` /
+    `hedge_monetisation`). Until they do, those two switches stay `off` / `none`.
+11. **E3:** after the PASS notice (`spxw_ready` set), the spreads move to SPXW and SPY to the wheel is a separate
+    plan task (plan Task 39) run at a flat-book cutover. Nothing in this section does it.
+12. **E4:** read the bridge's review record when it posts. Continuing the bridge needs a fresh ruling.
+
+**First live-paper watch.** None of the order paths below has run against the paper broker; the first of each
+should be watched: a tapped trim or de-lever, the first LES buy once `leveraged_entry` is `on` (does its
+`orderRef` reach the ledger as `book="les"`), and the first bridge hedge order (the BAG sign of a vertical,
+XND's tick sizes). Run `python -m scripts.hedge_capture_report --probe` first.
 
 ## Troubleshooting
 

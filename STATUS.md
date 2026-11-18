@@ -341,11 +341,61 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 | **Dossiers for the spreads book** | **Deliberately not built.** `dossier_symbols` drops the spreads book's underlyings (the wheel and the spreads book never share an underlying); the spreads picker reads the market picture, not dossiers. |
 | **News thread: spreads-book impact, IBKR real-time reaction data** | **Deferred.** The news cards' "your book" lines cover the wheel only (spreads legs are excluded from the portfolio snapshot); real-time reaction data via IBKR is out because the news process deliberately holds no IBKR connection. No LLM-derived news signal will ever enter ranking, gating or sizing (spec D3, permanent). |
 | **Live trading for the spreads system; flow-based GEX; spreads web pages** | **Deliberately not built.** `src/spreads/service.py::run()` refuses `LIVE_TRADING=true` (shadow/paper only until a separate live plan exists). Intraday flow-based GEX needs a paid vendor feed — the map uses prior-close open interest. The spreads book has no web pages beyond the ledger's Book filter; `scripts.spreads_report` and the Telegram thread are its read side. |
+| **E3: the spreads book to SPXW/XSP and SPY to the wheel (risk-envelope plan Task 39)** | **Deferred until its PASS notice.** Runs only after Task 17's cost report sets `spxw_ready` and the SPXW/XSP exchange fees are filled, from a fresh worktree off `main`, with the spreads book flat in SPY. Until then `SPY` stays reserved for the spreads book and `config/universe.yaml` may not hold it. |
+| **Research sessions E10 and H5** | **Not built as scripts, on purpose.** The wheel-faithful index-class replay (switch `index_1x`) and the hedge monetisation replay (switch `hedge_monetisation`) are Claude Code research sessions that write an `EnvelopeReportResult` to `data/envelope_reports/`; until they do those switches stay `off` / `none`. |
+| **Live trading for the bridge hedge** | **Deliberately not built.** `validate_hedge` refuses every `hedge:` order in live and the manager idles; going live needs its own plan and ruling. Claude's hedge roles and the `hedge:claude:` budget are reserved for the Mastermind and refused here. |
+| **Stock orders without a tap** | **Deliberately not built (P10).** Repair proposals, trims and de-levers are tap-only at every autonomy level; the one automatic stock path is the Leveraged Entry Signal's TQQQ/SOXL buys and sells (`src/execution/les.py`), paper only, behind `leveraged_entry`. |
 | **Trade ledger web dashboard** (`/ledger`, `/ledger/trades`, `/ledger/ticker/[symbol]`, `/ledger/import`) | **Built (Tasks 13-16 of docs/superpowers/plans/2026-10-05-trade-ledger.md, on `feat/trade-ledger`).** Overview (tiles, cumulative-P&L curve, monthly bars, ticker table), the filterable trades table with CSV export and a trade panel that edits annotations (`ledger_annotate`), the per-ticker drill-down (wheel cost-basis walk, lots, dividends, every trade) and the import page (CSV upload via `ledger_import`, feed status, corporate actions with a mark-reviewed button, import history). All reads go through `GET /ledger/*`; all writes through the command queue. See `web/CLAUDE.md`/`ARCHITECTURE.md` `web/`. |
 | **Trade ledger fence test** (`tests/test_web_fence.py::test_the_trading_path_never_imports_the_ledger`, `::test_the_ledger_never_imports_the_enrichment_layer`, `::test_only_the_ledger_package_writes_the_ledger_tables`) | **Built (Task 17 Step 1).** Asserts `engine/`/`execution/`/`strategies/` never import `src.ledger` or `trade_ledger`, `src/ledger/` imports nothing from `src.claude`, and only `src/ledger/` (plus the ORM definitions in `models.py`) constructs the six ledger-table rows. `test_reporting_never_writes_anything` separately covers `trade_ledger.py`'s no-writes rule. |
 Operator to-dos: re-copy `config/examples/value.yaml`'s `telegram:` and `prompt_note:` blocks and `config/examples/settings.yaml`'s `watchdog.value_grace_hours` into the private copies (the defaults load without them), then `./ibkr restart` (trading service before the API). |
 
 ---
+
+## Built (2026-11-18 — the risk envelope as a whole: what is built, what is deferred, what is not yet verified)
+
+The index to the risk-envelope entries below (Sections B-J, newest first), written by the Section K doc sweep.
+Plan `docs/superpowers/plans/2026-11-14-risk-envelope.md` Tasks 1-37 on `feat/risk-envelope`, **unmerged**: the
+daemons run none of it until a merge and `./ibkr restart` (trading service first, then the API). Spec
+`docs/superpowers/specs/2026-11-13-risk-envelope-design.md`. The branch passes the full suite (6,290 tests),
+ruff and mypy.
+
+- **Built.** A: the data-gated switches, notices and result files (`envelope_switches`, `scripts/envelope.py`,
+  `notices.py`) and the static macro calendar (`config/macro_calendar.yaml`). B: the spreads book's fixes (the
+  calendar and halt reach its gate, caps in shares of NLV with a month stop, the cost standard, its P&L in the
+  wheel's daily loss leg, shadow until the paper bar). C: leveraged-ETF CSPs off by default, the universe
+  template and SPY IV restarted, the IV sanity flag, the Nasdaq-100 breadth oscillator and the Leveraged Entry
+  Signal (record only). D: the shock engine, its inputs, the envelope and its glide, the EOD lines, `GET /envelope`
+  and the web card. E: hedge-menu and SPXW wing quote capture with their cost reports. F: the envelope gate
+  (ships `record`), value-book buys under it, the index collateral class. G: the slow drawdown breaker, the
+  leveraged sleeve, the `index_1x` multipliers and T20 limit, the tech-linked cap and the stacking rule. H: the
+  survivability harness and the replays. I: tap-only book repair, the stock order path, trims, de-lever, LES share
+  orders. J: the buy-to-open order path, `validate_hedge`, the bridge hedge, its record and fence.
+- **Deferred, on purpose.** (1) **E3, the spreads move to SPXW and SPY to the wheel (plan Task 39)**, until the
+  PASS notice (`spxw_ready` set from Task 17's cost report) and a flat-book cutover; it is a separate worktree and
+  a separate plan task. (2) **The research sessions:** the wheel-faithful index-class replay (E10, `index_1x`)
+  and the hedge monetisation replay (H5, `hedge_monetisation`) are not scripts; they are meant to be run as Claude
+  Code research sessions that each write an `EnvelopeReportResult` file, so those switches stay at their defaults
+  until then. (3) **Live plans for the spreads book and for the hedge:** both idle in live (`run()` refuses
+  `LIVE_TRADING=true`; `validate_hedge` refuses every `hedge:` order, `hedge_paper_only`); going live needs its own
+  plan and ruling. (4) **The stock path's tap-only rule (P10):** a repair proposal, a trim and a de-lever never go
+  out without a human tap at any autonomy level; this is a ruling, not a gap, and the only automatic stock path is
+  LES, paper only, behind `leveraged_entry`. (5) Claude's hedge roles and the `hedge:claude:` budget (the Mastermind;
+  reserved and refused here). (6) Continuing the bridge past its review record needs a fresh ruling (E4).
+- **Known gaps and what needs verifying.** (1) **No replay has been run on real data**: the harness, the rule
+  backtests, the slow-breaker, sleeve, covered-call floor and LES replays were built and tested on synthetic inputs;
+  until they run there are no result files and no switch is turned on by a report. (2) **`config/breadth_constituents.yaml`
+  does not exist** (no verified source was reachable; the operator writes it from Nasdaq's own list); until then
+  the nightly own count is skipped and the LES tier reads the thetrading.tools history alone. (3) **The BLS dates**
+  (39 CPI, PPI and Employment Situation rows of `config/macro_calendar.yaml`) were read through a summarising
+  fetch, twice, never from raw HTML: spot-check them against bls.gov. (4) **The SPXW and XSP exchange fees ship
+  `null`** in the spreads example; fill them before E3 (a class with a `null` fee reads BLOCKED in the cost report).
+  (5) **XND's IBKR contract fields and paper quotes are unverified**: run
+  `python -m scripts.hedge_capture_report --probe` on the paper Gateway first. (6) **Needs live-paper verification,
+  mocked tests only so far:** the first tapped trim and de-lever (qualify, quote, fill, the ledger row's
+  `orderRef`), the first LES buy once `leveraged_entry` is `on` (its `les:` ref reaching the ledger as
+  `book="les"`), and the first bridge hedge order (the BAG sign of a vertical, XND's tick sizes, IBKR's behaviour
+  on the QQQ `exerciseOptions` lapse instruction).
+- **Operator to-dos:** `SETUP.md` §20, "After the merge: your checklist".
 
 ## Built (2026-11-15 — risk envelope Section I: book repair, the stock order path and LES shares)
 
@@ -5681,6 +5731,12 @@ and then clear the corresponding item here. Nothing in this list has been cleare
   still fires; if IBKR supplies greeks or IV, the cheaper tiers should short-circuit it. Tick `106` on
   option contracts in particular needs confirmation that it returns a usable IV (it may be ignored for
   options) — if not, the path is a harmless no-op and Yahoo still covers it.
+- **The risk envelope's order paths (2026-11-18).** The stock order path (`stock_orders.py`: a tapped trim or
+  de-lever, an LES buy or sell) and the bridge hedge's buy-to-open orders (`hedge/executor.py`, a BAG for a
+  vertical, the QQQ `exerciseOptions` lapse instruction) are tested with a mocked broker only. Watch the first of
+  each on the paper account: the order qualifies, the quote is fresh, it fills, and its `orderRef` (`repair:` /
+  `les:` / `hedge:`) reaches the ledger with the right `book`. XND's contract fields and tick sizes are
+  unverified (`python -m scripts.hedge_capture_report --probe`). No replay has been run on real data.
 
 ---
 

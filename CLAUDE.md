@@ -55,6 +55,7 @@ row that matches:
 | **New module under `src/news/`** or a new key in `config/examples/news.yaml` | `ARCHITECTURE.md` `src/news/` section · `SETUP.md` §17 News thread if operator-facing · root `CLAUDE.md` news-fence section if it changes what the package may import |
 | **New module under `src/spreads/`** or a new key in `config/examples/spreads.yaml` | `ARCHITECTURE.md` `src/spreads/` section · `SETUP.md` §16 if operator-facing · root `CLAUDE.md` spreads-fence section if it changes what the package may import |
 | **New module under `src/value/` or `src/value_ai/`** or a new key in `config/examples/value.yaml` | `ARCHITECTURE.md` `src/value/` section · `SETUP.md` §19 if operator-facing · root `CLAUDE.md` value-fence section if it changes what the package may import · a `rules:` key also bumps `ruleset_version` once v1 is frozen |
+| **New module under `src/hedge/`**, a new envelope module (`shock*`, `engine/envelope.py`, `engine/repair.py`, `execution/stock_orders.py`, `les.py`), or a new `envelope:` / `hedge:` key in `config/examples/risk_limits.yaml` | `ARCHITECTURE.md` folder guide · `SETUP.md` §20 if operator-facing · the deterministic list in `tests/test_regime_fence.py` · root `CLAUDE.md` regime-family or hedge-fence section if it changes what the package may import · a new switch also goes in `src/storage/envelope_switches.py` and `SETUP.md` §20's switch table |
 
 The goal: a user reading `README.md` or `ARCHITECTURE.md` should always get an accurate picture
 of the current codebase, not a stale one.
@@ -143,6 +144,19 @@ time on a fresh quote), the close may never pay more than the entry credit less 
 and Claude selects, sizes, prices and gates nothing in it: with `value.claude.apply_live: false` it
 reads as Python's baseline in live, the book idles in live in any case, and `value.book.enabled`
 ships `false`.
+
+**The stock order path (risk envelope Section I, 2026-11-15 — plan Tasks 31, 32, 32a; rulings P10, L5-L7).**
+The wheel sends a share order through exactly one module, `src/execution/stock_orders.py`: a `LimitOrder` at the
+mid of a fresh quote (`req_fresh_mkt_data`, a `qualifyContractsAsync`-ed contract), gated by
+`risk_engine.validate_stock_order` at decision time and **again at send time on that fresh quote**, with its
+`orderRef` (`"<source>:<id>"`) written to `orders.order_ref` **before** `placeOrder`. It is deterministic Python; no
+LLM output selects, sizes, prices or gates it. **Every repair proposal, trim and de-lever is tap-only at every
+autonomy level** (P10) — `validate_stock_order` refuses a repair order that was not tapped (`stock_not_tapped`),
+and no auto-queue path builds one. **The one automatic stock path** is the Leveraged Entry
+Signal's TQQQ/SOXL share buys and trend-break sells (`src/execution/les.py`), **paper only** (`les_paper_only`
+refuses it in live, tapped or not) and behind the `leveraged_entry` switch (ships `record`: `les_record` rows,
+nothing sent); each of its orders still goes through `stock_orders.py`, so its envelope check and both gates run.
+`tests/test_regime_fence.py` keeps `stock_orders.py` and `les.py` on the deterministic list.
 
 ## The fence — the enrichment learning loop may not touch the deterministic layer
 
@@ -249,6 +263,19 @@ sizer, the gate and sizing, and **none of them may import enrichment**: `src.cla
 `src.storage.regime_state.load_regime_state` (and `regime_suspended`), and never writes it: the
 trading process is the only writer. Enforced by `tests/test_regime_fence.py` — keep it green.
 
+**The risk envelope joins the family (plan 2026-11-14-risk-envelope.md Tasks 11-13, 30-32a, 16 and 33-37).** Also
+on `tests/test_regime_fence.py`'s deterministic list, so also barred from every enrichment module:
+`src/analytics/shock.py` and `shock_inputs.py` (the pure scenario engine and its inputs — betas, stored IV, the
+`BookLine` builder), `src/common/envelope_types.py`, `src/engine/envelope.py` (the glide and the measurement
+record) with `src/storage/envelope_state.py`, `src/engine/repair.py` with `src/storage/repair_proposals.py`,
+`src/execution/stock_orders.py` and `les.py`, every `src/hedge/` module and `src/common/hedge_view.py`. The
+envelope's data-gated switches (`src/storage/envelope_switches.py`; in live every switch reads its default) are
+read by the gate and set only by `python -m scripts.envelope switch` and the EOD run applying a replay's result
+file, never by the engine. **Gross
+(S10_gross) and U_ew skip every `book="hedge"` line** (H1, H10) — `shock_inputs.hedge_lines` hands the hedge book's
+open legs back as lines for the **net** measures only, `shock.py` leaves them out of the gross sums — so the hedge
+earns no headroom credit. A new envelope module must be added to that list.
+
 ### The third, read-only tier — `src/reporting/`
 
 `src/reporting/` is downstream of everything and upstream of nothing. It holds the **paired
@@ -274,6 +301,20 @@ read-only builders under the same rules:
   labelled `source: claude`), a month's daily realised P&L (`build_month_calendar`) and one
   contract's opening and closing cards (`build_position_story`). Same `PnlLeg` list and plain
   `SpreadDayInput` values, same no-writes rule, and it imports nothing from `src.claude`.
+
+The risk envelope added three more under the same rules (plan 2026-11-14-risk-envelope.md Sections H and J):
+
+- `replay.py` (Tasks 26-29a) — the shared plumbing of the replays and the survivability harness: `mode=ro` SQL
+  readers over a copy of the trading database, `strike_for_delta`, `worst_drawdown`, and the writers of one
+  `EnvelopeReportResult` file plus a text report under `data/envelope_reports/` (the only files it writes; no
+  database row; an unreadable series is `passed=None`, never a PASS). `envelope_switches.apply_reports` consumes
+  the result file; the replay never sets a switch itself;
+- `survivability.py` (Task 26) — the analytic worst case and the two replayed paths; it imports `src.engine.envelope`
+  (`max_contracts_under`) and `src.analytics.shock`, which this tier may read (the fence stops the trading path
+  importing the tier, not the tier reading the engine);
+- `hedge.py` (Task 37) — the bridge hedge's record (premium, cover ratio per down leg, execution against mid,
+  rolling R²) and the review record, read through `src/common/hedge_view.py`; it imports no `src.hedge`
+  (`tests/test_hedge_fence.py::test_the_reporting_side_never_imports_the_hedge_package`).
 
 The tier reads the whole book, including enrichment-side tables, which is why it stays on the
 read side of the tier line exactly as `src/api/` and `src/research/` do:
@@ -330,8 +371,18 @@ credit spreads in the **same IBKR account and Gateway** as the wheel, with its o
   at both routes, refused in the drain, dropped by the composer), and the wheel's fill recovery
   requires the underlying to match even on an order-id match. No module outside `src/spreads/`
   imports `src.spreads`.
+- **The breakers read the spreads book through a second, read-only window: `src/common/spreads_view.py`**
+  (risk envelope Task 6; `mode=ro`, plain SQL, the `value_view` pattern, imports nothing from `src.spreads`).
+  The wheel's daily loss leg (`src/execution/circuit_breakers.py`) adds the spreads book's P&L from it.
+  It is the one module outside `src/api/` and `src/spreads/` that opens `data/spreads.db`, asserted by
+  `tests/test_web_fence.py::test_outside_the_api_and_the_book_only_spreads_view_opens_the_spreads_file`. The
+  hedge book has the same kind of window, `src/common/hedge_view.py` (see the hedge fence; its rule is
+  `tests/test_hedge_fence.py::test_hedge_view_is_read_only_plain_sql_and_imports_only_config`).
 - **`src/spreads/risk.py::validate` is the spreads system's only gate** — deterministic, no LLM,
-  run at decision time and again at send time on fresh quotes. The core invariant holds
+  run at decision time and again at send time on fresh quotes. Its caps are **risk in shares of net liquidation**
+  (risk envelope Task 4; `config/spreads.yaml → risk.*_pct_of_nlv`: one spread's max loss, all open risk, the day's
+  loss, and a month stop that only `python -m scripts.spreads_reset_month` clears), read from the service's own
+  account stream at every entry check (`starting_capital_usd` sizes nothing). The core invariant holds
   unchanged: nothing an LLM produces reaches a spreads order (the package imports nothing from
   `src.claude`). The entry trigger (`src/spreads/tape.py`) is deterministic too; it only decides
   *when* the chain is fetched and *which side* is offered to the gate, never a size.
@@ -419,6 +470,13 @@ the value book. It is **deterministic tier**:
   nothing in spreads, news or claude imports `src.value`.
 - Its scorecard modules are pure (no I/O): Part 6's API may import `src.value.scorecard` and
   `src.value.schemas` and nothing else from `src.value`.
+- **One allowance for the risk envelope (plan Task 20, code fact C8).** The value book's buys are measured by the
+  shock engine, so `src/value/stage3.py` — and only it — may import `src.analytics.shock`,
+  `src.analytics.shock_inputs`, `src.storage.envelope_state`, `src.storage.envelope_switches` and
+  `src.ibkr.live_iv`, **lazily inside its functions** (importing `src.value` still loads none of them), and the pure
+  gate `src/value/risk.py` reads only the plain `src.common.envelope_types`. Never `src.engine`: the wheel's gate
+  and its envelope stay out of the value package. Asserted by
+  `tests/test_value_fence.py::test_stage3_may_import_the_shock_engine` and `::test_value_still_imports_no_engine`.
 - Inputs come from the neutral read-only `src/common/value_inputs.py` (plain shapes in
   `value_types.py`), which imports no enrichment and no `src.value`. The research worker owns
   every SEC and price fetch; `src/value/` opens no SEC client.
@@ -480,6 +538,15 @@ the value book. It is **deterministic tier**:
   being on, means every name); `value_exposure()` and `wheel_view` are off in live, where a paper
   value.db never feeds a gate. `capital_release` and `validate_release` refuse in live
   (`release_not_paper`).
+- **Three more books are told apart by `orderRef` prefix, beside `value:` (risk envelope Tasks 32a and 33).**
+  `src/common/books.py` holds the prefixes (`VALUE_ORDER_PREFIX`, `LES_ORDER_PREFIX = "les:"`,
+  `HEDGE_ORDER_PREFIX = "hedge:"`) and `src/ledger/ingest.py` tags the execution: `les:<id>` becomes `book="les"` (the
+  Leveraged Entry Signal's TQQQ/SOXL shares), `hedge:<id>` becomes `book="hedge"` (or an index underlying only the
+  hedge trades, XND). `src/storage/wheel_shares.py` leaves `value`, `spreads`, `les` and `hedge` executions out of W,
+  so **LES shares sit outside the wheel's count W, its covered calls and its trims** — `books.les_exposure()` reads
+  them from the ledger and the envelope counts them at their leverage; a stock sell never takes one
+  (`validate_stock_order`). A new book is a new prefix here and a new exclusion there, never an inference from the
+  broker's position.
 - **Capital release (revision 4, 2026-10-30)**: the value book holds no cash back; an approved buy
   short of cash opens a funding request, and the trading process (`src/execution/
   capital_release.py`, every intraday cycle) closes the fewest wheel cash-secured puts at breakeven
@@ -583,8 +650,11 @@ orchestrator → market data (ibkr/) → analytics → strategies → decision e
   examples (`IBKR_CONFIG_USE_EXAMPLES=1` in `tests/conftest.py`).
 - All tunables (deltas, DTE, IV thresholds, weights, concentration limits) live in
   `config/risk_limits.yaml` and `config/scoring_weights.yaml`. Change behavior there, not in code.
-- One **clientId per process** (`config/settings.yaml → ibkr.client_ids`). The trading_skills MCP
-  (20) and dashboard (21) use their own. Never reuse an id across concurrent processes.
+- One **clientId per process** (`config/settings.yaml → ibkr.client_ids`): the spreads service 30, the value
+  book's Stage 3 cycle 31 and the bridge hedge **32** (`ibkr.client_ids.hedge`). The trading_skills MCP
+  (20) and dashboard (21) use their own. Never reuse an id across concurrent processes: `IBKRCfg` refuses at load
+  any `client_ids` map in which two names share an id (`src/common/config.py::_unique_client_ids`), so a private
+  `settings.yaml` that reuses one fails to start.
 - Money/quantities are explicit; option premiums are **per share** (×100 for contract value).
 - Type-hint everything; keep modules small and single-purpose matching the `src/` layout.
 - **analytics/strategies/engine never call `yfinance.*` directly; they go through `src/data/`**
