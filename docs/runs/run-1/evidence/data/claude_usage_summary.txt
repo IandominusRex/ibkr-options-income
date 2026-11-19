@@ -1,0 +1,18 @@
+kind                       calls   ctx tokens  out tokens   cost $  ctx/call
+news:dossier                  75      832,527     118,990     4.52    11,100
+claude review                107      782,714     103,298     4.16     7,315
+claude roll                  282      585,666     145,078     3.30     2,076
+news:triage                   90      414,390     159,925     3.26     4,604
+news:picture                  80      409,775      52,567     2.16     5,122
+news:digest                   52      165,398      43,658     1.10     3,180
+news:ticker_move              49      150,885      36,576     0.97     3,079
+spreads_ai                    37      140,745      28,647     1.70     3,803
+news:market_move              57      135,360      23,973     0.77     2,374
+value_standard                31       76,907      29,899     0.61     2,480
+news:earnings                 16       48,701      10,811     0.30     3,043
+claude eod                    22       46,630       5,474     0.24     2,119
+news:editor                   10       31,973       2,963     0.16     3,197
+news:vix_spike                 6       13,922       2,564     0.08     2,320
+news:macro_print               4       10,558       1,483     0.06     2,639
+value_filing                   1        9,471         431     0.04     9,471
+TOTAL                        919    3,855,622     766,337    23.43     4,195

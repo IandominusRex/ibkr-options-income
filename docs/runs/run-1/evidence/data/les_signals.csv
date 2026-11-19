@@ -1,0 +1,5 @@
+id,asof,index_symbol,trend_up,pullback,washout,trend_break,tier_pct,reasons
+1,2026-11-17,QQQ,0,0,0,1,0.0,"[""trend: close 656.95 not above the 200-day 682.58: no LES entry"", ""trend break: 2 closes under the 200-day""]"
+2,2026-11-17,SOXX,0,0,0,1,0.0,"[""trend: close 141.46 not above the 200-day 160.52: no LES entry"", ""trend break: 2 closes under the 200-day""]"
+3,2026-11-18,QQQ,0,0,0,1,0.0,"[""trend: close 655.94 not above the 200-day 682.78: no LES entry"", ""trend break: 2 closes under the 200-day""]"
+4,2026-11-18,SOXX,0,0,0,1,0.0,"[""trend: close 140.71 not above the 200-day 160.64: no LES entry"", ""trend break: 2 closes under the 200-day""]"

@@ -1,0 +1,19 @@
+key,value,updated_at_utc,set_after_boundary
+nlv_high_water_mark,1044124.49,2026-10-06 17:02:51.347895,
+execution_halted,true,2026-11-18 18:52:03.414942,
+execution_halt_reason,manual /halt,2026-11-18 18:52:03.417318,
+autonomy_level,full,2026-09-30 05:05:22.908844,
+execution_halt_source,operator,2026-11-18 18:52:03.418612,
+nlv_high_water_mark_usd,780479.53,2026-10-13 17:17:37.505732,
+breaker_ack,"{""date"": ""2026-11-18"", ""loss"": 0.0, ""drawdown"": 0.0}",2026-11-18 14:45:49.827040,
+envelope_switch:leveraged_entry,"{""value"": ""record"", ""source"": ""cli"", ""report"": null, ""set_at"": ""2026-11-18T18:23:23.001579+00:00""}",2026-11-18 18:23:23.002169,
+envelope_switch:leveraged_sleeve,"{""value"": ""off"", ""source"": ""cli"", ""report"": null, ""set_at"": ""2026-11-18T18:23:24.726812+00:00""}",2026-11-18 18:23:24.727447,
+envelope_switch:leveraged_cc_auto,"{""value"": ""off"", ""source"": ""cli"", ""report"": null, ""set_at"": ""2026-11-18T18:23:26.213275+00:00""}",2026-11-18 18:23:26.213897,
+envelope_switch:hedge_instrument,"{""value"": ""none"", ""source"": ""cli"", ""report"": null, ""set_at"": ""2026-11-18T18:23:27.800918+00:00""}",2026-11-18 18:23:27.801542,
+envelope_switch:spreads_paper,"{""value"": ""off"", ""source"": ""cli"", ""report"": null, ""set_at"": ""2026-11-18T18:23:29.357609+00:00""}",2026-11-18 18:23:29.358241,
+envelope_switch:index_1x,"{""value"": ""off"", ""source"": ""cli"", ""report"": null, ""set_at"": ""2026-11-18T18:23:30.948208+00:00""}",2026-11-18 18:23:30.948792,
+envelope_switch:hedge_monetisation,"{""value"": ""none"", ""source"": ""cli"", ""report"": null, ""set_at"": ""2026-11-18T18:23:32.501265+00:00""}",2026-11-18 18:23:32.501960,
+envelope_switch:stacking_rule,"{""value"": ""on"", ""source"": ""cli"", ""report"": null, ""set_at"": ""2026-11-18T18:32:30.194179+00:00""}",2026-11-18 18:32:30.194973,
+envelope_switch:cc_basis_floor,"{""value"": ""0.90"", ""source"": ""cli"", ""report"": null, ""set_at"": ""2026-11-18T19:01:07.663004+00:00""}",2026-11-18 19:01:07.663645,
+envelope_switch:envelope_enforce,"{""value"": ""on"", ""source"": ""cli"", ""report"": null, ""set_at"": ""2026-11-19T05:08:44.819952+00:00""}",2026-11-19 05:08:44.820604,yes
+envelope_switch:slow_breaker,"{""value"": ""15"", ""source"": ""cli"", ""report"": null, ""set_at"": ""2026-11-19T05:08:54.851063+00:00""}",2026-11-19 05:08:54.851650,yes

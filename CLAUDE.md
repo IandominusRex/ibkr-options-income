@@ -27,6 +27,7 @@ read both before making structural changes.
 | **`How the scan works.md`** | Anyone | Operator-facing explanation of scan scheduling and the materiality gate: what `indexes`/`watchlist`/`would_own`/`actively_wheeling` each mean to the scan loop, the 15-min / 120-min clocks, the 0.5% / 2% / 3% thresholds and their directions, and a worked scenario. Update it whenever `market_data.*_pct`, `force_full_scan_minutes`, `intraday_loop_minutes`, or `_compute_material_symbols` changes |
 | **`CLAUDE.md`** | Claude Code | Invariants, conventions, safety rules, change workflow — read before any structural change |
 | **`ib_async_documentation.md`** | Claude and developers | Authoritative IBKR API reference — consult before guessing any ib_async signature |
+| **`docs/runs/`** | Claude and developers | One record per account run (a period of the paper or live account under one rule set, between run-boundary dates): a machine-readable summary, the account curve, attribution, lessons with their status, incidents and what the next run changes. Each run is a folder, `docs/runs/run-N/`: `README.md` is the record, `evidence/logs/` and `evidence/data/` are the committed, scrubbed log excerpts and CSV extracts it cites, and the raw logs and full database copies stay local and git-ignored in `data/runs/run-N/` (two tiers; `MANIFEST.md` there lists them). `docs/runs/README.md` indexes the runs and holds the template. Updated at each run boundary. A record is evidence for a human or the plan, never an input to a gate, weight or size |
 
 ### Mandatory doc-update rule
 

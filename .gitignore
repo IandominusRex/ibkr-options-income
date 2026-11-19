@@ -55,6 +55,11 @@ data/value_keep_fresh.json
 data/value_keep_fresh.json.tmp
 data/value_backtest/
 data/backups/
+# Run records' Tier 2 evidence (docs/runs/README.md): raw logs, full database copies and the manifest.
+# Unscrubbed; holds the account number. Local only, never committed.
+data/runs/
+# Untracked replay cache under the envelope reports (rebuilt by the replays); never commit
+data/envelope_reports/les_cache/
 # Daily credit spreads: the ThetaData cache (licensed market data), exported trade CSVs, the halt switch
 data/spreads_bt/
 data/spreads_*.csv

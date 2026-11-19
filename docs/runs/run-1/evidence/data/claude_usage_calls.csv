@@ -1,0 +1,920 @@
+day_local_utc+8,time_local,kind,model,ctx_tokens,out_tokens,cost_usd_notional
+2026-10-15,23:46:15,claude roll,claude-sonnet-5-5,1131,329,0.00781
+2026-10-16,00:03:34,claude review,claude-sonnet-5-5,7466,1779,0.04765
+2026-10-16,00:46:13,claude roll,claude-sonnet-5-5,1131,319,0.00771
+2026-10-16,01:16:16,claude roll,claude-sonnet-5-5,1131,358,0.0081
+2026-10-16,02:28:10,claude roll,claude-sonnet-5-5,1131,362,0.00814
+2026-10-16,03:47:09,claude review,claude-sonnet-5-5,6160,690,0.031536
+2026-10-16,04:16:17,claude eod,claude-sonnet-5-5,1822,255,0.009834
+2026-10-16,04:30:44,news:editor,claude-sonnet-5-5,3113,301,0.015458
+2026-10-16,04:30:51,news:digest,claude-sonnet-5-5,2559,723,0.017462
+2026-10-16,20:01:06,news:editor,claude-sonnet-5-5,3194,322,0.015992
+2026-10-16,20:01:13,news:digest,claude-sonnet-5-5,2854,752,0.018932
+2026-10-16,21:33:27,spreads_ai,claude-opus-5-5,2643,1035,0.041836
+2026-10-16,21:45:14,claude roll,claude-sonnet-5-5,1151,272,0.00732
+2026-10-16,21:57:33,news:market_move,claude-sonnet-5-5,1651,409,0.01069
+2026-10-16,21:57:38,news:market_move,claude-sonnet-5-5,1772,335,0.010434
+2026-10-16,21:57:58,claude roll,claude-sonnet-5-5,1177,268,0.007384
+2026-10-17,01:07:19,news:market_move,claude-sonnet-5-5,1651,422,0.01082
+2026-10-17,01:08:57,news:market_move,claude-sonnet-5-5,1651,450,0.0111
+2026-10-17,01:14:08,claude roll,claude-sonnet-5-5,1174,350,0.008192
+2026-10-17,01:19:04,news:vix_spike,claude-sonnet-5-5,1653,412,0.010728
+2026-10-17,02:44:25,claude roll,claude-sonnet-5-5,1128,338,0.007888
+2026-10-17,03:03:38,claude review,claude-sonnet-5-5,6433,711,0.032838
+2026-10-17,03:14:24,claude roll,claude-sonnet-5-5,1228,338,0.008288
+2026-10-17,04:16:12,claude eod,claude-sonnet-5-5,1549,234,0.008532
+2026-10-17,04:30:27,news:editor,claude-sonnet-5-5,3210,285,0.015686
+2026-10-17,04:30:34,news:digest,claude-sonnet-5-5,2866,681,0.01827
+2026-10-17,04:30:40,news:digest,claude-sonnet-5-5,2996,622,0.0182
+2026-10-19,11:50:58,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-19,11:50:58,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-19,11:50:59,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-19,20:00:32,news:editor,claude-sonnet-5-5,3265,316,0.016216
+2026-10-19,20:00:40,news:digest,claude-sonnet-5-5,2854,719,0.018602
+2026-10-19,21:33:31,spreads_ai,claude-opus-5-5,2619,933,0.039604
+2026-10-19,21:45:11,claude roll,claude-sonnet-5-5,1151,275,0.00735
+2026-10-19,21:45:13,claude roll,claude-sonnet-5-5,1177,293,0.007634
+2026-10-19,21:52:26,claude review,claude-sonnet-5-5,6414,725,0.032902
+2026-10-19,23:02:54,claude review,claude-sonnet-5-5,6245,676,0.031736
+2026-10-19,23:16:34,claude review,claude-sonnet-5-5,7780,1099,0.042106
+2026-10-19,23:34:12,claude review,claude-sonnet-5-5,6418,664,0.032308
+2026-10-19,23:36:08,news:market_move,claude-sonnet-5-5,1651,407,0.01067
+2026-10-19,23:46:49,claude review,claude-sonnet-5-5,6390,687,0.032426
+2026-10-20,00:01:13,claude review,claude-sonnet-5-5,6312,704,0.032284
+2026-10-20,00:17:12,claude review,claude-sonnet-5-5,6445,651,0.032286
+2026-10-20,00:31:38,claude review,claude-sonnet-5-5,6449,703,0.032822
+2026-10-20,00:48:08,claude roll,claude-sonnet-5-5,1131,325,0.00777
+2026-10-20,01:03:03,claude review,claude-sonnet-5-5,7864,1227,0.043722
+2026-10-20,01:17:17,claude review,claude-sonnet-5-5,7922,1298,0.044664
+2026-10-20,01:47:30,claude review,claude-sonnet-5-5,6463,672,0.032568
+2026-10-20,02:01:21,claude review,claude-sonnet-5-5,6448,674,0.032528
+2026-10-20,02:15:59,claude review,claude-sonnet-5-5,6457,685,0.032674
+2026-10-20,02:18:09,claude roll,claude-sonnet-5-5,1131,408,0.0086
+2026-10-20,02:47:18,claude review,claude-sonnet-5-5,6451,740,0.0332
+2026-10-20,02:48:12,claude roll,claude-sonnet-5-5,1131,322,0.00774
+2026-10-20,03:00:52,claude review,claude-sonnet-5-5,6382,759,0.033114
+2026-10-20,03:31:21,claude review,claude-sonnet-5-5,6452,651,0.032314
+2026-10-20,03:46:46,claude review,claude-sonnet-5-5,6452,755,0.033354
+2026-10-20,04:16:19,claude eod,claude-sonnet-5-5,1530,233,0.008446
+2026-10-20,04:30:57,news:editor,claude-sonnet-5-5,3265,323,0.016286
+2026-10-20,04:31:05,news:digest,claude-sonnet-5-5,2847,762,0.019004
+2026-10-20,20:00:19,news:editor,claude-sonnet-5-5,3198,230,0.015088
+2026-10-20,20:00:25,news:digest,claude-sonnet-5-5,2227,410,0.013004
+2026-10-20,21:33:28,spreads_ai,claude-opus-5-5,2591,1052,0.04176
+2026-10-20,21:36:35,claude review,claude-sonnet-5-5,6066,596,0.03022
+2026-10-20,21:45:11,claude roll,claude-sonnet-5-5,1151,301,0.00761
+2026-10-20,21:45:13,claude roll,claude-sonnet-5-5,1131,323,0.00775
+2026-10-20,21:45:15,claude roll,claude-sonnet-5-5,1150,345,0.008046
+2026-10-20,21:45:15,claude roll,claude-sonnet-5-5,1154,251,0.007122
+2026-10-20,21:45:18,claude roll,claude-sonnet-5-5,1150,298,0.007576
+2026-10-20,21:45:21,claude roll,claude-sonnet-5-5,1192,354,0.008304
+2026-10-20,21:50:54,claude review,claude-sonnet-5-5,6448,645,0.032238
+2026-10-20,22:03:58,claude review,claude-sonnet-5-5,6368,652,0.031988
+2026-10-20,22:15:12,claude roll,claude-sonnet-5-5,1215,268,0.007536
+2026-10-20,22:19:23,claude review,claude-sonnet-5-5,6424,615,0.031842
+2026-10-20,22:36:45,claude review,claude-sonnet-5-5,7697,1140,0.042184
+2026-10-20,22:45:13,claude roll,claude-sonnet-5-5,1131,309,0.00761
+2026-10-20,22:46:01,claude review,claude-sonnet-5-5,6459,644,0.032272
+2026-10-20,23:01:56,claude review,claude-sonnet-5-5,8991,1645,0.05241
+2026-10-20,23:19:13,claude review,claude-sonnet-5-5,6455,641,0.032226
+2026-10-20,23:30:55,claude review,claude-sonnet-5-5,6462,632,0.032164
+2026-10-20,23:46:14,claude review,claude-sonnet-5-5,6449,694,0.032732
+2026-10-20,23:47:02,claude roll,claude-sonnet-5-5,1131,350,0.00802
+2026-10-21,00:01:25,claude review,claude-sonnet-5-5,6450,672,0.032516
+2026-10-21,00:15:14,claude roll,claude-sonnet-5-5,1131,344,0.00796
+2026-10-21,00:16:36,claude review,claude-sonnet-5-5,6470,678,0.032656
+2026-10-21,00:31:03,claude review,claude-sonnet-5-5,6456,666,0.03248
+2026-10-21,00:45:18,claude roll,claude-sonnet-5-5,1131,305,0.00757
+2026-10-21,00:46:57,claude review,claude-sonnet-5-5,7850,1196,0.043356
+2026-10-21,01:01:29,claude review,claude-sonnet-5-5,6373,680,0.032288
+2026-10-21,01:15:15,claude roll,claude-sonnet-5-5,1131,335,0.00787
+2026-10-21,01:15:48,claude review,claude-sonnet-5-5,6372,658,0.032064
+2026-10-21,01:32:52,claude review,claude-sonnet-5-5,6372,634,0.031824
+2026-10-21,01:45:17,claude roll,claude-sonnet-5-5,1131,342,0.00794
+2026-10-21,01:45:55,claude review,claude-sonnet-5-5,6368,680,0.032268
+2026-10-21,02:00:58,claude review,claude-sonnet-5-5,6366,692,0.03238
+2026-10-21,02:15:19,claude roll,claude-sonnet-5-5,1131,318,0.0077
+2026-10-21,02:19:18,claude roll,claude-sonnet-5-5,1151,276,0.00736
+2026-10-21,04:30:42,news:editor,claude-sonnet-5-5,3201,298,0.01578
+2026-10-21,04:30:49,news:digest,claude-sonnet-5-5,2613,639,0.016838
+2026-10-21,04:31:58,claude eod,claude-sonnet-5-5,1948,229,0.010078
+2026-10-21,20:00:11,news:editor,claude-sonnet-5-5,3188,339,0.016138
+2026-10-21,20:00:22,news:digest,claude-sonnet-5-5,2866,749,0.01895
+2026-10-21,20:05:00,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-21,20:05:00,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-21,20:05:01,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-21,20:17:44,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-21,20:17:44,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-21,20:17:44,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-21,21:42:22,spreads_ai,claude-opus-5-5,2643,1024,0.041616
+2026-10-21,21:45:12,claude roll,claude-sonnet-5-5,1151,262,0.00722
+2026-10-21,21:45:13,claude roll,claude-sonnet-5-5,1151,299,0.00759
+2026-10-21,23:16:43,claude review,claude-sonnet-5-5,6445,616,0.031936
+2026-10-21,23:31:05,claude review,claude-sonnet-5-5,6439,682,0.032572
+2026-10-21,23:47:14,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-21,23:47:14,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-21,23:47:14,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-21,23:48:38,claude review,claude-sonnet-5-5,6444,687,0.032642
+2026-10-22,00:00:38,claude review,claude-sonnet-5-5,6442,700,0.032764
+2026-10-22,00:30:53,claude review,claude-sonnet-5-5,6442,686,0.032624
+2026-10-22,00:34:44,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-22,00:34:44,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-22,00:34:44,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-22,00:47:22,claude review,claude-sonnet-5-5,6443,726,0.033028
+2026-10-22,01:01:37,claude review,claude-sonnet-5-5,6437,676,0.032504
+2026-10-22,01:17:04,claude review,claude-sonnet-5-5,6460,713,0.032966
+2026-10-22,02:02:12,claude review,claude-sonnet-5-5,6374,680,0.032292
+2026-10-22,02:16:08,claude review,claude-sonnet-5-5,6436,919,0.03493
+2026-10-22,02:30:48,claude review,claude-sonnet-5-5,6422,661,0.032294
+2026-10-22,02:46:05,claude review,claude-sonnet-5-5,6433,973,0.035458
+2026-10-22,03:03:23,claude review,claude-sonnet-5-5,6437,717,0.032914
+2026-10-22,03:16:23,claude review,claude-sonnet-5-5,6432,686,0.032584
+2026-10-22,03:32:31,claude review,claude-sonnet-5-5,6440,681,0.032566
+2026-10-22,04:16:08,claude eod,claude-sonnet-5-5,1261,186,0.0069
+2026-10-22,04:30:41,news:editor,claude-sonnet-5-5,3195,273,0.015506
+2026-10-22,04:30:48,news:digest,claude-sonnet-5-5,2605,622,0.016636
+2026-10-22,04:32:15,news:earnings,claude-sonnet-5-5,2368,449,0.013958
+2026-10-22,20:00:10,news:editor,claude-sonnet-5-5,3144,276,0.015332
+2026-10-22,20:00:19,news:digest,claude-sonnet-5-5,2499,601,0.016002
+2026-10-22,21:17:57,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-22,21:17:57,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-22,21:17:57,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-22,21:28:50,news:macro_print,claude-sonnet-5-5,2296,356,0.01274
+2026-10-22,21:33:31,spreads_ai,claude-opus-5-5,3039,1009,0.044484
+2026-10-22,21:38:23,news:dossier,claude-sonnet-5-5,5419,661,0.028282
+2026-10-22,21:38:30,news:dossier,claude-sonnet-5-5,5370,716,0.028636
+2026-10-22,21:38:38,news:dossier,claude-sonnet-5-5,5221,691,0.02779
+2026-10-22,21:38:45,news:dossier,claude-sonnet-5-5,5323,674,0.028028
+2026-10-22,21:45:11,claude roll,claude-sonnet-5-5,2143,312,0.011688
+2026-10-22,21:45:12,claude roll,claude-sonnet-5-5,2143,331,0.011878
+2026-10-22,21:45:12,claude roll,claude-sonnet-5-5,2149,355,0.012142
+2026-10-22,21:45:15,claude roll,claude-sonnet-5-5,2142,345,0.012014
+2026-10-22,22:15:16,claude roll,claude-sonnet-5-5,2104,723,0.015642
+2026-10-22,22:29:03,news:market_move,claude-sonnet-5-5,2061,392,0.01216
+2026-10-22,22:30:24,news:triage,claude-sonnet-5-5,4778,1541,0.034518
+2026-10-22,22:32:21,news:picture,claude-sonnet-5-5,5008,532,0.025348
+2026-10-22,22:45:14,claude roll,claude-sonnet-5-5,2445,388,0.013656
+2026-10-22,22:45:18,claude roll,claude-sonnet-5-5,2484,606,0.015992
+2026-10-22,23:15:14,claude roll,claude-sonnet-5-5,2484,650,0.016432
+2026-10-23,00:30:39,news:triage,claude-sonnet-5-5,4859,1663,0.036062
+2026-10-23,00:32:31,news:picture,claude-sonnet-5-5,5117,512,0.025584
+2026-10-23,00:46:48,news:ticker_move,claude-sonnet-5-5,2699,1008,0.020872
+2026-10-23,02:30:51,news:triage,claude-sonnet-5-5,4492,1573,0.033694
+2026-10-23,02:32:39,news:picture,claude-sonnet-5-5,5179,641,0.027122
+2026-10-23,02:56:57,news:vix_spike,claude-sonnet-5-5,2418,429,0.013958
+2026-10-23,03:01:04,news:market_move,claude-sonnet-5-5,2416,431,0.01397
+2026-10-23,03:03:12,news:market_move,claude-sonnet-5-5,2416,422,0.01388
+2026-10-23,03:04:21,news:ticker_move,claude-sonnet-5-5,3069,405,0.016322
+2026-10-23,03:09:34,news:ticker_move,claude-sonnet-5-5,3125,434,0.016836
+2026-10-23,03:35:11,news:market_move,claude-sonnet-5-5,2416,434,0.014
+2026-10-23,03:35:18,news:market_move,claude-sonnet-5-5,2541,419,0.01435
+2026-10-23,03:47:57,claude roll,claude-sonnet-5-5,2453,384,0.013648
+2026-10-23,04:16:14,claude eod,claude-sonnet-5-5,2561,266,0.0129
+2026-10-23,04:30:37,news:triage,claude-sonnet-5-5,4587,1714,0.035484
+2026-10-23,04:30:48,news:digest,claude-sonnet-5-5,3320,830,0.021576
+2026-10-23,04:34:29,news:earnings,claude-sonnet-5-5,3403,444,0.018048
+2026-10-23,04:35:07,news:ticker_move,claude-sonnet-5-5,2800,485,0.016046
+2026-10-23,12:00:49,news:picture,claude-sonnet-5-5,5098,647,0.026858
+2026-10-23,14:27:45,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-23,14:27:45,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-23,14:27:45,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-23,20:00:16,news:triage,claude-sonnet-5-5,4490,1653,0.034486
+2026-10-23,20:00:23,news:digest,claude-sonnet-5-5,2965,686,0.018716
+2026-10-23,20:00:59,news:picture,claude-sonnet-5-5,5072,646,0.026744
+2026-10-23,20:08:56,news:dossier,claude-sonnet-5-5,11500,834,0.054336
+2026-10-23,20:09:14,news:dossier,claude-sonnet-5-5,12068,1869,0.066958
+2026-10-23,20:09:22,news:dossier,claude-sonnet-5-5,10608,800,0.050428
+2026-10-23,20:09:31,news:dossier,claude-sonnet-5-5,11670,622,0.052896
+2026-10-23,21:32:37,news:market_move,claude-sonnet-5-5,2328,414,0.013448
+2026-10-23,21:33:05,spreads_ai,claude-opus-5-5,3395,1132,0.049792
+2026-10-23,21:45:12,claude roll,claude-sonnet-5-5,2410,336,0.012996
+2026-10-23,21:45:12,claude roll,claude-sonnet-5-5,2410,341,0.013046
+2026-10-23,21:45:19,claude roll,claude-sonnet-5-5,2441,297,0.01273
+2026-10-23,21:46:24,claude roll,claude-sonnet-5-5,2445,621,0.015986
+2026-10-23,21:48:26,claude roll,claude-sonnet-5-5,2258,434,0.013368
+2026-10-23,21:54:52,spreads_ai,claude-opus-5-5,4662,857,0.054428
+2026-10-23,22:19:42,claude roll,claude-sonnet-5-5,2258,834,0.017368
+2026-10-23,22:30:28,news:triage,claude-sonnet-5-5,4653,1593,0.034538
+2026-10-23,22:32:19,news:picture,claude-sonnet-5-5,5058,655,0.026778
+2026-10-23,22:50:15,claude review,claude-sonnet-5-5,7642,679,0.037354
+2026-10-23,23:02:26,claude review,claude-sonnet-5-5,7645,658,0.037156
+2026-10-23,23:07:10,spreads_ai,claude-opus-5-5,4377,1192,0.058848
+2026-10-24,00:30:42,news:triage,claude-sonnet-5-5,4500,1613,0.034126
+2026-10-24,02:30:57,news:triage,claude-sonnet-5-5,4286,1804,0.03518
+2026-10-24,02:32:31,news:picture,claude-sonnet-5-5,4772,1088,0.029964
+2026-10-24,02:37:33,news:ticker_move,claude-sonnet-5-5,2908,451,0.016138
+2026-10-24,04:16:09,claude eod,claude-sonnet-5-5,2449,243,0.012222
+2026-10-24,04:30:58,news:triage,claude-sonnet-5-5,4440,1809,0.035846
+2026-10-24,04:31:06,news:digest,claude-sonnet-5-5,3422,753,0.021214
+2026-10-24,12:00:41,news:picture,claude-sonnet-5-5,4522,615,0.024234
+2026-10-26,06:00:57,news:triage,claude-sonnet-5-5,4616,1836,0.03682
+2026-10-26,06:01:04,news:digest,claude-sonnet-5-5,3167,711,0.019774
+2026-10-26,06:03:03,news:picture,claude-sonnet-5-5,4702,645,0.025254
+2026-10-26,20:00:46,news:triage,claude-sonnet-5-5,4537,1612,0.034264
+2026-10-26,20:00:54,news:digest,claude-sonnet-5-5,3060,725,0.019486
+2026-10-26,20:01:16,news:dossier,claude-sonnet-5-5,11629,1150,0.058012
+2026-10-26,20:01:29,news:dossier,claude-sonnet-5-5,11727,1496,0.061864
+2026-10-26,20:01:32,news:picture,claude-sonnet-5-5,4723,660,0.025488
+2026-10-26,20:01:35,news:dossier,claude-sonnet-5-5,12081,592,0.05424
+2026-10-26,20:01:43,news:dossier,claude-sonnet-5-5,12417,633,0.055994
+2026-10-26,21:33:38,spreads_ai,claude-opus-5-5,3267,1112,0.048368
+2026-10-26,21:45:11,claude roll,claude-sonnet-5-5,2320,321,0.012486
+2026-10-26,21:45:11,claude roll,claude-sonnet-5-5,2396,331,0.01289
+2026-10-26,21:45:12,claude roll,claude-sonnet-5-5,2396,612,0.0157
+2026-10-26,21:45:13,claude roll,claude-sonnet-5-5,2345,354,0.012916
+2026-10-26,22:31:08,news:triage,claude-sonnet-5-5,4702,1679,0.035594
+2026-10-26,22:31:40,news:picture,claude-sonnet-5-5,4881,708,0.0266
+2026-10-27,00:30:23,news:triage,claude-sonnet-5-5,4549,1791,0.036102
+2026-10-27,00:31:49,news:picture,claude-sonnet-5-5,4888,746,0.027008
+2026-10-27,02:02:24,claude review,claude-sonnet-5-5,7706,1162,0.04244
+2026-10-27,02:30:38,news:triage,claude-sonnet-5-5,4454,1817,0.035982
+2026-10-27,02:31:58,news:picture,claude-sonnet-5-5,4834,675,0.026082
+2026-10-27,02:38:54,claude review,claude-sonnet-5-5,10259,1580,0.056832
+2026-10-27,04:16:22,claude eod,claude-sonnet-5-5,2447,263,0.012414
+2026-10-27,04:30:16,news:triage,claude-sonnet-5-5,4457,1735,0.035174
+2026-10-27,04:30:28,news:digest,claude-sonnet-5-5,3207,747,0.020294
+2026-10-27,12:00:08,news:picture,claude-sonnet-5-5,4853,636,0.025768
+2026-10-27,19:30:59,news:earnings,claude-sonnet-5-5,2901,429,0.01589
+2026-10-27,20:00:34,news:triage,claude-sonnet-5-5,4731,1772,0.03664
+2026-10-27,20:00:42,news:digest,claude-sonnet-5-5,3242,779,0.020754
+2026-10-27,20:00:53,news:picture,claude-sonnet-5-5,4904,680,0.026412
+2026-10-27,20:02:36,news:dossier,claude-sonnet-5-5,10788,2002,0.063168
+2026-10-27,20:02:51,news:dossier,claude-sonnet-5-5,11664,1746,0.064112
+2026-10-27,20:03:01,news:dossier,claude-sonnet-5-5,12672,972,0.060404
+2026-10-27,20:03:16,news:dossier,claude-sonnet-5-5,11900,1967,0.067266
+2026-10-27,21:33:01,spreads_ai,claude-opus-5-5,3247,708,0.040128
+2026-10-27,21:36:53,claude review,claude-sonnet-5-5,7670,672,0.037396
+2026-10-27,21:47:46,news:ticker_move,claude-sonnet-5-5,2803,1501,0.026218
+2026-10-27,21:51:41,claude review,claude-sonnet-5-5,8974,1515,0.051042
+2026-10-27,21:53:08,claude roll,claude-sonnet-5-5,2429,361,0.013322
+2026-10-27,22:03:34,claude review,claude-sonnet-5-5,10330,1615,0.057466
+2026-10-27,22:18:14,claude review,claude-sonnet-5-5,7849,1014,0.041532
+2026-10-27,22:30:37,news:triage,claude-sonnet-5-5,4594,1795,0.036322
+2026-10-27,22:31:02,news:picture,claude-sonnet-5-5,4879,701,0.026522
+2026-10-27,22:33:43,claude review,claude-sonnet-5-5,7964,1213,0.043982
+2026-10-27,22:47:28,claude review,claude-sonnet-5-5,7964,1255,0.044402
+2026-10-27,23:05:00,claude review,claude-sonnet-5-5,7944,1212,0.043892
+2026-10-27,23:17:27,claude review,claude-sonnet-5-5,7964,1329,0.045142
+2026-10-27,23:31:50,claude review,claude-sonnet-5-5,7964,994,0.041792
+2026-10-27,23:40:05,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-27,23:40:05,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-27,23:40:06,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-27,23:44:32,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-27,23:44:32,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-27,23:44:32,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-27,23:49:37,claude review,claude-sonnet-5-5,7970,1149,0.043366
+2026-10-27,23:55:32,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-27,23:55:32,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-27,23:55:32,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-28,00:00:37,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-28,00:00:37,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-28,00:00:37,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-28,00:02:47,claude review,claude-sonnet-5-5,7905,1178,0.043396
+2026-10-28,00:05:28,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-28,00:05:28,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-28,00:05:28,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-28,00:25:45,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-28,00:25:45,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-28,00:25:45,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-28,00:30:34,news:triage,claude-sonnet-5-5,4672,1802,0.036704
+2026-10-28,00:31:27,news:picture,claude-sonnet-5-5,4916,719,0.02685
+2026-10-28,02:30:47,news:triage,claude-sonnet-5-5,4470,1881,0.036686
+2026-10-28,04:16:23,claude eod,claude-sonnet-5-5,2196,206,0.01084
+2026-10-28,04:30:48,news:triage,claude-sonnet-5-5,4341,1724,0.0346
+2026-10-28,04:30:56,news:digest,claude-sonnet-5-5,3335,831,0.021646
+2026-10-28,04:35:11,news:earnings,claude-sonnet-5-5,2710,401,0.014846
+2026-10-28,04:35:19,news:earnings,claude-sonnet-5-5,3016,431,0.01637
+2026-10-28,12:00:43,news:picture,claude-sonnet-5-5,4891,683,0.02639
+2026-10-28,18:53:03,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-28,18:53:03,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-28,18:53:03,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-28,18:57:05,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-28,18:57:05,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-28,18:57:05,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-10-28,20:01:09,news:triage,claude-sonnet-5-5,4607,1670,0.035124
+2026-10-28,20:01:17,news:digest,claude-sonnet-5-5,3337,747,0.020814
+2026-10-28,20:02:01,news:dossier,claude-sonnet-5-5,11658,1007,0.056698
+2026-10-28,20:02:03,news:picture,claude-sonnet-5-5,4927,646,0.026164
+2026-10-28,20:02:09,news:dossier,claude-sonnet-5-5,11409,842,0.054052
+2026-10-28,20:02:25,news:dossier,claude-sonnet-5-5,12099,1571,0.064102
+2026-10-28,20:02:39,news:dossier,claude-sonnet-5-5,12312,1668,0.065924
+2026-10-28,21:33:30,spreads_ai,claude-opus-5-5,3425,1357,0.054532
+2026-10-28,21:46:55,claude roll,claude-sonnet-5-5,2515,346,0.013516
+2026-10-28,21:47:50,news:picture,claude-sonnet-5-5,4927,665,0.026354
+2026-10-28,21:48:52,claude roll,claude-sonnet-5-5,2567,379,0.014054
+2026-10-28,22:01:25,claude roll,claude-sonnet-5-5,2459,337,0.013202
+2026-10-28,22:06:15,claude review,claude-sonnet-5-5,8859,1810,0.053532
+2026-10-28,22:11:50,claude roll,claude-sonnet-5-5,2490,388,0.013836
+2026-10-28,22:18:06,claude review,claude-sonnet-5-5,8865,1913,0.054586
+2026-10-28,22:30:56,news:triage,claude-sonnet-5-5,4851,1846,0.03786
+2026-10-28,22:31:57,news:picture,claude-sonnet-5-5,4841,653,0.02589
+2026-10-28,22:33:27,claude review,claude-sonnet-5-5,9007,1700,0.053024
+2026-10-28,22:47:36,claude review,claude-sonnet-5-5,9002,1794,0.053944
+2026-10-28,23:02:08,claude review,claude-sonnet-5-5,8983,1902,0.054948
+2026-10-28,23:17:57,claude review,claude-sonnet-5-5,8989,1474,0.050692
+2026-10-28,23:32:01,claude review,claude-sonnet-5-5,7851,630,0.0377
+2026-10-28,23:46:35,claude review,claude-sonnet-5-5,7851,1265,0.04405
+2026-10-28,23:46:52,spreads_ai,claude-opus-5-5,4537,1215,0.060588
+2026-10-29,00:03:24,claude review,claude-sonnet-5-5,7851,1320,0.0446
+2026-10-29,00:17:12,claude review,claude-sonnet-5-5,7851,1255,0.04395
+2026-10-29,00:31:10,news:triage,claude-sonnet-5-5,4765,1729,0.036346
+2026-10-29,00:31:20,claude review,claude-sonnet-5-5,7849,1420,0.045592
+2026-10-29,00:46:47,claude review,claude-sonnet-5-5,7851,1344,0.04484
+2026-10-29,01:02:18,claude review,claude-sonnet-5-5,7851,1131,0.04271
+2026-10-29,01:17:48,claude review,claude-sonnet-5-5,7851,1198,0.04338
+2026-10-29,01:31:44,claude review,claude-sonnet-5-5,7851,1355,0.04495
+2026-10-29,01:47:07,claude review,claude-sonnet-5-5,9005,1601,0.052026
+2026-10-29,02:02:23,claude review,claude-sonnet-5-5,7880,1094,0.042456
+2026-10-29,02:30:29,news:triage,claude-sonnet-5-5,4643,1686,0.035428
+2026-10-29,03:17:52,claude review,claude-sonnet-5-5,7737,933,0.040274
+2026-10-29,03:31:47,claude review,claude-sonnet-5-5,7723,961,0.040498
+2026-10-29,03:47:10,claude review,claude-sonnet-5-5,7708,928,0.040108
+2026-10-29,04:16:14,claude eod,claude-sonnet-5-5,2422,257,0.012254
+2026-10-29,04:31:03,news:triage,claude-sonnet-5-5,4535,1706,0.035196
+2026-10-29,04:31:11,news:digest,claude-sonnet-5-5,3615,782,0.022276
+2026-10-29,04:34:35,news:earnings,claude-sonnet-5-5,2927,1414,0.025844
+2026-10-29,04:34:42,news:earnings,claude-sonnet-5-5,3357,421,0.017634
+2026-10-29,12:11:16,news:picture,claude-sonnet-5-5,4659,596,0.024592
+2026-10-29,23:39:41,news:picture,claude-sonnet-5-5,4621,619,0.02467
+2026-10-29,23:39:45,news:dossier,claude-sonnet-5-5,12031,1444,0.06256
+2026-10-29,23:39:47,news:triage,claude-sonnet-5-5,4910,1773,0.037366
+2026-10-29,23:40:02,news:dossier,claude-sonnet-5-5,12345,2012,0.069496
+2026-10-29,23:40:09,news:market_move,claude-sonnet-5-5,2403,405,0.013658
+2026-10-29,23:40:20,news:ticker_move,claude-sonnet-5-5,2728,1211,0.023018
+2026-10-29,23:40:21,news:dossier,claude-sonnet-5-5,12029,2450,0.072612
+2026-10-29,23:40:34,news:dossier,claude-sonnet-5-5,11416,1634,0.062
+2026-10-29,23:42:17,spreads_ai,claude-opus-5-5,3591,1005,0.04882
+2026-10-30,00:16:13,claude roll,claude-sonnet-5-5,2460,345,0.013286
+2026-10-30,00:22:46,claude review,claude-sonnet-5-5,7602,971,0.040114
+2026-10-30,00:26:42,spreads_ai,claude-opus-5-5,4459,446,0.044584
+2026-10-30,00:30:44,news:triage,claude-sonnet-5-5,4692,1653,0.035294
+2026-10-30,00:32:39,news:picture,claude-sonnet-5-5,4788,690,0.026048
+2026-10-30,00:50:40,claude review,claude-sonnet-5-5,7369,678,0.036252
+2026-10-30,02:03:57,news:picture,claude-sonnet-5-5,4788,638,0.025528
+2026-10-30,04:31:05,news:triage,claude-sonnet-5-5,4502,1765,0.035654
+2026-10-30,04:31:13,news:digest,claude-sonnet-5-5,3492,847,0.022434
+2026-10-30,04:33:33,news:earnings,claude-sonnet-5-5,3101,1372,0.02612
+2026-10-30,12:00:13,news:picture,claude-sonnet-5-5,4984,612,0.026052
+2026-10-30,22:15:11,claude roll,claude-sonnet-5-5,2507,398,0.014004
+2026-10-30,22:22:42,news:market_move,claude-sonnet-5-5,2475,436,0.014256
+2026-10-30,22:22:48,news:market_move,claude-sonnet-5-5,2600,412,0.014516
+2026-10-30,22:25:28,news:ticker_move,claude-sonnet-5-5,3290,855,0.021706
+2026-10-30,22:30:24,news:triage,claude-sonnet-5-5,4699,1727,0.036062
+2026-10-30,22:38:38,news:vix_spike,claude-sonnet-5-5,2477,433,0.014234
+2026-10-30,22:45:15,claude roll,claude-sonnet-5-5,2507,620,0.016224
+2026-10-30,23:15:14,claude roll,claude-sonnet-5-5,2507,434,0.014364
+2026-10-30,23:18:50,claude roll,claude-sonnet-5-5,2527,365,0.013754
+2026-10-31,00:30:40,news:triage,claude-sonnet-5-5,4702,1982,0.038624
+2026-10-31,01:48:20,news:market_move,claude-sonnet-5-5,2475,453,0.014426
+2026-10-31,01:54:26,news:market_move,claude-sonnet-5-5,2475,459,0.014486
+2026-10-31,02:09:33,news:ticker_move,claude-sonnet-5-5,2703,403,0.014838
+2026-10-31,02:30:58,news:triage,claude-sonnet-5-5,4803,1815,0.037358
+2026-10-31,02:35:18,news:ticker_move,claude-sonnet-5-5,3243,1169,0.024658
+2026-10-31,04:16:21,claude eod,claude-sonnet-5-5,2487,263,0.012574
+2026-10-31,04:31:16,news:triage,claude-sonnet-5-5,4411,1884,0.03648
+2026-10-31,04:31:23,news:digest,claude-sonnet-5-5,3448,763,0.021418
+2026-10-31,04:32:28,news:ticker_move,claude-sonnet-5-5,3046,426,0.01644
+2026-10-31,04:32:33,news:ticker_move,claude-sonnet-5-5,3173,363,0.016318
+2026-10-31,12:02:12,news:picture,claude-sonnet-5-5,5457,631,0.028134
+2026-11-02,23:56:19,news:picture,claude-sonnet-5-5,5382,662,0.028144
+2026-11-02,23:56:29,news:dossier,claude-sonnet-5-5,12406,1553,0.06515
+2026-11-02,23:56:35,claude roll,claude-sonnet-5-5,2485,275,0.012686
+2026-11-02,23:56:38,claude roll,claude-sonnet-5-5,2537,611,0.016254
+2026-11-02,23:56:42,news:dossier,claude-sonnet-5-5,12219,1491,0.063782
+2026-11-02,23:56:47,news:earnings,claude-sonnet-5-5,2649,417,0.014762
+2026-11-02,23:56:58,news:dossier,claude-sonnet-5-5,12129,1971,0.068222
+2026-11-02,23:57:14,news:dossier,claude-sonnet-5-5,11650,1757,0.064166
+2026-11-02,23:58:39,spreads_ai,claude-opus-5-5,3450,859,0.044772
+2026-11-03,00:06:55,claude review,claude-sonnet-5-5,7677,684,0.037544
+2026-11-03,00:34:48,claude review,claude-sonnet-5-5,7671,953,0.04021
+2026-11-03,00:46:10,claude review,claude-sonnet-5-5,7705,803,0.038846
+2026-11-03,01:00:42,claude review,claude-sonnet-5-5,7733,1212,0.043048
+2026-11-03,01:16:07,claude review,claude-sonnet-5-5,7733,1163,0.042558
+2026-11-03,01:26:27,news:picture,claude-sonnet-5-5,5489,651,0.028462
+2026-11-03,01:30:21,news:triage,claude-sonnet-5-5,4981,1695,0.03687
+2026-11-03,01:30:36,news:picture,claude-sonnet-5-5,5424,672,0.028412
+2026-11-03,01:32:48,claude review,claude-sonnet-5-5,7662,1095,0.041594
+2026-11-03,01:48:54,claude review,claude-sonnet-5-5,7636,1182,0.04236
+2026-11-03,02:01:08,claude review,claude-sonnet-5-5,7670,1495,0.045626
+2026-11-03,02:17:40,claude review,claude-sonnet-5-5,7670,1214,0.042816
+2026-11-03,02:30:49,claude review,claude-sonnet-5-5,7670,998,0.040656
+2026-11-03,02:47:24,claude review,claude-sonnet-5-5,7630,636,0.036876
+2026-11-03,03:00:45,news:picture,claude-sonnet-5-5,5424,666,0.028352
+2026-11-03,03:30:36,news:triage,claude-sonnet-5-5,4556,1695,0.03517
+2026-11-03,03:50:01,news:market_move,claude-sonnet-5-5,2347,404,0.013424
+2026-11-03,05:16:25,claude eod,claude-sonnet-5-5,2107,241,0.010834
+2026-11-03,05:30:36,news:triage,claude-sonnet-5-5,4427,1564,0.033344
+2026-11-03,05:30:45,news:digest,claude-sonnet-5-5,3007,831,0.020334
+2026-11-03,06:52:43,news:earnings,claude-sonnet-5-5,3166,474,0.0174
+2026-11-03,06:52:49,news:earnings,claude-sonnet-5-5,3090,438,0.016736
+2026-11-03,13:00:57,news:picture,claude-sonnet-5-5,5278,687,0.027978
+2026-11-03,21:01:01,news:picture,claude-sonnet-5-5,5294,649,0.027662
+2026-11-03,21:01:08,news:triage,claude-sonnet-5-5,4657,1670,0.035324
+2026-11-03,21:01:22,news:digest,claude-sonnet-5-5,3177,834,0.021044
+2026-11-03,21:01:33,news:digest,claude-sonnet-5-5,3306,732,0.02054
+2026-11-03,21:09:21,news:dossier,claude-sonnet-5-5,11765,1146,0.058516
+2026-11-03,21:09:36,news:dossier,claude-sonnet-5-5,11645,2039,0.066966
+2026-11-03,21:09:44,news:dossier,claude-sonnet-5-5,11977,1005,0.057954
+2026-11-03,21:09:52,news:dossier,claude-sonnet-5-5,12186,851,0.05725
+2026-11-03,22:33:00,spreads_ai,claude-opus-5-5,3438,676,0.041016
+2026-11-03,22:45:14,claude roll,claude-sonnet-5-5,2407,353,0.013154
+2026-11-03,22:45:16,claude roll,claude-sonnet-5-5,2529,350,0.013612
+2026-11-03,22:45:18,claude roll,claude-sonnet-5-5,2489,327,0.013222
+2026-11-03,22:47:11,news:picture,claude-sonnet-5-5,5191,721,0.02797
+2026-11-03,23:17:14,spreads_ai,claude-opus-5-5,4546,357,0.0435
+2026-11-03,23:28:34,spreads_ai,claude-opus-5-5,4509,323,0.042524
+2026-11-03,23:30:56,news:triage,claude-sonnet-5-5,4846,1658,0.03596
+2026-11-03,23:31:19,news:picture,claude-sonnet-5-5,5120,713,0.027606
+2026-11-04,01:16:57,claude review,claude-sonnet-5-5,7941,564,0.0374
+2026-11-04,01:31:14,news:triage,claude-sonnet-5-5,4649,1904,0.037632
+2026-11-04,03:30:30,news:triage,claude-sonnet-5-5,4756,1743,0.03645
+2026-11-04,05:16:08,claude eod,claude-sonnet-5-5,2113,277,0.011218
+2026-11-04,05:31:05,news:triage,claude-sonnet-5-5,4387,1728,0.034824
+2026-11-04,05:31:14,news:digest,claude-sonnet-5-5,3268,749,0.020558
+2026-11-04,06:52:30,news:earnings,claude-sonnet-5-5,3310,1485,0.028086
+2026-11-04,13:01:32,news:picture,claude-sonnet-5-5,5078,751,0.027818
+2026-11-04,20:39:08,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-04,20:39:08,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-04,20:39:08,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-04,20:49:36,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-04,20:49:36,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-04,20:49:36,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-04,21:01:03,news:picture,claude-sonnet-5-5,5086,654,0.02688
+2026-11-04,21:01:04,news:triage,claude-sonnet-5-5,4648,1617,0.034758
+2026-11-04,21:01:14,news:digest,claude-sonnet-5-5,3530,787,0.021986
+2026-11-04,21:03:12,news:picture,claude-sonnet-5-5,5098,677,0.027158
+2026-11-04,21:05:00,news:dossier,claude-sonnet-5-5,11348,1920,0.064588
+2026-11-04,21:05:16,news:dossier,claude-sonnet-5-5,11652,1808,0.064684
+2026-11-04,21:05:26,news:dossier,claude-sonnet-5-5,11488,725,0.053198
+2026-11-04,21:05:34,news:dossier,claude-sonnet-5-5,11704,637,0.053182
+2026-11-04,22:33:07,news:market_move,claude-sonnet-5-5,2425,393,0.013626
+2026-11-04,22:33:31,spreads_ai,claude-opus-5-5,3419,610,0.039544
+2026-11-04,22:45:17,claude roll,claude-sonnet-5-5,2565,301,0.013266
+2026-11-04,22:45:17,claude roll,claude-sonnet-5-5,2607,338,0.013804
+2026-11-04,22:46:07,news:picture,claude-sonnet-5-5,5105,717,0.027586
+2026-11-04,22:48:46,news:ticker_move,claude-sonnet-5-5,3145,426,0.016836
+2026-11-04,22:55:14,claude roll,claude-sonnet-5-5,2632,371,0.014234
+2026-11-04,22:57:03,claude roll,claude-sonnet-5-5,2651,342,0.01402
+2026-11-04,23:01:24,news:market_move,claude-sonnet-5-5,2450,394,0.013736
+2026-11-04,23:04:01,news:ticker_move,claude-sonnet-5-5,3289,509,0.018242
+2026-11-04,23:19:32,claude review,claude-sonnet-5-5,7874,577,0.037262
+2026-11-04,23:31:15,news:triage,claude-sonnet-5-5,4815,1560,0.034856
+2026-11-05,00:56:18,news:market_move,claude-sonnet-5-5,2497,429,0.014274
+2026-11-05,01:10:55,news:macro_print,claude-sonnet-5-5,2742,381,0.014774
+2026-11-05,01:30:29,news:triage,claude-sonnet-5-5,4639,1704,0.035592
+2026-11-05,01:55:12,claude roll,claude-sonnet-5-5,2617,400,0.014464
+2026-11-05,05:16:12,claude eod,claude-sonnet-5-5,2197,247,0.011254
+2026-11-05,05:30:18,news:triage,claude-sonnet-5-5,4625,1768,0.036176
+2026-11-05,05:30:25,news:digest,claude-sonnet-5-5,3424,767,0.021362
+2026-11-05,05:34:08,news:ticker_move,claude-sonnet-5-5,3193,434,0.017108
+2026-11-05,13:00:20,news:picture,claude-sonnet-5-5,5088,707,0.027418
+2026-11-05,19:01:13,value_standard,claude-sonnet-5-5,2329,788,0.017192
+2026-11-05,19:01:21,value_standard,claude-sonnet-5-5,2174,826,0.016952
+2026-11-05,19:01:34,value_standard,claude-sonnet-5-5,2067,1073,0.018994
+2026-11-05,19:01:44,value_standard,claude-sonnet-5-5,3629,1204,0.026552
+2026-11-05,19:01:54,value_standard,claude-sonnet-5-5,2135,1122,0.019756
+2026-11-05,19:02:05,value_standard,claude-sonnet-5-5,2164,903,0.017682
+2026-11-05,19:02:18,value_standard,claude-sonnet-5-5,2305,896,0.018176
+2026-11-05,19:02:30,value_standard,claude-sonnet-5-5,2155,815,0.016766
+2026-11-05,19:02:41,value_standard,claude-sonnet-5-5,2169,782,0.016492
+2026-11-05,19:02:49,value_standard,claude-sonnet-5-5,2166,813,0.01679
+2026-11-05,19:03:00,value_standard,claude-sonnet-5-5,2160,778,0.016416
+2026-11-05,19:03:12,value_standard,claude-sonnet-5-5,2168,777,0.016438
+2026-11-05,19:03:22,value_standard,claude-sonnet-5-5,2068,1106,0.019328
+2026-11-05,19:03:34,value_standard,claude-sonnet-5-5,2178,816,0.016868
+2026-11-05,19:03:43,value_standard,claude-sonnet-5-5,3610,957,0.024006
+2026-11-05,20:58:42,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-05,20:58:42,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-05,20:58:43,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-05,21:00:45,news:picture,claude-sonnet-5-5,5082,640,0.026724
+2026-11-05,21:00:48,news:triage,claude-sonnet-5-5,4607,1670,0.035124
+2026-11-05,21:01:00,news:digest,claude-sonnet-5-5,3404,767,0.021282
+2026-11-05,21:02:54,news:picture,claude-sonnet-5-5,5133,628,0.026808
+2026-11-05,21:03:46,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-05,21:03:46,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-05,21:03:46,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-05,21:08:46,news:dossier,claude-sonnet-5-5,11143,2103,0.065598
+2026-11-05,21:08:55,news:dossier,claude-sonnet-5-5,11113,1224,0.056688
+2026-11-05,21:09:03,news:dossier,claude-sonnet-5-5,11464,846,0.054312
+2026-11-05,21:09:16,news:dossier,claude-sonnet-5-5,11772,1731,0.064394
+2026-11-05,22:31:15,news:market_move,claude-sonnet-5-5,2425,408,0.013776
+2026-11-05,22:33:00,spreads_ai,claude-opus-5-5,3424,1034,0.048064
+2026-11-05,22:36:51,news:market_move,claude-sonnet-5-5,2425,418,0.013876
+2026-11-05,22:36:57,news:market_move,claude-sonnet-5-5,2550,426,0.014456
+2026-11-05,22:40:33,news:macro_print,claude-sonnet-5-5,2660,333,0.013966
+2026-11-05,22:40:40,news:ticker_move,claude-sonnet-5-5,3166,471,0.01737
+2026-11-05,22:41:23,news:ticker_move,claude-sonnet-5-5,3430,437,0.018086
+2026-11-05,22:41:36,news:ticker_move,claude-sonnet-5-5,3145,1457,0.027146
+2026-11-05,22:43:15,news:market_move,claude-sonnet-5-5,2425,402,0.013716
+2026-11-05,22:45:11,claude roll,claude-sonnet-5-5,2843,339,0.014758
+2026-11-05,22:45:12,claude roll,claude-sonnet-5-5,2750,299,0.013986
+2026-11-05,22:45:14,claude roll,claude-sonnet-5-5,2755,317,0.014186
+2026-11-05,22:45:14,claude roll,claude-sonnet-5-5,2843,402,0.015388
+2026-11-05,22:46:15,news:picture,claude-sonnet-5-5,5157,685,0.027474
+2026-11-05,22:46:23,news:ticker_move,claude-sonnet-5-5,3056,425,0.01647
+2026-11-05,22:47:03,news:market_move,claude-sonnet-5-5,2573,407,0.014358
+2026-11-05,22:51:41,news:ticker_move,claude-sonnet-5-5,3171,464,0.01732
+2026-11-05,23:01:28,news:vix_spike,claude-sonnet-5-5,2575,407,0.014366
+2026-11-05,23:06:39,news:ticker_move,claude-sonnet-5-5,2784,824,0.019372
+2026-11-05,23:11:16,news:market_move,claude-sonnet-5-5,2573,484,0.015128
+2026-11-05,23:11:58,news:ticker_move,claude-sonnet-5-5,3179,406,0.016772
+2026-11-05,23:27:05,news:ticker_move,claude-sonnet-5-5,3121,425,0.01673
+2026-11-05,23:30:20,news:triage,claude-sonnet-5-5,4802,1542,0.034624
+2026-11-05,23:31:41,news:market_move,claude-sonnet-5-5,2573,427,0.014558
+2026-11-05,23:41:06,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-05,23:41:06,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-05,23:41:06,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-05,23:47:23,news:ticker_move,claude-sonnet-5-5,3377,1338,0.026884
+2026-11-05,23:47:34,news:ticker_move,claude-sonnet-5-5,3327,838,0.021684
+2026-11-05,23:47:46,news:ticker_move,claude-sonnet-5-5,3452,1192,0.025724
+2026-11-05,23:48:28,news:market_move,claude-sonnet-5-5,2573,463,0.014918
+2026-11-05,23:48:35,news:market_move,claude-sonnet-5-5,2573,457,0.004831
+2026-11-05,23:52:49,news:ticker_move,claude-sonnet-5-5,3558,1289,0.027118
+2026-11-05,23:53:00,news:ticker_move,claude-sonnet-5-5,3030,955,0.021666
+2026-11-06,00:02:07,news:vix_spike,claude-sonnet-5-5,2575,431,0.014606
+2026-11-06,00:10:02,spreads_ai,claude-opus-5-5,4843,312,0.044976
+2026-11-06,00:28:20,claude roll,claude-sonnet-5-5,2883,413,0.015658
+2026-11-06,00:58:18,claude roll,claude-sonnet-5-5,2883,369,0.015218
+2026-11-06,01:28:18,claude roll,claude-sonnet-5-5,2883,404,0.015568
+2026-11-06,01:30:40,news:triage,claude-sonnet-5-5,4768,1767,0.036738
+2026-11-06,01:42:46,news:market_move,claude-sonnet-5-5,2573,439,0.014678
+2026-11-06,01:42:52,news:market_move,claude-sonnet-5-5,2695,424,0.015016
+2026-11-06,01:44:37,news:ticker_move,claude-sonnet-5-5,3245,1080,0.023776
+2026-11-06,01:58:26,claude roll,claude-sonnet-5-5,2883,777,0.019298
+2026-11-06,02:08:50,value_filing,claude-sonnet-5-5,9471,431,0.04219
+2026-11-06,02:28:19,claude roll,claude-sonnet-5-5,2883,438,0.015908
+2026-11-06,02:58:25,claude roll,claude-sonnet-5-5,2883,918,0.020708
+2026-11-06,03:30:54,news:triage,claude-sonnet-5-5,4793,1622,0.035388
+2026-11-06,03:58:23,claude roll,claude-sonnet-5-5,2883,410,0.015628
+2026-11-06,04:28:21,claude roll,claude-sonnet-5-5,2883,389,0.015418
+2026-11-06,05:16:22,claude eod,claude-sonnet-5-5,2378,253,0.012038
+2026-11-06,05:30:46,news:triage,claude-sonnet-5-5,4607,1742,0.035844
+2026-11-06,05:30:55,news:digest,claude-sonnet-5-5,3313,853,0.021778
+2026-11-06,13:01:40,news:picture,claude-sonnet-5-5,5207,649,0.027314
+2026-11-06,13:05:02,value_standard,claude-sonnet-5-5,3768,997,0.025038
+2026-11-06,13:05:10,value_standard,claude-sonnet-5-5,2313,861,0.017858
+2026-11-06,13:05:18,value_standard,claude-sonnet-5-5,2341,1035,0.01971
+2026-11-06,13:05:25,value_standard,claude-sonnet-5-5,2332,852,0.017844
+2026-11-06,13:05:37,value_standard,claude-sonnet-5-5,3680,1340,0.028116
+2026-11-06,13:05:45,value_standard,claude-sonnet-5-5,3938,901,0.024758
+2026-11-06,13:05:54,value_standard,claude-sonnet-5-5,3924,986,0.025552
+2026-11-06,16:56:54,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-06,16:56:54,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-06,16:56:55,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-06,16:56:56,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-06,16:56:56,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-06,16:56:56,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-06,20:06:04,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-06,20:06:04,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-06,20:06:04,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-06,21:00:39,news:triage,claude-sonnet-5-5,4699,1751,0.036302
+2026-11-06,21:00:51,news:digest,claude-sonnet-5-5,3552,1380,0.028004
+2026-11-06,21:01:28,news:picture,claude-sonnet-5-5,5276,618,0.02728
+2026-11-06,21:09:36,news:dossier,claude-sonnet-5-5,11830,2555,0.072866
+2026-11-06,21:09:53,news:dossier,claude-sonnet-5-5,11857,2427,0.071694
+2026-11-06,21:10:05,news:dossier,claude-sonnet-5-5,11737,1319,0.060134
+2026-11-06,21:10:15,news:dossier,claude-sonnet-5-5,11288,1256,0.057708
+2026-11-06,22:30:58,news:market_move,claude-sonnet-5-5,2533,436,0.014488
+2026-11-06,22:33:15,spreads_ai,claude-opus-5-5,3668,1314,0.055616
+2026-11-06,22:40:43,news:macro_print,claude-sonnet-5-5,2860,413,0.015566
+2026-11-06,22:41:22,news:market_move,claude-sonnet-5-5,2533,408,0.014208
+2026-11-06,22:45:15,claude roll,claude-sonnet-5-5,2858,423,0.015658
+2026-11-06,22:45:18,claude roll,claude-sonnet-5-5,2807,346,0.014684
+2026-11-06,22:45:18,claude roll,claude-sonnet-5-5,2858,817,0.019598
+2026-11-06,22:45:20,claude roll,claude-sonnet-5-5,2808,362,0.014848
+2026-11-06,22:45:38,news:picture,claude-sonnet-5-5,5213,622,0.027068
+2026-11-06,23:00:30,news:ticker_move,claude-sonnet-5-5,3021,461,0.01669
+2026-11-06,23:15:15,claude roll,claude-sonnet-5-5,2596,845,0.01883
+2026-11-06,23:30:34,news:triage,claude-sonnet-5-5,4777,1812,0.037224
+2026-11-06,23:31:45,news:picture,claude-sonnet-5-5,5180,637,0.027086
+2026-11-06,23:45:16,claude roll,claude-sonnet-5-5,2537,766,0.017804
+2026-11-07,00:15:13,claude roll,claude-sonnet-5-5,2537,449,0.014634
+2026-11-07,00:34:40,spreads_ai,claude-opus-5-5,4806,393,0.0463
+2026-11-07,01:15:13,claude roll,claude-sonnet-5-5,2537,372,0.013864
+2026-11-07,01:30:48,news:triage,claude-sonnet-5-5,4183,1654,0.033268
+2026-11-07,01:39:23,spreads_ai,claude-opus-5-5,4782,289,0.044028
+2026-11-07,01:45:20,claude roll,claude-sonnet-5-5,2537,813,0.018274
+2026-11-07,02:15:16,claude roll,claude-sonnet-5-5,2537,469,0.014834
+2026-11-07,02:45:19,claude roll,claude-sonnet-5-5,2537,417,0.014314
+2026-11-07,03:14:13,news:ticker_move,claude-sonnet-5-5,2789,417,0.015322
+2026-11-07,03:15:14,claude roll,claude-sonnet-5-5,2537,401,0.014154
+2026-11-07,03:31:03,news:triage,claude-sonnet-5-5,4349,1787,0.035262
+2026-11-07,03:45:18,claude roll,claude-sonnet-5-5,2537,793,0.018074
+2026-11-07,04:45:16,claude roll,claude-sonnet-5-5,2537,403,0.014174
+2026-11-07,05:16:20,claude eod,claude-sonnet-5-5,2115,242,0.010876
+2026-11-07,05:30:23,news:ticker_move,claude-sonnet-5-5,2748,463,0.015618
+2026-11-07,05:30:59,news:ticker_move,claude-sonnet-5-5,2968,418,0.016048
+2026-11-07,05:31:05,news:ticker_move,claude-sonnet-5-5,2883,400,0.015528
+2026-11-07,05:31:11,news:triage,claude-sonnet-5-5,4659,1719,0.035822
+2026-11-07,05:31:18,news:digest,claude-sonnet-5-5,3563,741,0.021658
+2026-11-07,13:01:58,news:picture,claude-sonnet-5-5,5048,696,0.027148
+2026-11-07,13:12:38,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-07,13:12:38,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-07,13:12:38,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-07,19:02:19,value_standard,claude-sonnet-5-5,2065,1135,0.019606
+2026-11-07,19:02:27,value_standard,claude-sonnet-5-5,2143,841,0.016978
+2026-11-07,19:02:35,value_standard,claude-sonnet-5-5,2068,691,0.015178
+2026-11-09,07:01:11,news:triage,claude-sonnet-5-5,4467,1777,0.035634
+2026-11-09,07:01:18,news:digest,claude-sonnet-5-5,3465,773,0.021586
+2026-11-09,07:02:22,news:picture,claude-sonnet-5-5,5175,528,0.025976
+2026-11-09,21:00:35,news:picture,claude-sonnet-5-5,5175,634,0.027036
+2026-11-09,21:00:38,news:dossier,claude-sonnet-5-5,12033,2078,0.068908
+2026-11-09,21:00:44,news:triage,claude-sonnet-5-5,4776,1870,0.0378
+2026-11-09,21:00:52,news:digest,claude-sonnet-5-5,3343,791,0.021278
+2026-11-09,21:00:53,news:dossier,claude-sonnet-5-5,11534,2071,0.066842
+2026-11-09,21:01:09,news:dossier,claude-sonnet-5-5,12377,2295,0.072454
+2026-11-09,21:01:20,news:dossier,claude-sonnet-5-5,10199,1479,0.055582
+2026-11-09,21:02:42,news:picture,claude-sonnet-5-5,5188,644,0.027188
+2026-11-09,22:32:21,news:ticker_move,claude-sonnet-5-5,3454,1226,0.026072
+2026-11-09,22:32:40,spreads_ai,claude-opus-5-5,3403,909,0.045396
+2026-11-09,22:36:41,claude review,claude-sonnet-5-5,7559,1066,0.040892
+2026-11-09,22:36:50,news:picture,claude-sonnet-5-5,5212,662,0.027464
+2026-11-09,22:44:28,news:market_move,claude-sonnet-5-5,2389,397,0.013522
+2026-11-09,22:45:14,claude roll,claude-sonnet-5-5,2736,344,0.01438
+2026-11-09,22:45:15,claude roll,claude-sonnet-5-5,2800,618,0.017376
+2026-11-09,22:45:17,claude roll,claude-sonnet-5-5,2776,774,0.01884
+2026-11-09,23:15:14,claude roll,claude-sonnet-5-5,2716,849,0.01935
+2026-11-09,23:30:59,news:triage,claude-sonnet-5-5,4705,1801,0.036826
+2026-11-09,23:32:58,news:picture,claude-sonnet-5-5,5246,684,0.02782
+2026-11-09,23:48:35,news:market_move,claude-sonnet-5-5,2510,414,0.014176
+2026-11-09,23:48:40,news:market_move,claude-sonnet-5-5,2634,396,0.014492
+2026-11-09,23:50:47,news:market_move,claude-sonnet-5-5,2510,432,0.014356
+2026-11-09,23:58:24,news:ticker_move,claude-sonnet-5-5,3060,484,0.017076
+2026-11-09,23:58:29,news:ticker_move,claude-sonnet-5-5,3185,453,0.017266
+2026-11-09,23:58:35,news:ticker_move,claude-sonnet-5-5,3046,415,0.01633
+2026-11-10,00:03:43,news:ticker_move,claude-sonnet-5-5,3253,493,0.017938
+2026-11-10,00:45:15,claude roll,claude-sonnet-5-5,2837,821,0.019554
+2026-11-10,01:09:21,news:market_move,claude-sonnet-5-5,2510,416,0.014196
+2026-11-10,01:09:26,news:market_move,claude-sonnet-5-5,2634,392,0.014452
+2026-11-10,01:30:12,news:triage,claude-sonnet-5-5,4590,1846,0.036816
+2026-11-10,01:45:04,news:ticker_move,claude-sonnet-5-5,3065,455,0.016806
+2026-11-10,01:45:16,claude roll,claude-sonnet-5-5,2837,951,0.020854
+2026-11-10,02:45:17,claude roll,claude-sonnet-5-5,2837,969,0.021034
+2026-11-10,03:30:27,news:triage,claude-sonnet-5-5,4633,1957,0.038098
+2026-11-10,04:15:19,claude roll,claude-sonnet-5-5,2837,771,0.019054
+2026-11-10,04:17:49,news:ticker_move,claude-sonnet-5-5,3085,1319,0.025526
+2026-11-10,04:45:18,claude roll,claude-sonnet-5-5,2837,803,0.019374
+2026-11-10,05:16:15,claude eod,claude-sonnet-5-5,2312,269,0.011934
+2026-11-10,05:31:19,news:triage,claude-sonnet-5-5,4578,1713,0.035438
+2026-11-10,05:31:31,news:digest,claude-sonnet-5-5,3399,1375,0.027342
+2026-11-10,08:08:32,news:earnings,claude-sonnet-5-5,3186,459,0.01733
+2026-11-10,08:08:38,news:earnings,claude-sonnet-5-5,3318,433,0.017598
+2026-11-10,13:01:11,news:picture,claude-sonnet-5-5,5241,703,0.02799
+2026-11-10,19:11:06,value_standard,claude-sonnet-5-5,2143,1218,0.020748
+2026-11-10,21:01:04,news:triage,claude-sonnet-5-5,4474,3061,0.048502
+2026-11-10,21:01:12,news:digest,claude-sonnet-5-5,3103,816,0.020568
+2026-11-10,21:01:24,news:digest,claude-sonnet-5-5,3234,1578,0.028712
+2026-11-10,21:01:24,news:picture,claude-sonnet-5-5,5272,1189,0.032974
+2026-11-10,21:01:39,news:dossier,claude-sonnet-5-5,11532,1999,0.066114
+2026-11-10,21:01:54,news:dossier,claude-sonnet-5-5,11094,2238,0.066752
+2026-11-10,21:02:11,news:dossier,claude-sonnet-5-5,10899,2085,0.064442
+2026-11-10,21:02:24,news:dossier,claude-sonnet-5-5,11724,1795,0.064842
+2026-11-10,22:31:28,news:market_move,claude-sonnet-5-5,2483,402,0.013948
+2026-11-10,22:33:05,spreads_ai,claude-opus-5-5,3497,785,0.043668
+2026-11-10,22:43:30,spreads_ai,claude-opus-5-5,4835,545,0.049572
+2026-11-10,22:45:14,claude roll,claude-sonnet-5-5,2789,352,0.014672
+2026-11-10,22:45:15,claude roll,claude-sonnet-5-5,2887,902,0.020564
+2026-11-10,22:45:16,claude roll,claude-sonnet-5-5,2830,437,0.015686
+2026-11-10,22:45:16,claude roll,claude-sonnet-5-5,2825,934,0.020636
+2026-11-10,22:45:17,claude roll,claude-sonnet-5-5,2830,430,0.015616
+2026-11-10,22:45:21,claude roll,claude-sonnet-5-5,2930,348,0.015196
+2026-11-10,22:45:23,claude roll,claude-sonnet-5-5,2830,711,0.018426
+2026-11-10,22:45:31,news:picture,claude-sonnet-5-5,5236,664,0.02758
+2026-11-10,23:15:11,claude roll,claude-sonnet-5-5,2648,391,0.014498
+2026-11-10,23:15:11,claude roll,claude-sonnet-5-5,2748,340,0.014388
+2026-11-10,23:15:12,claude roll,claude-sonnet-5-5,2705,729,0.018106
+2026-11-10,23:15:19,claude roll,claude-sonnet-5-5,2643,1253,0.023098
+2026-11-10,23:25:35,news:ticker_move,claude-sonnet-5-5,2967,466,0.016524
+2026-11-10,23:30:42,news:ticker_move,claude-sonnet-5-5,2867,483,0.016294
+2026-11-10,23:30:49,news:triage,claude-sonnet-5-5,4628,1913,0.037638
+2026-11-10,23:31:38,news:picture,claude-sonnet-5-5,5210,540,0.026236
+2026-11-10,23:45:11,claude roll,claude-sonnet-5-5,2606,379,0.01421
+2026-11-10,23:45:13,claude roll,claude-sonnet-5-5,2606,422,0.01464
+2026-11-10,23:45:13,claude roll,claude-sonnet-5-5,2565,355,0.013806
+2026-11-10,23:45:17,claude roll,claude-sonnet-5-5,2601,1153,0.02193
+2026-11-11,00:15:11,claude roll,claude-sonnet-5-5,2606,370,0.01412
+2026-11-11,00:15:14,claude roll,claude-sonnet-5-5,2606,752,0.01794
+2026-11-11,00:15:18,claude roll,claude-sonnet-5-5,2533,804,0.018168
+2026-11-11,00:15:18,claude roll,claude-sonnet-5-5,2601,1253,0.02293
+2026-11-11,00:15:20,claude roll,claude-sonnet-5-5,2601,1350,0.0239
+2026-11-11,00:45:12,claude roll,claude-sonnet-5-5,2606,380,0.01422
+2026-11-11,00:45:12,claude roll,claude-sonnet-5-5,2606,385,0.01427
+2026-11-11,00:45:16,claude roll,claude-sonnet-5-5,2606,767,0.01809
+2026-11-11,00:45:19,claude roll,claude-sonnet-5-5,2601,1332,0.02372
+2026-11-11,00:45:49,claude roll,claude-sonnet-5-5,2606,390,0.01432
+2026-11-11,01:15:14,claude roll,claude-sonnet-5-5,2606,465,0.01507
+2026-11-11,01:15:15,claude roll,claude-sonnet-5-5,2589,409,0.014442
+2026-11-11,01:15:16,claude roll,claude-sonnet-5-5,2606,756,0.01798
+2026-11-11,01:15:22,claude roll,claude-sonnet-5-5,2601,1355,0.02395
+2026-11-11,01:15:51,claude roll,claude-sonnet-5-5,2606,441,0.01483
+2026-11-11,01:31:02,news:triage,claude-sonnet-5-5,4514,1718,0.035232
+2026-11-11,01:45:14,claude roll,claude-sonnet-5-5,2606,675,0.01717
+2026-11-11,01:45:15,claude roll,claude-sonnet-5-5,2606,434,0.01476
+2026-11-11,01:45:17,claude roll,claude-sonnet-5-5,2601,1086,0.02126
+2026-11-11,01:45:21,claude roll,claude-sonnet-5-5,2601,1225,0.02265
+2026-11-11,01:45:53,claude roll,claude-sonnet-5-5,2606,824,0.01866
+2026-11-11,01:46:20,news:market_move,claude-sonnet-5-5,2259,426,0.013292
+2026-11-11,02:15:15,claude roll,claude-sonnet-5-5,2606,407,0.01449
+2026-11-11,02:15:17,claude roll,claude-sonnet-5-5,2533,433,0.014458
+2026-11-11,02:15:20,claude roll,claude-sonnet-5-5,2601,1269,0.02309
+2026-11-11,02:15:49,claude roll,claude-sonnet-5-5,2606,407,0.01449
+2026-11-11,02:45:14,claude roll,claude-sonnet-5-5,2606,403,0.01445
+2026-11-11,02:45:18,claude roll,claude-sonnet-5-5,2601,1031,0.02071
+2026-11-11,02:45:23,claude roll,claude-sonnet-5-5,2601,1260,0.023
+2026-11-11,02:45:57,claude roll,claude-sonnet-5-5,2606,615,0.01657
+2026-11-11,03:15:16,claude roll,claude-sonnet-5-5,2606,665,0.01707
+2026-11-11,03:15:21,claude roll,claude-sonnet-5-5,2601,1419,0.02459
+2026-11-11,03:15:58,claude roll,claude-sonnet-5-5,2606,684,0.01726
+2026-11-11,03:30:16,news:triage,claude-sonnet-5-5,4374,1647,0.033962
+2026-11-11,03:45:18,claude roll,claude-sonnet-5-5,2606,763,0.01805
+2026-11-11,03:45:19,claude roll,claude-sonnet-5-5,2533,445,0.014578
+2026-11-11,03:45:20,claude roll,claude-sonnet-5-5,2601,1225,0.02265
+2026-11-11,03:45:58,claude roll,claude-sonnet-5-5,2606,638,0.0168
+2026-11-11,04:15:19,claude roll,claude-sonnet-5-5,2606,734,0.01776
+2026-11-11,04:15:19,claude roll,claude-sonnet-5-5,2606,867,0.01909
+2026-11-11,04:15:21,claude roll,claude-sonnet-5-5,2601,1120,0.0216
+2026-11-11,04:15:22,claude roll,claude-sonnet-5-5,2601,1261,0.02301
+2026-11-11,04:18:20,claude roll,claude-sonnet-5-5,2606,389,0.01431
+2026-11-11,04:45:18,claude roll,claude-sonnet-5-5,2606,419,0.01461
+2026-11-11,04:45:22,claude roll,claude-sonnet-5-5,2601,1208,0.02248
+2026-11-11,04:45:22,claude roll,claude-sonnet-5-5,2601,1066,0.02106
+2026-11-11,05:16:37,claude eod,claude-sonnet-5-5,2112,275,0.011194
+2026-11-11,05:30:43,news:triage,claude-sonnet-5-5,4437,1659,0.034334
+2026-11-11,05:30:51,news:digest,claude-sonnet-5-5,3210,765,0.020486
+2026-11-11,06:51:32,news:earnings,claude-sonnet-5-5,3029,463,0.016742
+2026-11-11,13:01:49,news:picture,claude-sonnet-5-5,5205,591,0.026726
+2026-11-11,19:03:38,value_standard,claude-sonnet-5-5,2143,1199,0.020558
+2026-11-11,21:00:15,news:triage,claude-sonnet-5-5,4463,1901,0.036858
+2026-11-11,21:00:22,news:digest,claude-sonnet-5-5,3247,692,0.019904
+2026-11-11,21:01:58,news:picture,claude-sonnet-5-5,5176,564,0.02634
+2026-11-11,21:02:38,news:dossier,claude-sonnet-5-5,11595,1256,0.058936
+2026-11-11,21:02:54,news:dossier,claude-sonnet-5-5,10762,2201,0.065054
+2026-11-11,21:03:09,news:dossier,claude-sonnet-5-5,11421,2074,0.06642
+2026-11-11,21:03:23,news:dossier,claude-sonnet-5-5,10354,1893,0.060342
+2026-11-11,22:32:57,spreads_ai,claude-opus-5-5,3377,1003,0.047068
+2026-11-11,22:33:25,news:market_move,claude-sonnet-5-5,2471,426,0.01414
+2026-11-11,22:33:30,news:market_move,claude-sonnet-5-5,2594,392,0.014292
+2026-11-11,22:45:13,claude roll,claude-sonnet-5-5,2870,358,0.015056
+2026-11-11,22:45:16,claude roll,claude-sonnet-5-5,2781,796,0.01908
+2026-11-11,22:45:17,claude roll,claude-sonnet-5-5,2870,1002,0.021496
+2026-11-11,22:45:18,claude roll,claude-sonnet-5-5,2750,717,0.018166
+2026-11-11,22:46:06,news:picture,claude-sonnet-5-5,5179,549,0.026202
+2026-11-11,22:52:16,claude roll,claude-sonnet-5-5,2740,690,0.017856
+2026-11-11,23:15:14,claude roll,claude-sonnet-5-5,2771,759,0.01867
+2026-11-11,23:15:15,claude roll,claude-sonnet-5-5,2740,800,0.018956
+2026-11-11,23:15:19,claude roll,claude-sonnet-5-5,2776,1189,0.02299
+2026-11-11,23:30:39,news:triage,claude-sonnet-5-5,4921,1886,0.03854
+2026-11-11,23:32:14,news:picture,claude-sonnet-5-5,5185,649,0.027226
+2026-11-11,23:45:12,claude roll,claude-sonnet-5-5,2759,433,0.015362
+2026-11-11,23:45:15,claude roll,claude-sonnet-5-5,2812,678,0.018024
+2026-11-12,00:15:12,claude roll,claude-sonnet-5-5,2759,399,0.015022
+2026-11-12,00:15:15,claude roll,claude-sonnet-5-5,2728,700,0.017908
+2026-11-12,00:15:18,claude roll,claude-sonnet-5-5,2764,980,0.020852
+2026-11-12,00:32:46,news:ticker_move,claude-sonnet-5-5,3201,1460,0.0274
+2026-11-12,00:45:17,claude roll,claude-sonnet-5-5,2728,735,0.018258
+2026-11-12,01:15:15,claude roll,claude-sonnet-5-5,2764,779,0.018842
+2026-11-12,01:15:18,claude roll,claude-sonnet-5-5,2728,819,0.019098
+2026-11-12,01:30:52,news:triage,claude-sonnet-5-5,4602,1753,0.035934
+2026-11-12,01:45:18,claude roll,claude-sonnet-5-5,2728,706,0.017968
+2026-11-12,02:15:20,claude roll,claude-sonnet-5-5,2728,691,0.017818
+2026-11-12,02:15:21,claude roll,claude-sonnet-5-5,2764,1201,0.023062
+2026-11-12,02:22:55,news:market_move,claude-sonnet-5-5,2449,417,0.013962
+2026-11-12,02:44:38,news:ticker_move,claude-sonnet-5-5,3128,1361,0.026118
+2026-11-12,02:45:19,claude roll,claude-sonnet-5-5,2764,1104,0.022092
+2026-11-12,02:45:20,claude roll,claude-sonnet-5-5,2728,725,0.018158
+2026-11-12,02:45:22,claude roll,claude-sonnet-5-5,2764,1241,0.023462
+2026-11-12,03:31:05,news:triage,claude-sonnet-5-5,4626,1749,0.03599
+2026-11-12,03:45:18,claude roll,claude-sonnet-5-5,2764,873,0.019782
+2026-11-12,03:45:20,claude roll,claude-sonnet-5-5,2764,1004,0.021092
+2026-11-12,03:45:23,claude roll,claude-sonnet-5-5,2728,620,0.017108
+2026-11-12,04:00:06,claude roll,claude-sonnet-5-5,2728,759,0.018498
+2026-11-12,04:15:20,claude roll,claude-sonnet-5-5,2764,1015,0.021202
+2026-11-12,04:15:23,claude roll,claude-sonnet-5-5,2764,1256,0.023612
+2026-11-12,04:15:25,claude roll,claude-sonnet-5-5,2728,769,0.018598
+2026-11-12,04:47:44,claude roll,claude-sonnet-5-5,2728,694,0.017848
+2026-11-12,05:16:11,claude eod,claude-sonnet-5-5,2375,276,0.012256
+2026-11-12,05:30:44,news:triage,claude-sonnet-5-5,4491,1797,0.03593
+2026-11-12,05:30:51,news:digest,claude-sonnet-5-5,3401,777,0.02137
+2026-11-12,13:00:26,news:picture,claude-sonnet-5-5,5188,676,0.027508
+2026-11-12,15:59:14,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-12,15:59:14,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-12,15:59:14,claude roll,claude-haiku-5-5,1148,300,0.001
+2026-11-12,20:28:35,value_standard,claude-sonnet-5-5,2143,1314,0.021708
+2026-11-12,20:32:33,news:earnings,claude-sonnet-5-5,3170,1281,0.025486
+2026-11-12,21:00:58,news:picture,claude-sonnet-5-5,5132,693,0.027454
+2026-11-12,21:01:04,news:triage,claude-sonnet-5-5,4440,1885,0.036606
+2026-11-12,21:01:12,news:digest,claude-sonnet-5-5,3228,809,0.020998
+2026-11-12,21:01:18,news:digest,claude-sonnet-5-5,3543,673,0.020898
+2026-11-12,21:03:05,news:picture,claude-sonnet-5-5,5124,571,0.026202
+2026-11-12,21:07:03,news:dossier,claude-sonnet-5-5,11196,1852,0.0633
+2026-11-12,21:07:17,news:dossier,claude-sonnet-5-5,11909,2069,0.068322
+2026-11-12,21:07:25,news:dossier,claude-sonnet-5-5,11772,919,0.056274
+2026-11-12,21:07:31,news:dossier,claude-sonnet-5-5,7142,578,0.034344
+2026-11-12,22:30:42,news:market_move,claude-sonnet-5-5,2220,430,0.013176
+2026-11-12,22:33:05,spreads_ai,claude-opus-5-5,3186,884,0.04316
+2026-11-12,22:37:55,news:ticker_move,claude-sonnet-5-5,3238,1386,0.026808
+2026-11-12,22:45:17,claude roll,claude-sonnet-5-5,2620,753,0.018006
+2026-11-12,22:45:18,claude roll,claude-sonnet-5-5,2602,833,0.018734
+2026-11-12,22:45:22,claude roll,claude-sonnet-5-5,2518,647,0.016538
+2026-11-12,22:47:13,news:picture,claude-sonnet-5-5,5124,590,0.026392
+2026-11-12,23:08:38,news:ticker_move,claude-sonnet-5-5,2972,1245,0.024334
+2026-11-12,23:31:05,news:triage,claude-sonnet-5-5,4581,1793,0.03625
+2026-11-13,01:30:20,news:triage,claude-sonnet-5-5,4648,1920,0.037788
+2026-11-13,03:30:33,news:triage,claude-sonnet-5-5,4533,1682,0.034948
+2026-11-13,05:16:13,claude eod,claude-sonnet-5-5,2187,282,0.011564
+2026-11-13,05:30:39,news:triage,claude-sonnet-5-5,4510,1835,0.036386
+2026-11-13,05:30:54,news:digest,claude-sonnet-5-5,3322,1750,0.030784
+2026-11-13,13:01:26,news:picture,claude-sonnet-5-5,5176,613,0.02683
+2026-11-13,19:10:24,value_standard,claude-sonnet-5-5,2143,812,0.016688
+2026-11-13,21:00:20,news:triage,claude-sonnet-5-5,4481,1990,0.03782
+2026-11-13,21:00:28,news:digest,claude-sonnet-5-5,3314,723,0.020482
+2026-11-13,21:01:36,news:picture,claude-sonnet-5-5,5276,625,0.02735
+2026-11-13,21:07:51,news:dossier,claude-sonnet-5-5,11569,2071,0.066982
+2026-11-13,21:08:07,news:dossier,claude-sonnet-5-5,11286,2336,0.0685
+2026-11-13,21:08:15,news:dossier,claude-sonnet-5-5,11755,1084,0.057856
+2026-11-13,21:08:23,news:dossier,claude-sonnet-5-5,7002,969,0.037694
+2026-11-13,22:32:57,spreads_ai,claude-opus-5-5,3346,641,0.03958
+2026-11-13,22:45:10,claude roll,claude-sonnet-5-5,2605,364,0.014056
+2026-11-13,22:45:15,claude roll,claude-sonnet-5-5,2730,679,0.017706
+2026-11-13,22:45:15,claude roll,claude-sonnet-5-5,2714,779,0.018642
+2026-11-13,22:45:43,news:picture,claude-sonnet-5-5,5201,600,0.0268
+2026-11-13,22:58:15,news:market_move,claude-sonnet-5-5,2237,402,0.012964
+2026-11-13,23:16:27,news:ticker_move,claude-sonnet-5-5,2969,1082,0.022692
+2026-11-13,23:18:34,news:market_move,claude-sonnet-5-5,2237,465,0.013594
+2026-11-13,23:20:41,news:market_move,claude-sonnet-5-5,2237,455,0.013494
+2026-11-13,23:20:46,news:market_move,claude-sonnet-5-5,2364,409,0.013542
+2026-11-13,23:30:58,news:triage,claude-sonnet-5-5,4773,1969,0.038778
+2026-11-13,23:31:52,news:picture,claude-sonnet-5-5,5147,699,0.027574
+2026-11-14,01:31:13,news:triage,claude-sonnet-5-5,4555,1812,0.036336
+2026-11-14,03:30:28,news:triage,claude-sonnet-5-5,4626,1800,0.0365
+2026-11-14,05:16:39,claude eod,claude-sonnet-5-5,2126,219,0.01069
+2026-11-14,05:30:49,news:triage,claude-sonnet-5-5,4370,1788,0.035356
+2026-11-14,05:30:56,news:digest,claude-sonnet-5-5,3245,766,0.020636
+2026-11-14,13:02:04,news:picture,claude-sonnet-5-5,5290,522,0.026376
+2026-11-14,19:03:31,value_standard,claude-sonnet-5-5,2143,1241,0.020978
+2026-11-16,07:00:48,news:triage,claude-sonnet-5-5,4497,1934,0.037324
+2026-11-16,07:00:56,news:digest,claude-sonnet-5-5,3166,793,0.02059
+2026-11-16,07:02:30,news:picture,claude-sonnet-5-5,5368,647,0.027938
+2026-11-16,21:01:01,news:triage,claude-sonnet-5-5,4652,1836,0.036964
+2026-11-16,21:01:12,news:digest,claude-sonnet-5-5,3065,1701,0.029266
+2026-11-16,21:01:53,news:picture,claude-sonnet-5-5,5332,704,0.028364
+2026-11-16,21:06:02,news:dossier,claude-sonnet-5-5,11253,2447,0.069478
+2026-11-16,21:06:13,news:dossier,claude-sonnet-5-5,10808,1458,0.057808
+2026-11-16,21:06:30,news:dossier,claude-sonnet-5-5,11115,2240,0.066856
+2026-11-16,21:06:45,news:dossier,claude-sonnet-5-5,11106,1999,0.06441
+2026-11-16,22:31:58,news:market_move,claude-sonnet-5-5,2258,451,0.013538
+2026-11-16,22:32:03,news:market_move,claude-sonnet-5-5,2383,419,0.013718
+2026-11-16,22:33:11,spreads_ai,claude-opus-5-5,3231,620,0.03824
+2026-11-16,22:45:13,claude roll,claude-sonnet-5-5,2494,762,0.017592
+2026-11-16,22:46:00,news:picture,claude-sonnet-5-5,5352,526,0.026664
+2026-11-16,22:52:56,spreads_ai,claude-opus-5-5,4362,279,0.040468
+2026-11-16,23:00:09,news:market_move,claude-sonnet-5-5,2550,373,0.013926
+2026-11-16,23:04:16,news:market_move,claude-sonnet-5-5,2550,420,0.014396
+2026-11-16,23:15:11,claude roll,claude-sonnet-5-5,2866,408,0.01554
+2026-11-16,23:31:01,news:triage,claude-sonnet-5-5,4940,1908,0.038836
+2026-11-16,23:50:30,spreads_ai,claude-opus-5-5,4750,388,0.045752
+2026-11-17,00:16:08,news:picture,claude-sonnet-5-5,5340,611,0.027466
+2026-11-17,00:54:45,claude roll,claude-sonnet-5-5,2566,400,0.01426
+2026-11-17,01:30:16,news:triage,claude-sonnet-5-5,4351,1851,0.03591
+2026-11-17,01:32:17,news:picture,claude-sonnet-5-5,5287,717,0.028314
+2026-11-17,02:01:27,news:market_move,claude-sonnet-5-5,2222,465,0.013534
+2026-11-17,02:01:32,news:market_move,claude-sonnet-5-5,2354,387,0.013282
+2026-11-17,02:17:40,news:vix_spike,claude-sonnet-5-5,2224,452,0.013412
+2026-11-17,02:35:48,news:market_move,claude-sonnet-5-5,2222,461,0.013494
+2026-11-17,03:30:30,news:triage,claude-sonnet-5-5,4437,1833,0.036074
+2026-11-17,03:41:25,news:ticker_move,claude-sonnet-5-5,2731,408,0.015
+2026-11-17,04:02:54,claude review,claude-sonnet-5-5,7311,749,0.03673
+2026-11-17,05:16:20,claude eod,claude-sonnet-5-5,1936,258,0.01032
+2026-11-17,05:30:32,news:triage,claude-sonnet-5-5,4380,1568,0.033196
+2026-11-17,05:30:40,news:digest,claude-sonnet-5-5,2980,864,0.020556
+2026-11-17,13:00:28,news:picture,claude-sonnet-5-5,5240,645,0.027406
+2026-11-17,19:10:36,value_standard,claude-sonnet-5-5,2143,820,0.016768
+2026-11-17,21:00:22,news:triage,claude-sonnet-5-5,4798,1746,0.036648
+2026-11-17,21:00:35,news:digest,claude-sonnet-5-5,3478,1533,0.029238
+2026-11-17,21:00:55,news:picture,claude-sonnet-5-5,5366,543,0.02689
+2026-11-17,21:07:22,news:dossier,claude-sonnet-5-5,10767,2323,0.066294
+2026-11-17,21:07:38,news:dossier,claude-sonnet-5-5,10830,2247,0.065786
+2026-11-17,21:07:55,news:dossier,claude-sonnet-5-5,10847,2338,0.066764
+2026-11-18,21:00:32,news:picture,claude-sonnet-5-5,5475,680,0.028696
+2026-11-18,21:00:39,news:triage,claude-sonnet-5-5,4665,1864,0.037296
+2026-11-18,21:00:42,news:dossier,claude-sonnet-5-5,11211,2521,0.07005
+2026-11-18,21:00:46,news:digest,claude-sonnet-5-5,3292,821,0.021374
+2026-11-18,21:00:53,news:digest,claude-sonnet-5-5,3423,736,0.021048
+2026-11-18,21:00:57,news:dossier,claude-sonnet-5-5,11234,2106,0.065992
+2026-11-18,21:01:11,news:dossier,claude-sonnet-5-5,12553,1846,0.068668
+2026-11-18,21:01:24,news:dossier,claude-sonnet-5-5,9919,1706,0.056732
+2026-11-18,21:02:40,news:picture,claude-sonnet-5-5,5506,637,0.02839
+2026-11-18,22:32:56,spreads_ai,claude-opus-5-5,3294,811,0.042564
+2026-11-18,22:45:14,claude roll,claude-sonnet-5-5,2724,578,0.016672
+2026-11-18,22:45:16,claude roll,claude-sonnet-5-5,2724,704,0.017932
+2026-11-18,22:45:18,claude roll,claude-sonnet-5-5,2724,588,0.016772
+2026-11-18,22:45:19,claude roll,claude-sonnet-5-5,2822,539,0.016674
+2026-11-18,22:45:20,claude roll,claude-sonnet-5-5,2726,631,0.01721
+2026-11-18,22:46:18,news:picture,claude-sonnet-5-5,5509,626,0.028292
+2026-11-18,22:50:46,news:market_move,claude-sonnet-5-5,2358,407,0.013498
+2026-11-18,23:28:49,spreads_ai,claude-opus-5-5,4646,514,0.04744
+2026-11-18,23:30:24,news:triage,claude-sonnet-5-5,4880,1919,0.038706
+2026-11-18,23:59:06,spreads_ai,claude-opus-5-5,4720,533,0.048412
+2026-11-19,00:01:40,claude review,claude-sonnet-5-5,7611,1192,0.04236
+2026-11-19,00:33:20,spreads_ai,claude-opus-5-5,4718,491,0.047556
+2026-11-19,01:30:40,news:triage,claude-sonnet-5-5,4436,1929,0.03703
