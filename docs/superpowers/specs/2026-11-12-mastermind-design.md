@@ -1,6 +1,10 @@
 # The Mastermind — Claude as the best-informed mind on the book — design
 
-Date: 2026-11-12 · Status: **revision 4 (2026-11-14), for operator review**. Revision 3 moved envelope
+Date: 2026-11-12 · Status: **revision 5 (2026-11-19), RULED: ready for the implementation plan.**
+Revision 5 adds the drawdown post-mortem (§0.5, §2.4), the prerequisites it found that neither spec
+covered (§6A), the restart of the paper run (§6A P9), and the value verdict's conversion to menus
+(§10.9). **Every decision D1–D29 and H11–H16 is ruled. §16.0 is the authoritative ruling table for
+the plan writer.** Revision 3 moved envelope
 repair, book repair and every spreads decision into a prerequisite spec,
 `2026-11-13-risk-envelope-design.md` (the **envelope spec**), and adjusted this spec to match (§0.3).
 Revision 4 adds long options: Claude's hedge roles, a paper-only put budget for Claude, a shadow
@@ -113,6 +117,48 @@ record-only in live, and never promoted to live by this spec.
 | 29 | **Measurement**: long-option items valued from captured quotes, not stored IV; hedge, paper-budget and Track D records; honest time to evidence | §11.3, §11.6, §11.11–11.13 |
 | 30 | Placement, interaction, prior rulings, phasing, decisions H11–H16, unverified | §8.1, §9.1, §12–§17 |
 
+### 0.5 Revision 5 (2026-11-19): the drawdown post-mortem
+
+The operator asked: *"look at the current account status. It is deep in drawdown. How is it faring
+compared to other portfolios and the rest of the market? Would this be considered a failed system? be
+objective and honest. What are some lessons that can be learnt, things that need to be fixed etc? have
+they already been adressed with recent changes from the risk-envelope design or elsewhere? fold these
+fixes into the design spec … So that what needs to be addressed is fixed before that plan is created."*
+
+The answer is §2.4. Most of the lessons are already specified in the envelope spec, and its code is
+on `main`. But in the running paper system its admission limits are still `record`, and S10 has risen
+since the build. Eight lessons are not covered anywhere. They become §6A and gate the plan.
+
+| # | Change | Where |
+|---|---|---|
+| 31 | **New §2.4, the post-mortem.** The account against indexes and options-income funds, where the loss came from, a verdict, and twelve lessons, each with its status: addressed, built but dormant, or not addressed | §2.4 |
+| 32 | **New §6A, the post-mortem prerequisites** the envelope spec does not cover: P1 a mandate and a scoreboard; P2 the S10 target checked against the mandate; P3 activation and control liveness; P4 discretionary trades; P5 a drawdown floor before live; P6 universe construction; P7 a stabilisation gate on new authority; P8 execution integrity | §6A |
+| 33 | **Proposed hard line 12: authority follows compliance** (D22) | §3 |
+| 34 | §8.1 gains the scoreboard, the protection-status line and the discretionary budget | §8.1 |
+| 35 | **D11 gets a concrete recommendation and blocks the plan**, together with the account mandate (D23) | §16.1, §16.4 |
+| 36 | §15 gains a post-mortem prerequisite row. "E2 complete" now means E2's observable signals (§6A P3), not its merge. HP's paper application waits for the P7 gate (D29) | §15 |
+| 37 | Decisions D22–D29 | §16.4 |
+| 38 | Unverified items from the post-mortem | §17 |
+| 39 | **The operator's rulings R5–R14** (below) applied throughout. §16.0 holds every decision's final ruling | §0.5, §16.0 |
+| 40 | **New §6A P9: Run 2**, the liquidation and restart of the paper account, with what re-anchors | §6A P9 |
+| 41 | **New §10.9:** the value verdict's fair value converted from clamped drivers to a Python-built scenario menu (D15) | §10.9 |
+| 42 | §8.5: the track record's format and size limit (D18), and what Run 1 contributes to it | §8.5 |
+
+**The operator's rulings (2026-11-19, binding).** These continue §0.2's R1–R4.
+
+| # | Ruling |
+|---|---|
+| R5 | **Run 2 (§6A P9).** End Run 1 and liquidate the whole paper book: every share, the manual and the wheel-assigned alike, and every short put. Keep the account (≈ $586k) and its databases, and restart from cash. The stated purpose is to test the repaired system cleanly, and later the Mastermind, from a flat book |
+| R6 | **The mandate (D23, D11): index-like risk while earning income.** Aim to beat buy-and-hold of SPY/QQQ at the same risk. When the LES signal fires, open sleeve CSPs or LES share buys on the 3× ETFs, inside the envelope (envelope spec §3.5) |
+| R7 | **The S10 target (D24):** the 13-week glide to 15%, then a second glide to **10% by week 26**, plus an **S20 ≤ 25%** admission limit |
+| R8 | **The drawdown floor (D27):** escalation in paper now, at 15%. Automatic de-risk at a hard floor of 20% from the live start's high-water mark, **as a precondition of the live cutover** |
+| R9 | **Hard line 12 and the gate (D22, D29) adopted.** LES `on` and HP's paper application wait for the P7 gate. Until then their would-be trades are recorded and valued in shadow |
+| R10 | **Discretionary trades (D25):** the checked `/buy` and `/sell` path, with a 5-point S10 budget; TWS stays usable |
+| R11 | **Stacking across books (D26):** block a new wheel CSP at ≥ 10% of NLV held and > 2 ATR underwater; halve it for a smaller holding that far underwater. Large slots count every book's holdings. The operator asked whether adding to an underwater name "helps it recover faster". The answer given: averaging down lowers the break-even price, not the time to recover, and enlarges the same bet. He chose the rule |
+| R12 | **The universe (D28):** the review report, the IV/realised ≥ 1.05 and liquidity bars, and at least a third of `actively_wheeling` names outside `regime.tech_linked` |
+| R13 | **D1, D18 and every converged recommendation adopted as written:** D2–D10, D12–D14, D16, D17, D19–D21, H11–H16. On D18 the operator asked whether a track record would "overload or muddy" the context, and whether an overall report would be better. The resolution is §8.5: an account summary first, per-name cells only once they reach n ≥ 10, a fixed size limit, and Run 1 shown as one labelled summary line, never as cells |
+| R14 | **The value verdict (D15): convert to menus now**, inside this spec's plan (§10.9), not later |
+
 ## 1. Intent and destination
 
 The operator's vision, verbatim: *"I ultimately envision the system to be fully autonomous, with
@@ -218,6 +264,103 @@ for the reviewer's inputs. But the larger findings are not about Claude:
 Envelope repair and book repair (now the envelope spec, §6–§7 here) are where the money is. Claude's
 knowledge layer (§8) is where its future authority is earned.
 
+### 2.4 The drawdown post-mortem (revision 5, 2026-11-19)
+
+**Sources.** `income_system.db` read `mode=ro` on 2026-11-19 (journal, `portfolio_snapshots`,
+`broker_executions`, `envelope_snapshots`, `repair_proposals`, `fx_rates`). Benchmark total returns
+come from yfinance adjusted closes, fetched the same day [W]. The account is IBKR **paper** (`DUQ`), so
+no real money was lost. This is the failure paper trading exists to find before live money is at risk.
+
+**A units break in the series [V].** The EOD journal reported NLV in SGD until Oct 7 and in USD from
+Oct 9 on: cash fell from 333,683 to 262,426 overnight, a ratio of 0.786. Pre-Oct 9 values below are
+converted at the ledger's `fx_rates` (SGD 0.7798 on Jun 15, 0.78125 on Oct 7) [M]. **Corrected by the
+Run 1 record:** the break *did* reach a breaker. On Oct 12 the old high-water-mark leg compared a USD
+NLV of $786,836 with an SGD high of 1,044,124 and halted entries on a 24.6% phantom drawdown (`14cbf9a`,
+`approval.log`). Any account series that spans Oct 9 must normalise it (§6A P1).
+
+**The authoritative Run 1 figures are in `docs/runs/run-1/README.md`** (written 2026-11-19 from the booked
+liquidation). They differ slightly from this section's marks:
+- the end NLV is $588,867, so −25.2% from the start and −28.0% from the peak;
+- the attribution is manual −$163.4k (71.4%) and the system −$65.3k (8.0% of the peak);
+- `claude_cut` has 10 cuts with $6,257 avoided (n = 5, p ≈ 0.19);
+- the spreads baseline book is −$3,371 on 15 trades.
+
+Where they differ, the record governs.
+
+**The account against the market.** Start: Jun 22, USD ≈ 787.6k. Peak: Oct 7, ≈ 817.6k. Now: Nov 18
+18:00Z, 585.8k [V]. There were no deposits or withdrawals, only $6.3k of USD interest [V].
+
+| Since | Account | SPY | QQQ | SMH | JEPI | JEPQ | XYLD | QYLD | SVOL |
+|---|---|---|---|---|---|---|---|---|---|
+| The Oct 7 peak | **−28.3%** | −6.3% | −13.4% | −26.7% | +0.6% | −10.4% | −4.2% | −7.5% | −12.9% |
+| Max drawdown since Oct 7 | **−30.1%** (Nov 5 close) | −6.4% | −14.6% | −28.4% | −3.3% | −11.5% | −4.4% | −9.0% | −14.7% |
+| The Jun 22 start | **−25.6%** | −1.9% | −11.0% | −31.5% | +3.9% | −6.6% | +1.4% | −2.8% | −4.9% |
+
+- From the peak, the account lost **2.1× QQQ, 4.5× SPY, and more than the semiconductor ETF**.
+- Every options-income fund in the table lost *less* than its own index. JEPQ lost 0.78× QQQ, QYLD
+  0.56× QQQ and XYLD 0.67× SPY. The account lost more than any index in the table.
+- Its realised beta was 1.87 to QQQ (R² 0.94) and 2.74 to SPY (envelope spec §2.6).
+- A 1× cash-secured put-writer cannot lose more than its index's fall less the premium it collects. Over
+  this window that floor is about −5% on SPY and −12% on QQQ [M].
+
+**Where the loss came from** (−$231.8k from the peak; inputs [V], split [M]: Oct 7 closes against the
+Nov 18 snapshot marks):
+
+| Source | Since Oct 7 | Share |
+|---|---|---|
+| Stock bought outside the system: AMD 300, BAC 1,000, GOOGL 300, NVDA 500, SOXL 500, plus MARA 1,000 from a pre-system manual put | ≈ −$162k | ≈ 70% |
+| — of which NVDA and SOXL, both bought on Oct 7 (the peak session; SOXL is a 3× fund) | ≈ −$95k | ≈ 41% |
+| Everything the system did: wheel-assigned GOOGL 200, HIMS 2,000, PLTR 300 and NVDA 300; option P&L, including −$11.0k of leveraged-put stops; spreads +$0.6k; interest | ≈ −$69k | ≈ 30% (−8.5% of peak NLV) |
+
+**What the income layer earned against it.**
+- October sold $38.0k of put premium and $6.2k of calls (envelope spec §2.2).
+- Realised put P&L was −$10.2k (IBKR's column).
+- The wheel's assigned shares sit ≈ $63k below their strikes [V]: GOOGL −$13.2k, HIMS −$21.0k, PLTR
+  −$11.9k, NVDA −$16.9k.
+- Since Oct 7 the EOD journal's `realized_pnl` printed between −$4.7k and +$3.7k a day while NLV fell
+  $232k. The daily headline measured premium, not the account.
+
+**Verdict, plainly.**
+
+- **Against its own mandate, in this episode, the system failed.** An income system with a realised
+  beta of 1.9 to QQQ is not running an income strategy. It is running a leveraged long-tech book with
+  a premium overlay. October's gross premium ($44.2k) is less than the $63k its own assigned shares
+  sit below their strikes, and under a fifth of the account's $232k loss.
+- **The failure is risk control, not the idea of selling premium.**
+  - It had no working account-level limit (§2.3).
+  - Its slow breaker was removed mid-slide.
+  - It counted nothing the operator bought by hand.
+  - It kept selling puts into a book already at 1.3–1.5× gross, on the same factor and partly on the
+    same names.
+- **The system's own trading lost about 8.5% of the account** while QQQ lost 13.4% and JEPQ 10.4%.
+  Taken alone, that is not a disaster. But it was layered on a book whose risk the manual stock had
+  already spent.
+- **This is not evidence that the premium idea cannot work. Nor is there yet any evidence that it
+  does.**
+  - The window is six weeks, one sector crash, paper fills.
+  - Realised put P&L is negative.
+  - Claude's one lever has p ≈ 0.37 (§2.2), and the verdict was a rubber stamp (§2.1).
+- **What makes this a lesson rather than a loss:** the fixes are specific, mostly built, and **not yet
+  switched on** (L1, L8 below). Until they are on and verified, the system that failed is the system
+  that is running.
+
+**Lessons, and their status.**
+
+| # | Lesson | Evidence | Status |
+|---|---|---|---|
+| L1 | No account-level limit: the gross cap was dead code behind `vx.active` | §2.3 | **Built, dormant.** S10 and U_ew (envelope spec §3.4.1–3.4.2) are on `main`, but `envelope_snapshots.enforce` reads `record`. S10 was **23.5%** on Nov 18, up from 22.0% on Nov 12, against an L(t) of 24% (also unenforced); S20 was **46.5%**; U_ew 1.38 [V] → §6A P3 |
+| L2 | Breakers stop openings, never inventory. The slow leg was removed on Nov 5 | §2.3 | **Partly.** The slow breaker is built (E14) and ships `off`. **Nothing bounds the drawdown of inventory**: no rule sells (OR3), and repair is tap-only (P10) → §6A P5 |
+| L3 | 70% of the stock, and of the loss, came from buys no gate saw. Two of them were on the peak session, one in a 3× fund | above | **Display only** (E13) → §6A P4 |
+| L4 | No mandate and no benchmark; the headline measured premium | above | **Not addressed.** D11 is open → §6A P1 |
+| L5 | The S10 target of 15% at SPY −10% is 1.5× SPY's own loss. After the glide the book is still riskier than SPY, and about twice a cash-secured put-writer [M] | §6A P2 | **Not addressed** → §6A P2 |
+| L6 | Correlated concentration. Three names held 64.8% of NLV (§2.3), and 23 universe names are tech-linked. The wheel sold puts on names already held underwater: NVDA 205P/210P assigned against 500 shares bought at $237.75; six CRWD lots | §2.3; envelope spec §2.1 | **Partly.** The tech-linked group cap and the stacking rule (E15) do not count shares held in another book. Two large slots allow 2 × 25% → §6A P4, P6 |
+| L7 | Leveraged puts lost $11.0k. The manual SOXL shares are −68% | envelope spec §2.2 | **Addressed by design:** leveraged CSPs off by default, the sleeve, LES (envelope spec §3.5). LES ships `record` |
+| L8 | Assigned and underwater stock earns nothing (`min_strike_vs_basis: 1.00`) | §2.3 | **Built, dormant.** The E12 replay and tap-only repair proposals exist; there are **0 `repair_proposals` rows** to date [V] → §6A P3 |
+| L9 | Stored IV collapsed on stress days, so the gates were loosest at the worst time | envelope spec §2.6 | **Addressed:** live greeks gate (H7) |
+| L10 | Execution integrity. On Oct 23 a HIMS roll hit IBKR error 103 ("Duplicate order id") and left **+10 long** Oct 30 28P, found by hand and exercised on Oct 30. Separately, a Nov 10 spreads phantom close | memory log 2026-10-27; envelope spec §2.3 | **Partly.** Spreads booking fixed (`9da9e8a`). An alarm on unintended wheel positions is unverified → §6A P8 |
+| L11 | Build order. Books and Claude authority were added (value, news, spreads, hedge, LES, this spec) while the core book had no working limit | git log | **Not addressed** → §6A P7, hard line 12 |
+| L12 | Limits shipped with their own calibration warning: `max_risk_units_per_*` says "Re-derive with `python -m scripts.capacity_report` before trusting them" | `config/examples/risk_limits.yaml` | **Not addressed** → §6A P3 |
+
 ## 3. Permanent hard lines
 
 These never move, at any rung. Changing one is a change to the core invariant and needs its own
@@ -264,6 +407,15 @@ ruling.
 11. **No live opening buy is caused by Claude under this spec** (revision 4). Claude's paper put
     budget is record-only in live, refused by the Rules Engine under `LIVE_TRADING=true`; going live
     needs its own later ruling.
+12. **Authority follows compliance** (revision 5, **adopted 2026-11-19, D22 / R9**). No Claude rung above R0 is
+    granted or promoted, and no automatic order path that adds risk leaves `record`, while the §6A P7
+    gate is shut:
+    - the envelope is not enforced in paper; or
+    - the book is above L(t) after the glide starts; or
+    - the account is in mandate breach; or
+    - a gate canary has failed recently.
+
+    Record-only work continues, because it is how evidence is made. Demotion stays free.
 
 ## 4. Risk classification, not "reduce-only"
 
@@ -434,6 +586,322 @@ which is now a prerequisite of this spec. What moved, and what changed on the wa
 What stays here: the dependency. Every risk-changing rung needs the envelope spec's phase E2 complete
 and the harness passing (§15).
 
+## 6A. Post-mortem prerequisites (revision 5)
+
+These are the §2.4 lessons that neither spec covered, and the activation the envelope spec assumed but
+did not define. All of them are deterministic, and none gives Claude authority. P1, P3, P4 a and P8
+are built before Phase 2. P2, P4 b–d, P5, P6 and P7 follow operator rulings (D22–D29). The plan is
+written after D11 and D22–D24. Where a fix changes an envelope level, the ruling amends the envelope spec. This spec
+only records the dependency.
+
+### P1. A mandate and a scoreboard (L4; D11, D23)
+
+**Problem.** Nothing in the estate says what "doing well" means for the account, and nothing compared
+it with anything.
+- The account lost 2.1× QQQ without one alert that said so.
+- The EOD headline printed small realised gains on days NLV fell by $30k or more.
+- IBKR's realised column books zero on an assigned put, so premium looks like income while the loss
+  hides in the stock's basis.
+
+**The mandate (D23, ruled R6): index-like risk while earning income, aiming to beat buy-and-hold at
+the same risk.** The plan implements exactly these terms.
+
+- **Benchmark:** a 50/50 SPY/QQQ buy-and-hold, total return (dividends reinvested), rebalanced
+  monthly.
+- **Risk budget ("the same risk"):**
+  - the 60-session realised beta of the flows-adjusted NLV to the benchmark is ≤ **1.0**;
+  - the drawdown from the high-water mark is ≤ **1.1×** the benchmark's drawdown over the same window.
+    The 0.1 is a tolerance for measurement noise, not extra risk.
+- **Return objective:** excess total return over the benchmark, rolling 12 months, reported. It is
+  never a gate.
+- **Leveraged opportunities** (the LES sleeve and the bottoming lot, envelope spec §3.5) are part of
+  the mandate. They count inside the same beta and drawdown budget, at their leverage.
+- **Diagnostics beside the benchmark, never benchmarks:**
+  - a 50/50 SPY/QQQ cash-secured put-write replayed on the system's own rules (30–45 DTE, 0.25 delta,
+    the profit-take, the loss line and the roll policy). It separates "the premium engine worked" from
+    "beta did the work";
+  - the published income funds JEPI, JEPQ, XYLD and QYLD.
+- **Said plainly, so the record is read fairly:** a premium-selling book at beta 1 gives up upside in
+  strong rallies, because calls are called away and put credits are capped. Beating buy-and-hold at
+  equal beta is a high bar. The scoreboard reports the excess return by market leg (up, calm, down),
+  so a shortfall in a rally is visible as such and not mistaken for a failure of the risk side.
+
+**The scoreboard.** `src/reporting/scoreboard.py`, read-only tier, same fences as `pnl.py`. It
+imports nothing from `src.claude`, writes nothing, and the trading path never imports it.
+- **One flows-adjusted USD NLV series**, daily. It normalises the Oct 9 SGD→USD break through
+  `fx_rates`, and adjusts for deposits and withdrawals from `broker_cash_events`.
+- **P&L by book** from the ledger's `book` tags plus marks: wheel, manual, spreads, LES, hedge, value.
+  The system's record excludes `manual`. The mandate covers the whole account.
+- **Benchmarks:**
+  - the put-write replay;
+  - SPY and QQQ;
+  - the four income funds. The research worker adds their price history: a data-only addition, not
+    a universe edit.
+- **Risk:** realised beta to SPY and QQQ over 20 and 60 sessions; drawdown from the high-water mark on
+  the slow breaker's window; S10 against L(t) and the mandate's target.
+- **The mandate state:** in / breach, with the leg that breached. **An alert, never a gate.** Gates are
+  the envelope's. It feeds hard line 12.
+
+**The headline changes.** The EOD report, the Telegram account card and the web Home lead with:
+1. NLV return against the benchmark;
+2. drawdown;
+3. the mandate state.
+
+Realised premium becomes a secondary line, labelled "premium booked (assignments book zero)".
+
+**Done when** the scoreboard reproduces §2.4's tables from the database, and the mandate state has
+been posted for 10 sessions.
+
+### P2. The S10 target against the mandate (L5; D24)
+
+S10 = 15% at SPY −10% is a loss of 1.5× SPY's own. For comparison [M: Black-Scholes, 30 DTE, 0.25
+delta, IV unchanged], a fully cash-secured put-write loses about 6–7% of strike on SPY in that
+scenario, and about 8–9% on QQQ (β ≈ 1.2). So the glide's destination is about twice the put-write
+benchmark. Even after the glide, the book is riskier than holding SPY. S20 is **46.5%** today and is
+not limited.
+
+**Ruled (R7):**
+- the 13-week glide to 15% stands;
+- a second glide, from 15% at week 13 to **10% at week 26**;
+- an **S20 ≤ 25%** admission limit beside S10. Both use full revaluation and S10_gross's
+  no-long-option convention.
+
+Notes for the plan:
+- 10% is about SPY's own S10. The 50/50 benchmark's S10 is about 11% (QQQ β ≈ 1.2) [M]. So at the
+  target, the book carries slightly less shock risk than its benchmark. That is consistent with R6's
+  "≤ 1.0".
+- It is an envelope level (§5.1): the plan amends the envelope spec's E4 and `risk_limits.yaml →
+  envelope:` (the second target, its week and the S20 limit, in the example config, with tests).
+- With Run 2 starting from cash (P9), the first glide starts below 15%. P9 says what L(t) does then.
+
+### P3. Activation and control liveness (L1, L8, L12)
+
+**Problem.** A control that never fires cannot be told apart from one that does not exist.
+- `gross_notional_cap` never wrote a `risk_verdicts` row in its life.
+- Today the envelope is `record`, the slow breaker ships `off` and no repair proposal has been
+  produced.
+- S10 rose after the build.
+- Merging the code changed nothing in the account.
+
+**Fixes:**
+
+- **a. A protection-status line**, deterministic, on the EOD report, the Telegram account card and the
+  web Home. For each protection it shows on / record / off, the date it last changed and the date it
+  last fired. The protections: envelope enforce, slow breaker, stacking rule, group cap, leveraged
+  sleeve, repair proposals, hedge bridge, LES.
+- **b. Gate canaries.**
+  - Each admission limit gets a synthetic candidate, built daily in-process from today's book, which
+    it must reject. The limits covered: S10 over L(t), U_ew, per name, the group cap, stacking, the
+    leveraged sleeve, and the discretionary budget (P4).
+  - Only the pure validators run: no order, no approval row, no quote request.
+  - A canary that passes raises a data alert and shuts the P7 gate.
+  - The module is deterministic tier, on `tests/test_regime_fence.py`'s list.
+- **c. An activation ledger.**
+  - Every envelope switch and §6A fix carries a target date and an observable live signal. Examples:
+    the first S10-reasoned reject, the first repair proposal answered, 10 consecutive canary passes.
+  - **The envelope spec's E2 is complete when its signals are present, not when it is merged.** Phase
+    2 here waits on those signals (§15).
+- **d. Calibration debts.** The `max_risk_units_per_*` warning is resolved before E2 completes:
+  `python -m scripts.capacity_report`, then an operator ruling on the values. A shipped limit carrying
+  a "do not trust" note is a defect.
+- **e. Daemons run what was merged.** The activation ledger records each process's start time against
+  the commit that last touched it. A stale process blocks its signals.
+
+### P4. Discretionary trades (L3, L6; D25, D26)
+
+**Problem.**
+- Manual buys were 70% of the stock and about 70% of the loss.
+- S10 reads the whole account, so every manual buy silently spends the wheel's headroom, and the
+  system's results absorb it.
+- The operator cannot be gated in TWS, and should not be (E13 stands). But nothing offers a gated path.
+
+**Fixes:**
+
+- **a. Attribution everywhere.**
+  - The scoreboard, the EOD report, web P&L and every record in §11 split P&L by book.
+  - No figure that judges the system, or Claude, includes discretionary P&L.
+  - **The ledger's `book` tag is not enough** (Run 1 record, lesson N2). The ledger tags every
+    assigned share `manual`, because an assignment carries no `orderRef`. A scoreboard that dropped
+    `manual` would erase about −$62k of the wheel's own Run 1 loss.
+  - Attribution therefore reads the origin of each share lot:
+    - an assignment execution (code `A`) against a wheel short (`fills` / `campaigns`) is **wheel**;
+    - a `manual:` or untagged opening buy is **discretionary**;
+    - `les:`, `value:`, `hedge:` and spreads keep their own books.
+  - The plan either tags assignments at ledger ingest or derives the origin in the scoreboard. It also
+    tests both cases.
+- **b. A gated discretionary path** (D25).
+  - A `buy` / `sell` share intent from Telegram and the web, drained by `approval_service` like
+    every web write.
+  - It builds the order through `src/execution/stock_orders.py`, `validate_stock_order` at decision
+    and send time, with `orderRef = "manual:<id>"`.
+  - The card shows S10, S20, U_ew, T20 and L(t) before and after, plus the discretionary budget left.
+  - Inside the budget, one tap sends it. Over the budget, a second tap with a typed reason, which is
+    logged.
+  - Shares bought this way stay inside the wheel's W, as manual shares are today, so covered calls may
+    be written on them. The ledger tags `book="manual"`; no new exclusion.
+  - The path is tap-only by construction: no LLM output selects, sizes or prices it.
+- **c. A discretionary budget** in S10 points (D25, ruled R10).
+  - **5 points.** That is a third of the first target, and half of the 10% second target. At 10% the
+    budget stays 5 points, so the system's own room shrinks to 5. The plan states this on the card.
+  - The scoreboard shows its use. Beyond it, the mandate state names the manual book as the cause.
+- **d. Stacking across books** (D26).
+  - The envelope spec's stacking rule (§3.4.4) also counts shares held in any book.
+  - **Ruled (R11):** a new wheel CSP is blocked on a name where the account holds ≥ 10% of NLV and
+    the holding is more than 2 ATR (14-day) below its wheel-adjusted basis. It is halved, rounding
+    down (and so blocked at 1 lot), on a name the account holds below 10% that is that far
+    underwater. "Holds" counts every book's shares plus the strike of the name's open short puts.
+  - The large-slot rule (`max_large_positions: 2`, 25% each) counts manual holdings when it allots a
+    slot.
+  - This closes the pattern of the wheel averaging down on top of a manual oversize position.
+
+### P5. A drawdown floor before live (L2; D27; reopens OR3 and P10 for live only)
+
+**Problem.** The breakers stop openings. They cannot stop an assignment, and no rule sells. So the
+account's drawdown is bounded only by the operator's taps. In this episode no trim was possible: the
+stock-sell path did not exist until the envelope build, and no repair proposal has been produced since.
+
+**Options:**
+
+- **(a) The status quo:** tap-only everywhere.
+- **(b) Escalation.** At a flows-adjusted drawdown of X% on the slow window:
+  - every repair proposal that would bring S10_gross to L(t) is posted daily as a must-answer card;
+  - CSP openings stop until S10_gross ≤ L(t);
+  - a "hold" answer is logged with a reason.
+- **(c) Automatic de-risk at a hard floor Y% > X%.** Python sells trims through `stock_orders.py`, both
+  gates run, until S10_gross reaches the target. The order is: LES and leveraged shares first, then
+  the largest S10 contributor. Deterministic; no LLM output selects, sizes, prices or gates a sale.
+
+**Ruled (R8):**
+- **(b) in paper now**, at X = 15%.
+- **(c) as a precondition of the live cutover**, with Y set by the operator from the mandate:
+  recommended 20%, from the live start's high-water mark.
+- Like the slow breaker's window, the floor's high-water mark resets at adoption. The account is −28%
+  today, so any floor measured from the old peak would bind at once.
+- Ruling (c) reopens OR3 ("no rule forces a sale") and P10 (repairs tap-only at every level), for live
+  only. It adds a second automatic stock path to CLAUDE.md's stock-order section.
+
+### P6. Universe construction (L6; D28)
+
+**Problem.** The universe was built for premium, and high premium came from high-beta names:
+- HIMS −48% and MARA −57% from the start;
+- 23 tech-linked names, so the group cap leaves headroom with nowhere to go;
+- SOXL's IV/realised median is 0.98. Premium from a name with no variance premium is payment for crash
+  risk at a fair price.
+
+**The fix: a deterministic universe review report.** Read-only tier, human-read, never auto-applied
+(the `eval/` fence pattern). Per name:
+- the 1-year IV/realised median;
+- beta to SPY and QQQ, and correlation to the book;
+- option liquidity (share of quotes ≤ 10% of mid);
+- the wheel's realised record.
+
+**Ruled (R12).** The operator's edit of `universe.yaml`, made after the first report, follows these
+rules:
+- `actively_wheeling` names need an IV/realised median ≥ 1.05 over a year and a liquidity pass;
+- at least a third of `actively_wheeling` names sit outside `regime.tech_linked`, for example
+  financials, staples, health care, energy, utilities, and SPY once freed.
+
+The file stays human-edited. An edit triggers the doc rule (`UNIVERSE_RESEARCH.md`,
+`_UNIVERSE_CONTEXT`).
+
+### P7. A stabilisation gate on new authority and new books (L11; D22, D29; ruled R9)
+
+**The gate is shut while any of these holds:**
+1. the envelope's `enforce` is not `on` in paper;
+2. S10_gross > L(t) for more than 5 consecutive sessions after the glide starts;
+3. the scoreboard's mandate state is in breach on any of the last 20 sessions;
+4. a gate canary failed in the last 10 sessions.
+
+**While it is shut:**
+- no Claude rung above R0 is granted or promoted (hard line 12);
+- no automatic path that adds risk leaves `record`. That covers LES `on`, and HP's paper application
+  (D29: OR10's grant stands, but its application is sequenced after the gate);
+- risk-reducing paths are exempt: the hedge bridge, repair proposals, P5's escalation;
+- record-only work continues, including Phase 0–3's R0 records and HP's would-be letters, valued in
+  shadow.
+
+### P8. Execution integrity (L10)
+
+- **An unintended position is an incident.** After each cycle a reconciliation pass compares broker
+  positions with what the books can explain. It alerts on:
+  - any long option outside the hedge book;
+  - any short stock;
+  - any position whose size or sign no book accounts for.
+- **The test:** replay the Oct 23 HIMS sequence (error 103, partial recovery through
+  `reqExecutions`). The alarm fires before expiry.
+- Whether such an alarm exists today is unverified (§17). Settle it in Phase 0.
+- **The campaign record (Run 1 record).** GOOGL's campaign showed `assigned = 0` after two
+  assignments, so `mark_campaign_assigned` missed them. A campaign's assigned state feeds the
+  covered-call basis floor. Phase 0 diagnoses this and adds a test from the Oct 26 GOOGL sequence.
+- **The audit trail (Run 1 record, N4).** `portfolio_snapshots`, `risk_verdicts` and
+  `envelope_snapshots` are pruned or started late, so Run 1 cannot be fully audited. Retention for
+  these tables covers at least the current run plus one.
+
+### P9. Run 2: the liquidation and restart (ruled R5)
+
+**What happens.** The operator liquidates the whole paper book (every share in every book, every
+short put) and restarts from cash in the same account (≈ $586k), keeping every database. Run 1 (Jun 22
+to the liquidation date) is closed. Its record is §2.4.
+
+**The procedure.** These are operator steps. The plan supplies a checklist, and a script where one is
+missing.
+1. **Stop new openings first.** Use the halt or kill switch, or the OBSERVE autonomy level, so the
+   wheel sells no put or call while the book is being closed. Cancel open approvals and dismiss open
+   repair proposals.
+2. **Close during RTH** with limit orders at or near mid:
+   - buy back every short put;
+   - then sell every share line.
+
+   Expiring shorts may simply be bought back; letting them run to an assignment would re-create
+   stock.
+3. **Let the ledger and the reconciler book it.** `reconcile_external_closes` books a TWS buy of a
+   wheel short as a manual close. Share sales land as executions under their existing books. Check
+   that no phantom position, open `campaigns` row, open approval or `repair_proposals` row refers to a
+   closed position.
+4. **Mark the line.** A `run_boundary` row (date, NLV, `run=2`) in the trading DB, written by an
+   operator command. Every report reads it.
+5. **Re-anchor, then resume.** The steps below, then lift the halt.
+
+**What re-anchors at the boundary.**
+- **The scoreboard:** Run 2's baseline NLV and high-water mark start at the boundary. Run 1 stays
+  queryable, labelled, and never mixed into Run 2's figures.
+- **The envelope glide.** L(t) never starts above the target. With a flat book the measured S10 is
+  about 0, so **L(t) = the current target from day one**: 15% until week 13 of the schedule, then
+  gliding to 10% by week 26, measured from the boundary.
+  - **[V, 2026-11-19 activation audit]** The glide is one `system_settings` row (`envelope_glide`),
+    written once on the first live measurement while `envelope_enforce` reads `on`, with
+    `start = max(round_up(S10), target)`. So switching `on` after the book is flat anchors at the
+    target, flat from day one.
+  - There is no supported re-anchor: today only a manual SQL delete of that row does it. The plan
+    adds `scripts.envelope reset-glide`.
+  - An anchor taken before the liquidation (≈ 24%) must not survive into Run 2. It would let an empty
+    book refill to 24%.
+- **Candidate betas [V, defect].** `shock_inputs.build_inputs` reads betas only for names in the book.
+  With `envelope_enforce on`, a put on any name not held is refused `envelope_unmeasured`. On a flat
+  book that is **every** put. The fix (branch `fix/envelope-candidate-betas`, 4121b2d: universe names
+  added to the beta read) must be merged and the trading service restarted before the envelope goes
+  `on` in Run 2.
+- **Campaigns [V, misbook risk].** An open `campaigns` row closes only when its shorts are bought back
+  and it was never assigned. Selling the shares closes nothing. A later put on the same name would
+  attach to the old campaign, and `adjusted_cost_basis_for` would subtract that campaign's old premium
+  from the new shares' basis. The plan adds a `close-flat` command. Until it exists, open campaigns
+  are closed by hand at the boundary.
+- **One session.** `reconcile_external_closes` reads `reqExecutions`, which returns the current day
+  only. Liquidate in one session; the Flex pull and the ledger sweep are the backstops.
+- **The slow breaker and the P5 floor:** their windows and high-water marks restart at the boundary,
+  as after a manual reset.
+- **The P7 gate:** it opens only once the envelope is `on`, the canaries have 10 clean sessions, and
+  Run 2 has no mandate breach. So LES `on` and HP wait at least about two weeks after the boundary,
+  by design.
+- **§11 evaluation windows:** every pre-registered record (R0 and later) starts in Run 2. Run 1
+  episodes may be analysed, labelled, but count toward no bar.
+
+**What this tests, honestly.** The repaired envelope caps how much risk the book holds. It does not
+make an individual put less likely to be assigned: entry deltas are unchanged (0.20–0.35). Fewer
+puts will end underwater *in total* because the stacking rule (P4 d), the group cap and the universe
+rules (P6) stop the pile-up on falling names. Single assignments will still happen, and the wheel's
+answer to them (calls at the ruled `cc_basis_floor`, repair proposals) is the part still unproven.
+
 ## 7. Book repair: Claude's part
 
 The book's loss is inventory, not new flow. Every lever in rev 1 acted on new CSPs. **Revision 3
@@ -498,6 +966,10 @@ assigned.
   protected = S10_gross − S10_net, budget used and left, the stress-block state, the next scheduled
   roll); Claude's paper budget (units banked, open, spent); the VIX/VXN state with the conditional
   payoff per premium dollar for that state (envelope spec §2.6).
+- revision 5: the scoreboard (§6A P1): flows-adjusted NLV return by book and against the benchmark,
+  20/60-session realised beta, drawdown from the high-water mark, the mandate state; the
+  protection-status line (§6A P3); the discretionary budget's use (§6A P4). Claude reads the account's
+  outcome, not only its positions.
 
 **Sources.** The news process already reads `portfolio_snapshots` and the regime record, and that
 covers most of this. The **roll policy's current answer** cannot come from `evaluate_roll`, which
@@ -556,7 +1028,27 @@ What stays out:
 - its own scorecard, until a bucket has ≥ 100 resolved items (§11.8).
 
 This needs decision 1 reopened, because decision 1 says memory is "not a record of past opinions
-or trades".
+or trades". **Reopened (D18, ruled R13), in this form:**
+
+**Format, so it informs rather than muddies.** This is not the old `claude_memory`, which grew to 861
+rows of write-only notes. It is a deterministic block rebuilt from scratch on every call, with a hard
+size limit.
+
+1. **The account summary, always:** the Run 2 scoreboard lines (§6A P1). Return against the benchmark,
+   beta, drawdown, mandate state. Then the system's own trades: count, win rate, average P&L, loss
+   exits, assignments, rolls. About 10 lines.
+2. **Per-cell lines, only where they are earned.** A cell is (name or class) × strategy × regime. It
+   appears only at n ≥ 10 closed trades, with a Wilson interval. Only cells for the names in the
+   current decision episode, or the brief's held and planned names, are included.
+3. **Run 1 is one labelled line**, never cells. Example: "Run 1 (Jun 22 – Nov 2026), pre-envelope
+   rules, closed: −25.6% vs benchmark −6.5%; see post-mortem". Its trades ran under rules that no
+   longer exist (no envelope, leveraged puts on, no stacking rule), so per-cell Run 1 statistics would
+   teach the wrong lesson.
+4. **The size limit:** at most 40 lines and about 1.5K tokens. Past it, the lowest-n cells drop first.
+   Python enforces it, and the block says how many cells were dropped.
+
+**What to expect.** Early in Run 2 almost every cell is suppressed, so Claude sees the summary only.
+That is the honest state of knowledge. The per-name lines fill in as trades close.
 
 ### 8.6 Freshness and grounding
 
@@ -851,6 +1343,63 @@ spreads).
 - **The spreads plan's bias**, scored open-to-close (the plan posts at ~09:33 ET) against the base
   rate. So far [V]: bearish on 4 days (Oct 15, 20, 23, Nov 10), SPY up open-to-close on all 4; never
   bullish; Nov 5 (−4.24% open-to-close) was neutral.
+
+### 10.9 The value verdict's fair value: from clamped drivers to a scenario menu (D15, ruled R14)
+
+**Today** (`src/value/claude_valuation.py`), Claude returns four continuous drivers:
+- growth, terminal growth, discount rate and normalised FCF margin (sustainable ROTE for banks and
+  insurers).
+
+Python clamps each into a bound taken from the company's filed history, runs a two-stage DCF, drops
+the result when the terminal value exceeds 75% of it, and caps it at 1.5× Python's own fair value.
+This is the one departure from hard line 2 (§3), and the cap ties Claude's number to Python's
+estimate, which hard line 3 forbids for envelopes. When Python's estimate was broken (GOOGL $10.86,
+META $12.00), the cap imported the fault: Claude's value was clipped to $16.29.
+
+**The conversion.** Claude chooses a letter, never a number.
+
+1. **A precondition: the GOOGL/META fault is diagnosed and fixed first** (units or method; §17). The
+   menu is built from the same filed history, so a units fault there would poison every item. Until
+   it is fixed, the Phase 0 sanity quarantine (fair value / price outside [0.1, 10] → withheld) stays
+   on, and so do the menu's own checks.
+2. **Python builds the menu** per name and list, from the existing `bounds_for` ranges:
+   - five scenarios, each driver set at a fixed quantile of its bound:
+     | Item | Growth and margin | Discount rate |
+     |---|---|---|
+     | A bear | 10th percentile | 90th |
+     | B cautious | 30th | 70th |
+     | C base | median | median |
+     | D constructive | 70th | 30th |
+     | E bull | 90th | 10th |
+   - terminal growth at the bound's low, mid or high to match the item;
+   - plus **X: no view**, which means Python's baseline.
+   - Each item's fair value is computed by Python with the existing `two_stage_dcf`. Any item failing
+     the 75% terminal check is dropped from the menu and the drop is recorded.
+   - Financials use the ROTE bound the same way.
+3. **Claude returns:** a menu letter; the existing READY / WATCH / WAIT / NO verdict enum; reasons as
+   fact ids (filing sections, scorecard metrics); the kill triggers as today. No number.
+4. **The effective fair value is the chosen item's Python-computed value.** The 1.5× cap is
+   **removed**. The bound now comes from the filed history (fixed terms), not from a multiple of
+   Python's estimate. The breaker on cap-binding becomes a breaker on **extreme letters**: it stops
+   applying when E (or A) runs above an operator-set share of a month's calls, or when Claude's
+   READYs run away from the baseline's (kept).
+5. **Unchanged:**
+   - Python's price and timing gates and the size tiers;
+   - `value.risk.validate` twice;
+   - paper-applied and record-only in live (`value.claude.apply_live: false`);
+   - an Ollama, malformed or missing reply means Python's baseline;
+   - an exit only Claude's value would fire waits for a tap;
+   - the `claude` shadow track.
+6. **Record:** `value_claude_verdicts` stores the menu (every item's drivers and value), the letter and
+   Python's baseline beside it.
+   - A change to the valuation rules bumps `value_rules` / `ruleset_version` and starts a new window.
+   - Rows before the bump are labelled `drivers_v1` and kept apart.
+7. **CLAUDE.md:** the second written exception's text changes from "Claude returns drivers, Python
+   clamps…" to "Claude chooses one of Python's filed-history scenarios". The value fence and its tests
+   move with it. `src/value_ai/` still returns plain data (`src/common/value_ai_types.py`: a letter
+   and an enum, replacing `Drivers`).
+8. **Placement in phasing:** its own track, beside Phase 0 (§15), because it is a value-book change,
+   not a Mastermind lever. It depends only on item 1.
 
 ## 11. Measurement
 
@@ -1185,6 +1734,11 @@ Import-based tests do not catch a DB-mediated path, which is why the writer and 
 | The core invariant: Claude never places, sizes or gates an order; two written exceptions (`claude_cut`, the value verdict) | CLAUDE.md | — | **Revision 4:** a new written exception, HP (§10.7): in paper, Claude chooses when and which item of a Python menu to open, at a fixed unit; record-only in live. The bridge itself is Python's and needs no exception |
 | Rev 3 §5.1: R5 "hedges" tap-only, auto after R4 | §5.1 | — | **Revision 4:** split. R5-H hedge roles C1–C4 (§10.6), no live auto under this spec; HP paper auto by the operator's ruling; Track D outside the ladder |
 | Envelope spec OR1: no long 0DTE options | envelope spec §3.1 | — | **Stands.** No 0DTE item on any menu here |
+| Envelope spec OR3: "no rule forces a sale"; plan P10: repairs tap-only at every autonomy level | envelope spec §0, §3.4.1; CLAUDE.md stock order path | — | **Revision 5 (D27 / R8): reopened for live only.** Paper keeps tap-only plus escalation. Live requires an automatic de-risk at a 20% floor before cutover: a second automatic stock path, deterministic, through `stock_orders.py` and both gates. CLAUDE.md's stock-order section is updated when it is built |
+| Envelope spec E4: S10 target 15% | envelope spec §3.4.1 | — | **Revision 5 (D24 / R7): extended.** A second glide to 10% by week 26, and S20 ≤ 25% |
+| Envelope spec E13: discretionary buys displayed, never gated | envelope spec §3.7 | — | **Revision 5 (D25 / R10): kept for TWS.** A checked `/buy` / `/sell` path and a 5-point budget are added beside it |
+| Envelope spec OR16 and L7: LES `on` from its replay's PASS | envelope spec §3.5.1 | — | **Revision 5 (R9):** the PASS is necessary, not sufficient. LES `on` also waits for the §6A P7 gate |
+| The value book's second written exception: clamped drivers, 1.5× cap | CLAUDE.md; value spec §8.2 | — | **Revision 5 (D15 / R14): converted** to a filed-history scenario menu with no cap (§10.9). CLAUDE.md's text changes with Track V |
 
 ## 15. Phasing
 
@@ -1196,20 +1750,72 @@ its §4.
 - Phase 2 onward waits for E2, so that every R0 record is made against the repaired envelope.
 - Every risk-changing rung needs E2 complete and the harness passing; the R3 allocation lever also
   needs the leveraged sleeve live.
+- **Revision 5:**
+  - "E2 complete" means its observable signals in the activation ledger (§6A P3 c), not its merge.
+  - The post-mortem prerequisites (§6A) run beside Phase 0.
+  - Every grant and every automatic path that adds risk also waits for the §6A P7 gate (hard line 12).
 
 | Phase | Content | Claude's authority | Gate to the next phase |
 |---|---|---|---|
+| **Step 0: Run 2 (§6A P9)** | The operator liquidates and marks the boundary. The plan's first task supplies the checklist, the `run_boundary` command and the glide / breaker re-anchor if the code lacks one. The envelope goes `on` against the flat book | unchanged | The boundary row exists; the envelope is `on` with L(t) at the target; no phantom positions |
+| **Prerequisite: the post-mortem (§6A, revision 5, all ruled)** | Built before Phase 2: P1 (the R6 mandate, the scoreboard, the headline change), P2 (the second glide to 10% and the S20 ≤ 25% limit), P3 (protection status, canaries, activation ledger, calibration debts, stale-daemon check), P4 (attribution, the `/buy` / `/sell` path with its 5-point budget, stacking across books), P5 (b) (escalation at 15%), P6 (the universe report; the operator's edit follows), P7 (the gate) and P8 (the unintended-position alarm) | unchanged | P1 and P3 "done when" signals present; P7 gate computed daily. P5 (c) is a precondition of any live cutover |
+| **Track V: value verdict menus (§10.9), beside Phase 0** | Fix the GOOGL/META fair-value fault; build the scenario menu; switch `src/value_ai/` to a letter and an enum; remove the 1.5× cap; the extreme-letter breaker; bump `ruleset_version`; update CLAUDE.md's second exception and the value fence tests | the value verdict, converted | The fault fixed and tested; the menu record runs ≥ 20 sessions in paper before `value.book.enabled` is reconsidered |
 | **Prerequisite: envelope spec E0–E2** | Everything in the envelope spec through its phase E2 (see above) | unchanged | Its own gates; E2 complete before Phase 2 |
 | **0 Cleanup** | Delete the prices and IV text from `_UNIVERSE_CONTEXT` (keep tiers and structural rules; add HACK and IGV rows). **Quarantine the value fair-value fault:** withhold any VALUE NOTE whose Python fair value / price is outside [0.1, 10], flag the name in the value book, and diagnose GOOGL and META (units vs method; a change to a value rule bumps `ruleset_version`). Fix the S19 title consistency check. Date the dossier prose. Add spot, entry credit, unrealised, basis and earnings to the roll prompt, and fix its "Entry delta" label. Drop "default to sell" from the rubric. Stop writing `claude_memory`. Fix the 2-day actuals look-back. Stamp model and prompt versions on review rows. Score the existing spreads plans (§11.9). (The stacking-rule backtest moved to the envelope spec's E1). **Revision 4:** pre-register and start the forward scoring of the news verdicts and the spreads plan's bias (§10.8) | unchanged (`claude_cut` as today) | none |
 | **1 Envelope repair** | **Moved to the envelope spec** (revision 3): the shock budget with its glide, the exposure-weighted backstop, the gap measures, the leverage-weighted group cap and stacking rule, the slow breaker spanning books, the survivability harness | unchanged | The envelope spec's E2 complete and its harness passing. **Required before any risk-changing rung** |
 | **2 Knowledge** | The fact layer (§8): book truth, the dry-run roll answer, the 45-day calendar (static config + earnings), the sourced market-state additions, the track record (if D18 allows), freshness and grounding. **Facts go into the existing reviewer and roll prompts first** | unchanged | Blinded claim audit of reviews passes |
-| **3 Brief, record-only** | `mastermind.db`, the one-shot process, the post-close brief, the 08:45 check, amendments, `plan_view`; R0 shadow on every decision episode; structured roll agree / disagree; the probability guardrail; the web page. Claude's endorsement of the tap-only book-repair proposals (X1 and §7) once the envelope spec's E12 is ruled. **Revision 4:** C1 stance; C2 and C3 proposals while a bridge runs; C4 record-only; Track D shadow menus and ideas; **HP applied in paper** (it needs the envelope spec's E2 buy-to-open path and this phase's brief; it is not tied to the bridge) | **R0 everywhere**, except **HP in paper** (the operator's grant, §10.7). X1, repair and hedge taps (a human decides) | ≥ 60 sessions; pre-registered evidence report per §11. HP: its own 12-month review (§10.7) |
+| **3 Brief, record-only** | `mastermind.db`, the one-shot process, the post-close brief, the 08:45 check, amendments, `plan_view`; R0 shadow on every decision episode; structured roll agree / disagree; the probability guardrail; the web page. Claude's endorsement of the tap-only book-repair proposals (X1 and §7) once the envelope spec's E12 is ruled. **Revision 4:** C1 stance; C2 and C3 proposals while a bridge runs; C4 record-only; Track D shadow menus and ideas; **HP applied in paper** (it needs the envelope spec's E2 buy-to-open path and this phase's brief; it is not tied to the bridge; **revision 5: applied only once the §6A P7 gate is open (D29), its letters valued in shadow until then**) | **R0 everywhere**, except **HP in paper** (the operator's grant, §10.7). X1, repair and hedge taps (a human decides) | ≥ 60 sessions; pre-registered evidence report per §11. HP: its own 12-month review (§10.7) |
 | **4 R1 plan input, applied in paper** | `min(det, review_cut, plan_cap)` applied in paper; the pause on amendments goes live | R1 (reducing) | D1 promotion ruling on the record |
 | **5 R2 select, applied in paper** | A menu ≤ baseline risk, plus skip; cross-scan allocation only if the regret test supports it | R2 (reducing) | §5.1 bar; third written exception |
 | **6+ Risk-changing rungs** | R3 size within a fixed cap, R4 strike menu, auto R5 by trade class, X2 auto exits; each with a full shadow decider book first | one rung at a time | The envelope spec's E2 complete (and, for the R3 allocation lever, its leveraged sleeve live); survivability test per rung; §5.1 bars; a written exception each |
 | **Live** | The operator reads each lever's record and flips `apply_live` one lever at a time; a live process re-validates its rungs at startup. **Revision 4:** HP, C4 and Track D have no live flag in this spec | | |
 
 ## 16. Decisions for the operator
+
+### 16.0 The rulings (2026-11-19): authoritative for the plan writer
+
+**Every decision is ruled.** Where a recommendation in §16.1–16.4 differs from this table, this table
+governs.
+
+| Decision | Ruling | Where specified |
+|---|---|---|
+| D1 L1 plan caps | **Adopted** as recommended: CSP only, `min(det, review_cut, plan_cap)`, record-only first, promoted on the availability log | §10.1 |
+| D2 L2a / L2b | **Adopted:** L2a dropped (measure the regret first); L2b deferred | §10.2–10.3 |
+| D3 Web research in the brief | **Adopted:** none in Phases 2–3 | §2.1, D3 |
+| D4 Exits | **Adopted:** no auto veto; X1 tap-only proposals; the roll review kept, structured and scored | §10.4 |
+| D5 Books governed | **Adopted:** wheel only for authority; spreads per the envelope spec | §13 |
+| D6 Promotion and demotion | **Adopted:** §11 as written | §11 |
+| D7 Where and when | **Adopted:** a one-shot, post-close brief, 08:45 deterministic check, conditional amendments | §9.1, §12 |
+| D8 Cost | **Adopted:** a governor for robustness, not a dollar cap | §9.4 |
+| D9 Easing the regime | **Adopted:** never applied; record-only shadow | §10.5 |
+| D10 Destination and hard lines | **Adopted**, with hard line 12 (D22). The hard lines go into CLAUDE.md when Phase 3 lands | §1, §3 |
+| D11 Objective and metric | **Ruled with D23 (R6).** The account metric is excess total return over the 50/50 SPY/QQQ buy-and-hold at beta ≤ 1.0 and drawdown ≤ 1.1× the benchmark's. A lever's metric is shadow P&L per risk-unit-day with a tail term. The exchange rate is **1:1** (a dollar of tail loss avoided at the 95th percentile counts as a dollar of income) unless the pre-registration proposes another and the operator signs it | §6A P1, §11 |
+| D12 Risk classification | **Adopted:** the §4 measures, zero tolerance, plus S20 as a gating measure (R7) | §4 |
+| D13, D14 | **Adopted:** moved to the envelope spec | envelope spec |
+| D15 Value drivers | **Ruled R14: convert to menus now** | §10.9 |
+| D16 Evaluation design | **Adopted.** Records start in Run 2 | §11, §6A P9 |
+| D17 Fidelity and fallback | **Adopted** | §9.4 |
+| D18 Track record | **Ruled R13:** reopened for deterministic outcome facts in the §8.5 format (summary first, n ≥ 10 cells, Run 1 as one line, a 40-line / ~1.5K-token limit) | §8.5 |
+| D19 Calendar | **Adopted** | §8.3 |
+| D20 Score the spreads plans | **Adopted** (Phase 0) | §11.9 |
+| D21 Claude's own scorecard | **Adopted:** only at n ≥ 100 | §11.8 |
+| D22 Hard line 12 | **Adopted (R9)** | §3, §6A P7 |
+| D23 Mandate | **Ruled R6:** index-like risk, beat 50/50 SPY/QQQ buy-and-hold at the same risk, LES opportunities inside it. **Not** the "less than index risk" recommendation | §6A P1 |
+| D24 S10 target | **Adopted (R7):** 15% by week 13, then 10% by week 26; S20 ≤ 25% | §6A P2 |
+| D25 Discretionary path | **Adopted (R10):** `/buy` / `/sell`, 5-point budget | §6A P4 |
+| D26 Stacking across books | **Adopted (R11):** block at ≥ 10% and > 2 ATR underwater; halve below | §6A P4 |
+| D27 Drawdown floor | **Adopted (R8):** escalation at 15% in paper now; automatic de-risk at 20% as a live-cutover precondition. **Reopens OR3 and P10 for live only** | §6A P5 |
+| D28 Universe | **Adopted (R12)** | §6A P6 |
+| D29 HP sequencing | **Adopted (R9):** HP applies only once the P7 gate opens | §6A P7 |
+| H11–H16 | **Adopted** as recommended | §16.3 |
+| Run 2 | **Ruled R5:** liquidate, keep the account, restart from cash | §6A P9 |
+
+**What the plan writer must still settle,** as plan-level engineering choices that need no operator
+ruling:
+- the exact quantiles' interpolation in §10.9;
+- the canary set's construction (§6A P3 b);
+- the `run_boundary` schema;
+- the put-write diagnostic's data source (§17).
 
 ### 16.1 D1–D9 (from revision 1)
 
@@ -1233,7 +1839,7 @@ revision's adjudication is marked.
 | D | Question | Recommendation |
 |---|---|---|
 | **D10** | Confirm the destination and the permanent hard lines (§1, §3), including the survivability test and fixed-terms envelopes | Adopt; add the hard lines to CLAUDE.md as the invariant's second half when Phase 3 lands |
-| **D11** | The objective and primary metric: what "better" means | Income per risk-unit-day with a loss-tail term; the operator sets the exchange rate between income and drawdown. Everything in §11 depends on it |
+| **D11** | The objective and primary metric: what "better" means | Income per risk-unit-day with a loss-tail term; the operator sets the exchange rate between income and drawdown. Everything in §11 depends on it. **Revision 5:** the lever metric sits under the account mandate (D23). A lever is never "better" while the account it serves is in breach, and every §11 report carries the scoreboard's mandate state for its window. **Ruled before the plan is written** |
 | **D12** | The risk-classification test (§4): the measures and their tolerances | Adopt the measures as revised in revision 3: net delta, S10 by full revaluation, the G10 / P20 gap measures, exposure-weighted collateral and gross, leverage-weighted risk units; zero tolerance for "reducing" |
 | **D13** | Envelope repair settings | **Moved to the envelope spec (revision 3):** the shock budget and glide (E4), the gross backstop (E5), the gap measures (E6), the slow breaker (E14), the tech-linked cap and stacking rule (E15) |
 | **D14** | Book repair | **Moved to the envelope spec (revision 3), E12:** `min_strike_vs_basis` by replay with a leveraged class floor; tap-only overlays, trims and de-lever proposals once their order paths exist. Claude's endorsement of proposals stays here (§7) |
@@ -1258,6 +1864,22 @@ build) are in the envelope spec §6.1.
 | **H14** | HP and the VIX ≥ 25 block | **Exempt, paper only** (§10.7: a blocked test cannot observe the state its hypothesis is about; cost bounded at 3 units; measured against random buys in the same VIX state). Breakers and halts still demote it | The alternative, keeping the block, makes the record a test of calm-state timing only |
 | **H15** | Track D | Shadow only, no order path in v1; Python menus; 0.25% of NLV₀ per idea; controls random direction, always-call, the same view in stock, trend, always-skip; long calls on held names or factors flagged as the same bet; bar ≥ 250 ideas and ≥ 120 market-day clusters, both valuations, ≥ +15 points pre-registered | O3R ≥ 200 ideas at $1k; S3R ≥ 250 ideas and ≥ 120 clusters at 0.25%. Adjudicated for S3R on the power calculation |
 | **H16** | Hard lines 9–11 and the free streams | Adopt the three hard lines (§3); start the forward scoring of the news verdicts and the spreads bias in Phase 0 | None |
+
+### 16.4 Revision 5: D22–D29 (the post-mortem)
+
+**D11, D22, D23 and D24 are ruled before the implementation plan is written.** D25–D29 may be ruled in
+the plan's first section.
+
+| D | Question | Recommendation | Note |
+|---|---|---|---|
+| **D22** | Hard line 12 and the stabilisation gate (§3, §6A P7) | Adopt. No grant, promotion or risk-adding automatic path leaves `record` while the envelope is unenforced, the book sits above L(t) after the glide starts, the mandate is in breach, or a canary failed. Risk-reducing paths are exempt; record-only work continues | Adds a permanent hard line; goes into CLAUDE.md with the others (D10) |
+| **D23** | The account mandate and benchmark (§6A P1) | **Income with less than index risk.** Benchmark: a 50/50 SPY/QQQ cash-secured put-write replayed on the system's own rules. Risk budget: 60-session realised beta to QQQ ≤ 0.8 and drawdown ≤ 1.25× the benchmark's. JEPI, JEPQ, XYLD and QYLD shown as references | The alternative is coherent: declare a leveraged-equity mandate with an income overlay, benchmarked at 1.5× SPY. Today's mix, an income benchmark in the head and 1.5× risk in the envelope, is not |
+| **D24** | The S10 target against the mandate (§6A P2) | Under D23's recommendation: a second glide, 15% → **10% by week 26**, and an **S20 ≤ 25%** admission limit beside S10 | An envelope level; on a ruling the envelope spec's E4 is amended. Under the leveraged mandate, 15% stands and the spec records the system is not an income system |
+| **D25** | The discretionary path and budget (§6A P4 b, c) | A gated `manual:` share path through `stock_orders.py` and `validate_stock_order`, before/after envelope numbers on the card. A **5-point S10 discretionary budget**; beyond it, a second tap and a typed reason. TWS stays ungated (E13 stands) | Shares stay in the wheel's W and in `book="manual"`; no new ledger exclusion |
+| **D26** | Stacking across books (§6A P4 d) | Block a new wheel CSP where the account holds ≥ 10% of NLV in the name and the holding is > 2 ATR underwater; halve it where any holding is that far underwater. The large-slot rule counts manual holdings | Amends the envelope spec's §3.4.4 (E15) |
+| **D27** | A drawdown floor (§6A P5) | (b) escalation in paper now at 15% on the slow window. (c) automatic de-risk to the S10 target at a hard floor, recommended 20% from the live start's high-water mark, **as a precondition of the live cutover** | Reopens OR3 and P10 for live only. Adds a second automatic stock path to CLAUDE.md. Option (a), the status quo, leaves the drawdown bounded only by taps |
+| **D28** | The universe (§6A P6) | Build the review report. `actively_wheeling` needs a 1-year IV/realised median ≥ 1.05 and a liquidity pass. At least a third of `actively_wheeling` sits outside `regime.tech_linked` | `universe.yaml` stays human-edited; the doc rule applies to every edit |
+| **D29** | HP's sequencing (§6A P7) | OR10's grant stands. HP's paper application waits for the P7 gate; until then its letters are recorded and shadow-valued | Costs nothing in evidence: the shadow record is the same record without the fills |
 
 ## 17. Unverified, and open research
 
@@ -1285,3 +1907,16 @@ build) are in the envelope spec §6.1.
   whole contract on most days; the brief's added length with the hedge block, the HP letter and three
   Track D ideas; the news-verdict scoring so far (13 ticker calls, 6 event-days) is a smoke test, not
   evidence.
+- **Revision 5:**
+  - The benchmark returns in §2.4 are yfinance adjusted closes [W]. PUTW returned no data, so no
+    published put-write index is in the table.
+  - The pre-Oct 9 NLV is converted from SGD at `fx_rates` [M]. The attribution split marks Oct 7
+    closes against the Nov 18 snapshot [M]. The put-write S10 figures in §6A P2 are Black-Scholes
+    estimates.
+  - Whether the running trading daemon was restarted onto the merged envelope code. `enforce: record`
+    is the observed state either way.
+  - Whether any alarm caught the HIMS +10 long put before it was found by hand (§6A P8).
+  - Whether the put-write replay on the system's own rules (§6A P1) can be built from the existing
+    `src/backtest/` engine or needs index option quotes the estate does not hold. Index chains exist
+    only for Jun 15–25, 2026 (envelope spec §2.6), so the replay may need Black-Scholes at VIX/VXN, as
+    in the envelope spec's §2.4 study, labelled as such.
